@@ -1,5 +1,6 @@
 // Attendance API: sessions (manual, code, QR, QR + GPS), student check-in, corrections, exports.
 import { Router } from 'express';
+import { env } from '../../config/env.js';
 import { z } from 'zod';
 import { lockKey, prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
@@ -37,7 +38,8 @@ const METHOD_LABELS = {
 };
 
 // ── Policy and saved classroom locations ─────────────────────────────────────
-attendanceRouter.get('/policy', async (req, res) => ok(res, await attendancePolicy()));
+// Limits for location checks, plus the map tiles the browser should use when a teacher picks a spot.
+attendanceRouter.get('/policy', async (req, res) => ok(res, { ...(await attendancePolicy()), map: env.map }));
 
 const locationBody = z.object({
   name: z.string().trim().min(1, 'Give this location a name').max(80),

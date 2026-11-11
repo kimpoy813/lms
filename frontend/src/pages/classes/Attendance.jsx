@@ -1,4 +1,9 @@
-// __STUB__
-export default function Stub() {
-  return <p className="p-6 text-soft">This page is being built.</p>;
+// Attendance tab: teachers run sessions and review records; students see their own record.
+import { useClass } from './useClass.js';
+import StudentAttendance from './attendance/StudentAttendance.jsx';
+import TeacherAttendance from './attendance/TeacherAttendance.jsx';
+
+export default function Attendance() {
+  const { canManage } = useClass();
+  return canManage ? <TeacherAttendance /> : <StudentAttendance />;
 }

@@ -155,7 +155,18 @@
   .ProseMirror .selectedCell { background: color-mix(in srgb, var(--brand) 14%, transparent); }
 
   /* Leaflet draws its own controls; keep them readable in both themes. */
-  .leaflet-container { font-family: var(--font-sans); border-radius: 0.75rem; z-index: 0; background: var(--raised); }
+  .leaflet-container { font-family: var(--font-sans) !important; border-radius: 0.75rem; z-index: 0; }
+  /* When map tiles cannot be loaded (offline, blocked), a faint grid keeps the pin and radius readable. */
+  /* (Leaflet's own stylesheet is not layered, so these overrides need !important to win.) */
+  .map-grid.leaflet-container {
+    background-color: var(--raised) !important;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px) !important;
+    background-size: 32px 32px !important;
+  }
+  .dark .leaflet-tile-pane { filter: brightness(0.75) contrast(1.05) saturate(0.8); }
+  .leaflet-control-attribution { font-size: 10px; background: color-mix(in srgb, var(--surface) 80%, transparent) !important; color: var(--faint) !important; }
+  .leaflet-control-attribution a { color: var(--soft) !important; }
+  .leaflet-bar a { background: var(--surface) !important; color: var(--ink) !important; border-color: var(--line) !important; }
 }
 
 @utility scroll-shadow {
