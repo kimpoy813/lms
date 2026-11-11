@@ -96,10 +96,16 @@ authRouter.get('/config', async (req, res) => {
     const demo = await prisma.user.findMany({
       where: { isDemo: true, status: 'ACTIVE' },
       select: { email: true, role: true, firstName: true, lastName: true },
-      orderBy: [{ role: 'asc' }, { email: 'asc' }],
-      take: 12,
+      take: 200,
     });
-    demoAccounts = demo.map((u) => ({ email: u.email, role: u.role, name: `${u.firstName} ${u.lastName}` }));
+    // Administrator first, then teachers, then students; within a role the main account
+    // ("teacher@…") comes before the numbered ones ("teacher2@…").
+    const rank = { ADMIN: 0, TEACHER: 1, STUDENT: 2 };
+    demo.sort((a, b) => rank[a.role] - rank[b.role] || a.email.length - b.email.length || a.email.localeCompare(b.email));
+    const perRole = { ADMIN: 0, TEACHER: 0, STUDENT: 0 };
+    demoAccounts = demo
+      .filter((u) => (perRole[u.role] += 1) <= 4)
+      .map((u) => ({ email: u.email, role: u.role, name: `${u.firstName} ${u.lastName}` }));
   }
   ok(res, {
     institutionName: settings['institution.name'],
