@@ -403,6 +403,26 @@ async function sourceGrade(tx, item, studentId) {
   return { status: 'UNGRADED', score: null, isLate: false };
 }
 
+/**
+ * Bring the columns of a period back in line with their quizzes and assignments. Needed after an
+ * unlock: quiz attempts handed in while the period was locked were accepted but not written.
+ */
+async function resyncLinkedItems(tx, periodId, userId) {
+  const items = await tx.gradeItem.findMany({ where: { category: { periodId }, source: { not: 'MANUAL' } } });
+  for (const item of items) {
+    const students = item.quizId
+      ? await tx.quizAttempt.findMany({ where: { quizId: item.quizId }, distinct: ['studentId'], select: { studentId: true } })
+      : await tx.assignmentSubmission.findMany({ where: { assignmentId: item.assignmentId, finalScore: { not: null } }, select: { studentId: true } });
+    for (const { studentId } of students) {
+      const existing = await tx.gradeEntry.findUnique({ where: { gradeItemId_studentId: { gradeItemId: item.id, studentId } } });
+      if (existing?.status === 'EXEMPT') continue;
+      const value = await sourceGrade(tx, item, studentId);
+      if (value.status !== 'GRADED' && !existing) continue;
+      await recordGrade(tx, { gradeItemId: item.id, studentId, score: value.score, status: value.status, isLate: value.isLate, source: 'AUTO_SYNC', changedById: userId });
+    }
+  }
+}
+
 classGradebookRouter.put('/entries', validate({ params: classParams, body: entriesBody }), async (req, res) => {
   const cls = await managed(req);
   assertNotFinalized(cls);
@@ -518,6 +538,7 @@ const periodAction = (action, { needsReason = false } = {}) => [
     const wasPublished = Boolean(period.publishedAt);
     await prisma.$transaction(async (tx) => {
       await tx.gradingPeriod.update({ where: { id: period.id }, data: change });
+      if (action === 'unlock') await resyncLinkedItems(tx, period.id, req.user.id);
       await tx.gradePublishingRecord.create({ data: { classId: cls.id, scope: period.id, action: record, note, performedById: req.user.id } });
       await audit(req, { action: `grades.${action}`, entityType: 'GradingPeriod', entityId: period.id, classId: cls.id, summary: `${record[0]}${record.slice(1).toLowerCase()} ${period.name} grades${note ? ` — ${note}` : ''}` }, tx);
     });
