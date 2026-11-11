@@ -153,7 +153,7 @@ if (!(await reachable(db.hostname, dbPort))) {
   // The helper prints this line once the server accepts connections and the database exists.
   const ready = await sawLine(server, /Embedded PostgreSQL is ready/, 120_000);
   if (!ready) {
-    console.error(color('31', '[dev] The embedded PostgreSQL did not start. Is another server using its data directory (.local/postgres)?'));
+    console.error(color('31', '[dev] The embedded PostgreSQL did not start — see the [db] lines above. To use your own PostgreSQL, set DATABASE_URL in backend/.env.'));
     await stop(1);
   }
 }

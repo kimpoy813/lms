@@ -103,7 +103,10 @@ paths with `index.html`. This split was not tested. Two things to carry over you
   `COOKIE_SAMESITE=none` and `COOKIE_SECURE=true`. Same origin is simpler and safer.
 
 The API itself needs a long-running Node.js process with a disk: it holds WebSocket connections,
-runs background jobs and stores uploads. It does not fit serverless function platforms as it is.
+runs background jobs and stores uploads. It does not fit serverless function platforms such as
+Vercel as it is. Running it there would need a function entry point, object storage for uploads,
+a scheduled trigger for the background jobs, and doing without WebSockets — none of which is
+included.
 
 ## Optional services
 

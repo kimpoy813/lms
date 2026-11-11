@@ -36,7 +36,8 @@ How the database is provided (`backend/tests/setup/global.js`):
 - with `TEST_DATABASE_URL` set, a throw-away database is created on that server and dropped at
   the end.
 
-Your development database is never touched.
+Your development database is never touched. On a fresh checkout the suite also generates the
+database client (`prisma generate`) if it is missing.
 
 The AI provider and the code judge are replaced by fakes inside the tests
 (`setAiTransport`, `setCodeRunnerTransport`), so those tests prove how EduSphere handles the

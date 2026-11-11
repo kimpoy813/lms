@@ -27,6 +27,9 @@ const server = new EmbeddedPostgres({
   password,
   port,
   persistent: true,
+  // The package links its shared libraries in an install script. Newer npm versions block the
+  // install scripts of dependencies unless they are approved, so create the links here if needed.
+  autoRehydrateSymlinks: true,
   onLog: () => {},
   onError: (message) => {
     const text = String(message ?? '');

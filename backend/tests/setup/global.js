@@ -5,6 +5,7 @@
 //                               is created next to it and dropped at the end).
 //   • otherwise               → a private PostgreSQL instance is started from the
 //                               `embedded-postgres` package in a temp directory.
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -36,7 +37,26 @@ export function migrationFiles() {
     .map((name) => ({ name, file: path.join(migrationsDir, name, 'migration.sql') }));
 }
 
+/**
+ * The Prisma client is generated code. A fresh checkout has none until `npm run dev` or
+ * `npm run db:generate` ran, so build it here when it is missing.
+ */
+function ensureDatabaseClient() {
+  const backend = path.resolve(here, '..', '..');
+  const roots = [backend, path.resolve(backend, '..')];
+  if (roots.some((root) => fs.existsSync(path.join(root, 'node_modules', '.prisma', 'client', 'client.js')))) return;
+  const cli = roots.map((root) => path.join(root, 'node_modules', 'prisma', 'build', 'index.js')).find((file) => fs.existsSync(file));
+  if (!cli) throw new Error('Prisma is not installed — run "npm install" first.');
+  const result = spawnSync(process.execPath, [cli, 'generate'], {
+    cwd: backend,
+    stdio: 'inherit',
+    env: { ...process.env, PRISMA_SCHEMA_ENGINE: process.env.PRISMA_SCHEMA_ENGINE ?? 'js', CHECKPOINT_DISABLE: '1' },
+  });
+  if (result.status !== 0) throw new Error('Could not generate the database client ("prisma generate" failed).');
+}
+
 export default async function setup(project) {
+  ensureDatabaseClient();
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'edusphere-test-'));
   let embedded = null;
   let adminUrl = process.env.TEST_DATABASE_URL;
@@ -50,6 +70,7 @@ export default async function setup(project) {
       password: 'postgres',
       port,
       persistent: false,
+      autoRehydrateSymlinks: true, // works even when npm blocked the package's install script
       onLog: () => {},
       onError: () => {},
     });

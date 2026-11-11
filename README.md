@@ -29,6 +29,10 @@ Open <http://localhost:5173> and sign in with a demo account (below).
 
 To use your own PostgreSQL (14 or newer), set `DATABASE_URL` in `backend/.env` first.
 
+Recent npm versions do not run the install scripts of dependencies unless you approve them.
+EduSphere does not need them: `npm run dev` and `npm test` prepare what those scripts would
+have (checked with npm 10 and npm 12 on Linux).
+
 ### Demo accounts
 
 The password of every demo account is `Demo-Pass-2026`.
