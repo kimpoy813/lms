@@ -410,7 +410,9 @@ aiRouter.post(
     });
     await recordUsage(req.user.id, 'QUIZ', out);
     const { kept, rejected } = cleanQuestions(out.data.questions);
-    ok(res, { questions: kept.filter((q) => b.types.includes(q.type)).slice(0, b.count), rejected, needsReview: true });
+    const allowed = kept.filter((q) => b.types.includes(q.type));
+    // rejected: incomplete or invalid; skipped: valid, but of a type the teacher did not ask for.
+    ok(res, { questions: allowed.slice(0, b.count), rejected, skipped: kept.length - allowed.length, needsReview: true });
   },
 );
 

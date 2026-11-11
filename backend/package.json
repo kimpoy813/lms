@@ -11,7 +11,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
-    "db:reset": "prisma migrate reset",
+    "db:reset": "node scripts/reset-db.js",
     "db:seed": "node prisma/seed.js",
     "db:studio": "prisma studio",
     "test": "vitest run",

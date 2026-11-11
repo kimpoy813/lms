@@ -263,9 +263,12 @@ describe('AI-assisted authoring', () => {
     try {
       const first = await teacher.post('/api/ai/questions', { topic: 'Photosynthesis', count: 5, types: ['MULTIPLE_CHOICE', 'TRUE_FALSE'] });
       expect(first.status).toBe(200);
-      expect(first.body.data).toMatchObject({ rejected: 1, needsReview: true });
+      expect(first.body.data).toMatchObject({ rejected: 1, skipped: 0, needsReview: true });
       expect(first.body.data.questions.map((q) => q.type)).toEqual(['MULTIPLE_CHOICE', 'TRUE_FALSE']);
-      expect((await teacher.post('/api/ai/questions', { topic: 'Photosynthesis', types: ['TRUE_FALSE'] })).body.data.questions).toHaveLength(1);
+      // A valid question of a type that was not asked for is left out, and the teacher is told.
+      const second = (await teacher.post('/api/ai/questions', { topic: 'Photosynthesis', types: ['TRUE_FALSE'] })).body.data;
+      expect(second.questions).toHaveLength(1);
+      expect(second).toMatchObject({ rejected: 1, skipped: 1 });
       const third = await teacher.post('/api/ai/questions', { topic: 'Photosynthesis' });
       expect(third.status).toBe(429);
       expect(third.body.error.code).toBe('AI_QUOTA_EXCEEDED');

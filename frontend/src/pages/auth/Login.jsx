@@ -87,17 +87,17 @@ export default function Login() {
         <section className="mt-8 rounded-2xl border border-dashed border-line-strong bg-raised/50 p-4" aria-labelledby="demo-heading">
           <h2 id="demo-heading" className="flex items-center gap-2 text-sm font-semibold text-ink"><FlaskConical className="size-4 text-brand" aria-hidden="true" />Explore with a demo account</h2>
           <p className="mt-1 text-[13px] text-faint">Sample data for trying things out. Demo accounts are switched off in production.</p>
-          <div className="mt-3 grid gap-2">
+          <div className="mt-3 grid grid-cols-1 gap-2">
             {featured.map((account) => {
               const meta = ROLE_META[account.role];
               return (
-                <button key={account.email} type="button" disabled={Boolean(busy)} onClick={() => signIn(account.email, 'Demo-Pass-2026', account.email)} className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 text-left transition-colors hover:border-brand disabled:opacity-60">
+                <button key={account.email} type="button" disabled={Boolean(busy)} onClick={() => signIn(account.email, 'Demo-Pass-2026', account.email)} className="flex min-w-0 items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 text-left transition-colors hover:border-brand disabled:opacity-60">
                   <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand"><meta.icon className="size-[18px]" aria-hidden="true" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-semibold text-ink">{meta.label}</span>
                     <span className="block truncate text-xs text-faint">{account.name} · {account.email}</span>
                   </span>
-                  <span className="text-[13px] font-semibold text-brand">{busy === account.email ? 'Signing in…' : 'Sign in'}</span>
+                  <span className="shrink-0 text-[13px] font-semibold text-brand">{busy === account.email ? 'Signing in…' : 'Sign in'}</span>
                 </button>
               );
             })}

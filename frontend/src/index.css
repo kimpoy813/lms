@@ -123,6 +123,8 @@
      descendants (for example .sr-only labels in a wide table) escape the scroller and make the
      whole page scroll sideways. In the base layer, so `sticky`/`absolute` utilities still win. */
   .overflow-x-auto, .overflow-auto { position: relative; }
+  /* Browsers give <fieldset> a minimum width of its content, which stops it shrinking on phones. */
+  fieldset { min-inline-size: 0; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }

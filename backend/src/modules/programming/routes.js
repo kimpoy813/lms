@@ -5,7 +5,6 @@ import { prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { created, fullName, idParams, noContent, ok, patchOf, zHtml, zId, zTitle } from '../../lib/http.js';
 import { plainText, sanitizeRichText } from '../../lib/sanitize.js';
-import { isPublished } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { codeRunLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
@@ -56,8 +55,8 @@ function problemView(p, forStudent) {
 
 /**
  * Load a problem for the signed-in user.
- * Students reach a problem through (a) a class it is shared with as practice, (b) a published
- * assignment, or (c) a question of a quiz attempt that is still running.
+ * Students reach a problem through (a) a class it is shared with as practice, or (b) a question
+ * of one of their own quiz attempts.
  */
 async function loadProblem(user, problemId, { studentAnswerId } = {}) {
   const problem = await prisma.programmingProblem.findFirst({ where: { id: problemId, deletedAt: null }, include });
@@ -72,8 +71,6 @@ async function loadProblem(user, problemId, { studentAnswerId } = {}) {
   }
   const enrolled = async (classId) => Boolean(await prisma.enrollment.findFirst({ where: { classId, studentId: user.id, status: 'ENROLLED' }, select: { id: true } }));
   if (problem.classId && (await enrolled(problem.classId))) return { problem, manage: false, answer: null };
-  const assignments = await prisma.assignment.findMany({ where: { programmingProblemId: problem.id, deletedAt: null }, select: { classId: true, status: true, publishAt: true } });
-  for (const a of assignments) if (isPublished(a) && (await enrolled(a.classId))) return { problem, manage: false, answer: null };
   const inAttempt = await prisma.studentAnswer.findFirst({ where: { attempt: { studentId: user.id }, snapshot: { path: ['programmingProblemId'], equals: problem.id } }, select: { id: true } });
   if (inAttempt) return { problem, manage: false, answer: null };
   throw notFound('Programming problem');

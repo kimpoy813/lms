@@ -1,6 +1,7 @@
 // Mounts every feature router under /api.
 import { Router } from 'express';
 import { env } from './config/env.js';
+import { notFound } from './lib/errors.js';
 import { ok } from './lib/http.js';
 import { requireAuth } from './middleware/auth.js';
 import { clearDevOutbox, devOutbox } from './services/mail.js';
@@ -72,9 +73,26 @@ apiRouter.use('/', contentRouter);
 apiRouter.use('/admin/users', requireAuth, adminUsersRouter);
 apiRouter.use('/admin', requireAuth, adminSystemRouter);
 
+const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/;
+
+/**
+ * True when the request was made on this computer. The captured e-mails hold password-reset links,
+ * so a development server that is reachable from elsewhere (a shared network, a tunnel, a cloud
+ * workspace preview) must not hand them out. Every proxy hop has to be local as well.
+ */
+export function isLocalRequest(req) {
+  if (!LOOPBACK.test(req.socket?.remoteAddress ?? '')) return false;
+  const forwarded = String(req.headers['x-forwarded-for'] ?? '').split(',').map((part) => part.trim()).filter(Boolean);
+  return forwarded.every((address) => LOOPBACK.test(address));
+}
+
 // Development conveniences. This router does not exist when NODE_ENV=production.
 if (!env.isProduction) {
   const dev = Router();
+  dev.use((req, res, next) => {
+    if (isLocalRequest(req)) return next();
+    throw notFound('Page');
+  });
   // E-mails captured because SMTP is not configured (verification / reset links for local testing).
   dev.get('/mailbox', (req, res) => ok(res, devOutbox()));
   dev.delete('/mailbox', (req, res) => {

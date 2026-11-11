@@ -117,9 +117,14 @@ authRouter.get('/config', async (req, res) => {
 });
 
 // ── Current session ───────────────────────────────────────────────────────────
-authRouter.get('/session', async (req, res) => {
-  if (!req.user) throw unauthorized('You are not signed in.');
-  ok(res, await sessionPayload(req.user, req.session.csrfToken));
+// `?optional=1` answers 200 with `null` for a visitor who is not signed in, so that the web app
+// can ask "am I signed in?" on every page load without logging an error in the browser console.
+authRouter.get('/session', validate({ query: z.object({ optional: z.enum(['1', 'true']).optional() }) }), async (req, res) => {
+  if (!req.user) {
+    if (req.valid.query.optional) return ok(res, null);
+    throw unauthorized('You are not signed in.');
+  }
+  return ok(res, await sessionPayload(req.user, req.session.csrfToken));
 });
 
 // ── Sign in ───────────────────────────────────────────────────────────────────

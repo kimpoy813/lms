@@ -88,6 +88,10 @@ describe('sign in', () => {
 describe('sessions', () => {
   it('returns the current session and rejects anonymous callers', async () => {
     expect((await anonymous().get('/api/auth/session')).status).toBe(401);
+    // The web app's start-up probe: "nobody is signed in" is an ordinary answer, not an error.
+    const probe = await anonymous().get('/api/auth/session?optional=1');
+    expect(probe.status).toBe(200);
+    expect(probe.body.data).toBeNull();
     const student = await actor('STUDENT');
     const res = await student.get('/api/auth/session');
     expect(res.status).toBe(200);
@@ -402,5 +406,23 @@ describe('security headers', () => {
     const res = await anonymous().post('/api/auth/login').set('Content-Type', 'application/json').send('{"email":');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_JSON');
+  });
+});
+
+describe('development mailbox', () => {
+  it('is readable on this computer, including through a local dev-server proxy', async () => {
+    expect((await anonymous().get('/api/dev/mailbox')).status).toBe(200);
+    expect((await anonymous().get('/api/dev/mailbox').set('X-Forwarded-For', '127.0.0.1')).status).toBe(200);
+    expect((await anonymous().get('/api/dev/mailbox').set('X-Forwarded-For', '::1')).status).toBe(200);
+  });
+
+  it('is hidden from every visitor that reaches the dev server from another machine', async () => {
+    // The captured e-mails contain password-reset links, so a shared or tunnelled dev server must not leak them.
+    for (const forwarded of ['203.0.113.9', '192.168.1.20', '127.0.0.1, 203.0.113.9', '203.0.113.9, 127.0.0.1']) {
+      const res = await anonymous().get('/api/dev/mailbox').set('X-Forwarded-For', forwarded);
+      expect(res.status, forwarded).toBe(404);
+      expect(res.body.data).toBeUndefined();
+    }
+    expect((await anonymous().delete('/api/dev/mailbox').set('X-Forwarded-For', '203.0.113.9')).status).toBe(404);
   });
 });

@@ -176,7 +176,8 @@ function QuestionsTool({ ready, onDone }) {
     onSuccess: (r) => {
       onDone();
       setDrafts((list) => [...list, ...r.questions.map((q, i) => ({ ...q, key: `${Date.now()}-${i}`, include: true }))]);
-      setNote(r.questions.length === 0 ? 'No usable questions came back. Try again with a more specific topic.' : r.rejected > 0 ? `${plural(r.rejected, 'question')} from the AI were incomplete and were left out.` : null);
+      const left = [r.rejected > 0 && `${r.rejected} incomplete`, r.skipped > 0 && `${r.skipped} of a type you did not ask for`].filter(Boolean).join(' and ');
+      setNote(r.questions.length === 0 ? 'No usable questions came back. Try again with a more specific topic.' : left ? `Some questions from the AI were left out: ${left}.` : null);
     },
     onError: (err) => aiError(err, setError),
   });

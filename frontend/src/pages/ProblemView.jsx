@@ -33,7 +33,7 @@ export default function ProblemView() {
                 <QueryState query={submissions} loader={<p className="text-sm text-faint">Loading…</p>}>
                   {(rows) => rows.length === 0 ? <EmptyState compact icon={History} title="No submissions yet" /> : (
                     <ul className="divide-y divide-line">
-                      {rows.map((s) => <li key={s.id} className="py-2.5 first:pt-0 last:pb-0"><Submission s={s} showStudent={!isStudent} onLoad={() => setLoaded({ language: s.language, code: s.code, key: s.id })} /></li>)}
+                      {rows.map((s) => <li key={s.id} className="py-2.5 first:pt-0 last:pb-0"><Submission s={s} showStudent={!isStudent} languageLabel={p.runner?.languages.find((l) => l.id === s.language)?.label ?? s.language} onLoad={() => setLoaded({ language: s.language, code: s.code, key: s.id })} /></li>)}
                     </ul>
                   )}
                 </QueryState>
@@ -51,14 +51,14 @@ export default function ProblemView() {
   );
 }
 
-function Submission({ s, showStudent, onLoad }) {
+function Submission({ s, showStudent, languageLabel, onLoad }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex min-w-0 flex-1 basis-48 items-center gap-2 text-left">
           <ChevronDown className={cn('size-4 shrink-0 text-faint transition-transform', !open && '-rotate-90')} aria-hidden="true" />
-          <span className="min-w-0"><span className="block truncate font-medium text-ink">{showStudent ? s.student?.name : formatDateTime(s.createdAt)}</span><span className="block text-xs text-faint">{showStudent ? `${formatDateTime(s.createdAt)} · ` : ''}{s.language}</span></span>
+          <span className="min-w-0"><span className="block truncate font-medium text-ink">{showStudent ? s.student?.name : formatDateTime(s.createdAt)}</span><span className="block text-xs text-faint">{showStudent ? `${formatDateTime(s.createdAt)} · ` : ''}{languageLabel}</span></span>
         </button>
         {s.status === 'ERROR' ? <Badge tone="bad">Did not run</Badge> : <Badge tone={s.scorePercent >= 100 ? 'ok' : s.scorePercent > 0 ? 'warn' : 'bad'}>{s.passedCount}/{s.totalCount} tests · {formatPercent(s.scorePercent, 0)}</Badge>}
         <Button size="sm" variant="ghost" onClick={onLoad}>Load into editor</Button>

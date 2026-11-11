@@ -27,7 +27,10 @@ export function AuthProvider({ children }) {
 
   const refresh = useCallback(async () => {
     try {
-      accept(await api.get('/auth/session'));
+      // `optional` makes "not signed in" a normal answer (null) instead of a 401.
+      const payload = await api.get('/auth/session', { optional: 1 });
+      if (payload) accept(payload);
+      else clear();
     } catch (err) {
       if (err.status === 401) clear();
       else setState((s) => (s.status === 'loading' ? { ...s, status: 'error', error: err } : s));
