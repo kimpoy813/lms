@@ -4,6 +4,8 @@
 // • CSRF: every state-changing request echoes the session's token in X-CSRF-Token.
 // • Errors: thrown as ApiError with the server's message, code and per-field messages.
 
+import { formatLimit } from './format.js';
+
 export class ApiError extends Error {
   constructor(status, code, message, details) {
     super(message);
@@ -17,10 +19,15 @@ export class ApiError extends Error {
 }
 
 let csrfToken = null;
+let uploadLimit = null;
 const listeners = { unauthorized: null, passwordChange: null };
 
 export const setCsrfToken = (token) => {
   csrfToken = token ?? null;
+};
+/** The largest single file the server accepts, in bytes (it says so when the session starts). */
+export const setUploadLimit = (bytes) => {
+  uploadLimit = bytes > 0 ? bytes : null;
 };
 /** The auth layer registers what should happen when the session ends or a password change is required. */
 export const onAuthEvent = (name, fn) => {
@@ -48,7 +55,9 @@ async function parseError(res) {
   }
   const e = payload?.error;
   if (e) return new ApiError(res.status, e.code ?? 'ERROR', e.message ?? 'Something went wrong.', e.details);
-  if (res.status === 413) return new ApiError(413, 'FILE_TOO_LARGE', 'That file is too large.');
+  if (res.status === 413) {
+    return new ApiError(413, 'FILE_TOO_LARGE', uploadLimit ? `That is too large to send. One file can be at most ${formatLimit(uploadLimit)}.` : 'That file is too large.');
+  }
   if (res.status === 502 || res.status === 503 || res.status === 504) return new ApiError(res.status, 'SERVER_UNAVAILABLE', 'The server is not responding right now. Please try again in a moment.');
   return new ApiError(res.status, 'ERROR', `The request failed (${res.status}).`);
 }
@@ -104,11 +113,32 @@ export const api = {
     return (await json('POST', path, { form })).data;
   },
 
-  /** Upload files; resolves to [{ id, name, mimeType, sizeBytes }]. */
+  /**
+   * Upload files; resolves to [{ id, name, mimeType, sizeBytes }].
+   *
+   * Each file travels in its own request: some hosts cap the size of a request, and several
+   * files in one would add up. A file over the server's limit is refused here, before any bytes
+   * are sent — a host that enforces the cap answers with an error page, not a useful message.
+   * If a later file fails, the error carries the ones already stored as `err.saved`.
+   */
   async upload(files, path = '/files', field = 'files') {
-    const form = new FormData();
-    for (const file of files) form.append(field, file, file.name);
-    return (await json('POST', path, { form })).data;
+    const list = [...files];
+    const tooLarge = uploadLimit ? list.find((file) => file.size > uploadLimit) : null;
+    if (tooLarge) {
+      throw new ApiError(413, 'FILE_TOO_LARGE', `“${tooLarge.name}” is larger than ${formatLimit(uploadLimit)}, the most this site accepts for one file.`);
+    }
+    const saved = [];
+    for (const file of list) {
+      const form = new FormData();
+      form.append(field, file, file.name);
+      try {
+        saved.push(...(await json('POST', path, { form })).data);
+      } catch (err) {
+        err.saved = saved;
+        throw err;
+      }
+    }
+    return saved;
   },
 
   /** Download a protected file or export and hand it to the browser's "save" flow. */

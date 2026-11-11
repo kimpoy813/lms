@@ -10,6 +10,7 @@ import { toast } from '../../../components/toast.jsx';
 import { Alert, Avatar, Badge, Button, Card, cn, ConfirmDialog, Field, IconButton, Input, Menu, MenuItem, Modal, QueryState, Textarea } from '../../../components/ui.jsx';
 import { api } from '../../../lib/api.js';
 import { formatDateKey, formatDuration, formatTime, plural } from '../../../lib/format.js';
+import { useLiveInterval } from '../../../lib/live.js';
 import { useAction } from '../../../lib/query.js';
 import { getSocket } from '../../../lib/socket.js';
 import { useClass } from '../useClass.js';
@@ -24,7 +25,12 @@ export default function SessionPanel({ sessionId, onBack }) {
   const { cls } = useClass();
   const client = useQueryClient();
   const key = useMemo(() => ['class', cls.id, 'attendance', 'session', sessionId], [cls.id, sessionId]);
-  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/attendance/sessions/${sessionId}`), refetchInterval: (q) => (q.state.data?.status === 'OPEN' ? 15_000 : false) });
+  // While check-in is open the roster refreshes by itself: every 15 seconds as a safety net when
+  // the server pushes each check-in, every 5 seconds when it cannot push.
+  // The monitor is often projected and watched without anybody touching the computer, so it does
+  // not pause when the page is idle; it stops by itself when check-in closes.
+  const openInterval = useLiveInterval(5_000, 15_000, { evenWhenIdle: true });
+  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/attendance/sessions/${sessionId}`), refetchInterval: (q) => (q.state.data?.status === 'OPEN' ? openInterval : false) });
 
   // Live updates: every check-in (or rejected attempt) arrives over the socket.
   useEffect(() => {

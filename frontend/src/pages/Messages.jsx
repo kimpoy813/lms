@@ -11,9 +11,22 @@ import { Alert, Avatar, Badge, Button, cn, EmptyState, Input, Modal, PageHeader,
 import { api } from '../lib/api.js';
 import { dateKeyOf, formatDateKey, formatTime, relativeTime } from '../lib/format.js';
 import { useAction } from '../lib/query.js';
+import { isReaderIdle, useLiveInterval, useOnReturn } from '../lib/live.js';
 import { useSocketEvent } from '../lib/socket.js';
 
 const ROLE = { TEACHER: 'Teacher', STUDENT: 'Student', ADMIN: 'Administrator' };
+
+/**
+ * Put the newest page of a conversation on top of what is already shown: older messages the
+ * reader loaded are kept, messages in the page replace their earlier versions (a message may have
+ * been deleted since), and new ones are added at the end.
+ */
+function mergeNewest(current, page) {
+  if (page.messages.length === 0) return { ...current, otherLastReadAt: page.otherLastReadAt };
+  const oldestFresh = page.messages[0].createdAt;
+  const older = current.messages.filter((m) => m.createdAt < oldestFresh);
+  return { ...current, ...page, messages: [...older, ...page.messages], hasMore: older.length > 0 ? current.hasMore : page.hasMore };
+}
 
 export default function Messages() {
   const { user } = useAuth();
@@ -23,7 +36,8 @@ export default function Messages() {
   const to = params.get('to');
   const [picking, setPicking] = useState(false);
   const [filter, setFilter] = useState('');
-  const conversations = useQuery({ queryKey: ['messages', 'conversations'], queryFn: () => api.get('/messages/conversations') });
+  // Without push from the server the list is refreshed on a timer.
+  const conversations = useQuery({ queryKey: ['messages', 'conversations'], queryFn: () => api.get('/messages/conversations'), refetchInterval: useLiveInterval(30_000) });
 
   // Links such as /messages?to=<user> open (or create) the conversation with that person.
   const opened = useRef(null);
@@ -39,6 +53,7 @@ export default function Messages() {
   const refresh = useCallback(() => client.invalidateQueries({ queryKey: ['messages'] }), [client]);
   useSocketEvent('message:new', refresh);
   useSocketEvent('message:sent', refresh);
+  useOnReturn(useCallback(() => client.invalidateQueries({ queryKey: ['messages', 'conversations'] }), [client]));
 
   const list = useMemo(() => (conversations.data ?? []).filter((c) => !filter.trim() || c.with?.name.toLowerCase().includes(filter.trim().toLowerCase())), [conversations.data, filter]);
 
@@ -88,7 +103,7 @@ export default function Messages() {
 }
 
 function Conversation({ id, onBack }) {
-  const { user } = useAuth();
+  const { user, runtime } = useAuth();
   const client = useQueryClient();
   const key = useMemo(() => ['messages', 'conversation', id], [id]);
   const query = useQuery({ queryKey: key, queryFn: () => api.get(`/messages/conversations/${id}`) });
@@ -119,6 +134,62 @@ function Conversation({ id, onBack }) {
 
   useEffect(() => { if (data) markRead(); }, [Boolean(data), markRead]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // When the server cannot push, ask for the newest messages and merge them in: every 5 seconds
+  // while the conversation is active, then less and less often, because the host counts every
+  // request. (Refetching the query instead would throw away the older messages already loaded.)
+  const poller = useRef({ active: () => {} });
+  useEffect(() => {
+    if (runtime.realtime) return undefined;
+    let stopped = false;
+    let timer = null;
+    let due = 0;
+    let lastActivity = Date.now();
+    const delay = () => {
+      const quietFor = Date.now() - lastActivity;
+      return quietFor < 2 * 60_000 ? 5_000 : quietFor < 10 * 60_000 ? 15_000 : 60_000;
+    };
+    const schedule = (ms = delay()) => {
+      clearTimeout(timer);
+      due = Date.now() + ms;
+      if (!stopped) timer = setTimeout(tick, ms);
+    };
+    async function tick() {
+      if (document.visibilityState === 'visible' && !isReaderIdle()) {
+        try {
+          const page = await api.get(`/messages/conversations/${id}`);
+          if (stopped) return;
+          const known = new Set((client.getQueryData(key)?.messages ?? []).map((m) => m.id));
+          client.setQueryData(key, (d) => (d ? mergeNewest(d, page) : page));
+          if (page.messages.some((m) => !known.has(m.id))) lastActivity = Date.now();
+          if (page.messages.some((m) => !known.has(m.id) && m.senderId !== user.id)) {
+            markRead();
+            client.invalidateQueries({ queryKey: ['messages', 'conversations'] });
+          }
+        } catch {
+          // The next round tries again; a lost session is handled by the rest of the app.
+        }
+      }
+      schedule();
+    }
+    // Typing, sending or coming back to the tab: check again soon.
+    const active = () => {
+      lastActivity = Date.now();
+      if (due - Date.now() > 5_000) schedule(1_000);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') active(); };
+    poller.current = { active };
+    document.addEventListener('visibilitychange', onVisible);
+    schedule();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      poller.current = { active: () => {} };
+    };
+  }, [runtime.realtime, id, key, client, user.id, markRead]);
+  useEffect(() => { if (text) poller.current.active(); }, [text]);
+  useOnReturn(useCallback(() => poller.current.active(), []));
+
   // Stay at the newest message unless the reader scrolled up.
   const count = data?.messages.length ?? 0;
   useLayoutEffect(() => {
@@ -127,7 +198,7 @@ function Conversation({ id, onBack }) {
   }, [count]);
 
   const send = useAction(() => api.post(`/messages/conversations/${id}/messages`, { body: text.trim(), fileIds: files.map((f) => f.id) }), {
-    onSuccess: (m) => { setText(''); setFiles([]); stick.current = true; append(m); client.invalidateQueries({ queryKey: ['messages', 'conversations'] }); },
+    onSuccess: (m) => { setText(''); setFiles([]); stick.current = true; append(m); poller.current.active(); client.invalidateQueries({ queryKey: ['messages', 'conversations'] }); },
   });
   const remove = useAction((messageId) => api.delete(`/messages/messages/${messageId}`), {});
 
@@ -154,6 +225,7 @@ function Conversation({ id, onBack }) {
     try {
       setFiles([...files, ...(await api.upload(chosen))]);
     } catch (err) {
+      if (err.saved?.length) setFiles([...files, ...err.saved]);
       toast.error(err.message);
     } finally {
       setUploading(false);

@@ -5,12 +5,13 @@ import {
   AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Clock, FileQuestion, GraduationCap, HardDrive, History, Inbox,
   Mail, MapPin, Megaphone, PenLine, Radio, ScanLine, Server, Sparkles, TrendingDown, UserCheck, UserPlus, Users,
 } from 'lucide-react';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useCallback } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, ProgressBar, QueryState, Skeleton, StatCard } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { dueLabel, formatBytes, formatClock, formatDateKey, formatDay, formatPercent, formatScore, formatTime, getTimeZone, plural, relativeTime } from '../lib/format.js';
+import { useLiveInterval, useOnReturn } from '../lib/live.js';
 import { classColor } from './classes/classColors.js';
 
 const AdminCharts = lazy(() => import('./DashboardCharts.jsx'));
@@ -23,7 +24,9 @@ const greeting = () => {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const query = useQuery({ queryKey: ['dashboard'], queryFn: () => api.get('/dashboard'), refetchInterval: 120_000 });
+  const query = useQuery({ queryKey: ['dashboard'], queryFn: () => api.get('/dashboard'), refetchInterval: useLiveInterval(120_000, 120_000) });
+  const { refetch } = query;
+  useOnReturn(useCallback(() => { refetch(); }, [refetch]));
   return (
     <>
       <PageHeader title={`${greeting()}, ${user.firstName}`} description={query.data ? formatDateKey(query.data.date) : ' '} />

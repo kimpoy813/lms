@@ -1,28 +1,36 @@
 // Who is signed in. The session lives in an HTTP-only cookie; this context only mirrors what
 // GET /api/auth/session says about it.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, onAuthEvent, setCsrfToken } from '../lib/api.js';
+import { api, onAuthEvent, setCsrfToken, setUploadLimit } from '../lib/api.js';
 import { setTimeZone } from '../lib/format.js';
 import { queryClient } from '../lib/query.js';
 import { connectSocket, disconnectSocket } from '../lib/socket.js';
 
 const AuthContext = createContext(null);
 
+// What the server can do. `realtime: false` means it cannot push updates (it runs as short-lived
+// function invocations), so live screens refresh on a timer instead — see lib/live.js.
+const DEFAULT_RUNTIME = { realtime: true, maxUploadBytes: null };
+const SIGNED_OUT = { user: null, permissions: [], settings: {}, runtime: DEFAULT_RUNTIME };
+
 export function AuthProvider({ children }) {
-  const [state, setState] = useState({ status: 'loading', user: null, permissions: [], settings: {} });
+  const [state, setState] = useState({ status: 'loading', ...SIGNED_OUT });
 
   const accept = useCallback((payload) => {
+    const runtime = { ...DEFAULT_RUNTIME, ...payload.runtime };
     setCsrfToken(payload.csrfToken);
+    setUploadLimit(runtime.maxUploadBytes);
     setTimeZone(payload.settings?.['institution.timezone']);
-    setState({ status: 'in', user: payload.user, permissions: payload.permissions ?? [], settings: payload.settings ?? {} });
-    connectSocket();
+    setState({ status: 'in', user: payload.user, permissions: payload.permissions ?? [], settings: payload.settings ?? {}, runtime });
+    if (runtime.realtime) connectSocket();
+    else disconnectSocket();
   }, []);
 
   const clear = useCallback(() => {
     setCsrfToken(null);
     disconnectSocket();
     queryClient.clear();
-    setState({ status: 'out', user: null, permissions: [], settings: {} });
+    setState({ status: 'out', ...SIGNED_OUT });
   }, []);
 
   const refresh = useCallback(async () => {

@@ -80,6 +80,13 @@ export default function AdminSettings() {
                   <li className="border-t border-line pt-3 text-[13px] text-soft">
                     <p>Environment: <span className="font-medium text-ink">{s.environment}</span></p>
                     <p>Largest upload: <span className="font-medium text-ink">{formatBytes(s.maxUploadBytes)}</span></p>
+                    {s.storage && (
+                      <p>
+                        Uploaded files: <span className="font-medium text-ink">{s.storage.driver === 'database' ? 'kept in the database' : 'kept on the server’s disk'}</span>
+                        {s.storage.usedBytes !== null && <> — {formatBytes(s.storage.usedBytes)}{s.storage.quotaBytes ? ` of ${formatBytes(s.storage.quotaBytes)}` : ''} used</>}
+                      </p>
+                    )}
+                    {s.realtime === false && <p>Live updates: <span className="font-medium text-ink">screens refresh on a timer</span> (this host cannot push changes)</p>}
                     <p>Demo accounts: {s.demoAccountsEnabled ? <Badge tone="warn">Enabled</Badge> : <Badge tone="ok">Disabled</Badge>}</p>
                     {s.demoAccountsEnabled && <p className="mt-1 text-faint">Demo sign-in is refused automatically when the server runs in production mode.</p>}
                   </li>

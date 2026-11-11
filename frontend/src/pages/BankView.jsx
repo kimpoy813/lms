@@ -3,10 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Copy, FileUp, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Upload, XCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useParams } from 'react-router';
+import { useAuth } from '../auth/AuthContext.jsx';
 import { toast } from '../components/toast.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, IconButton, Menu, MenuItem, Modal, PageHeader, Pagination, QueryState, SearchInput, Select, Textarea, useDebounced } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
-import { formatScore, plural } from '../lib/format.js';
+import { formatLimit, formatScore, plural } from '../lib/format.js';
 import { useAction } from '../lib/query.js';
 import { AnswerKey } from './classes/QuizDetail.jsx';
 import QuestionEditor from './classes/quiz/QuestionEditor.jsx';
@@ -90,7 +91,12 @@ export default function BankView() {
 }
 
 /** Import: upload or paste → review what the parser understood → save the good ones. */
+const IMPORT_LIMIT_BYTES = 10 * 1024 * 1024;
+
 function ImportDialog({ bankId, onClose, onSaved }) {
+  // The server reads documents of up to 10 MB, or less when it accepts only smaller uploads.
+  const { runtime } = useAuth();
+  const importLimit = Math.min(IMPORT_LIMIT_BYTES, runtime.maxUploadBytes ?? IMPORT_LIMIT_BYTES);
   const [text, setText] = useState('');
   const [preview, setPreview] = useState(null);
   const [drafts, setDrafts] = useState([]);
@@ -103,6 +109,11 @@ function ImportDialog({ bankId, onClose, onSaved }) {
     onSuccess: receive,
     onError: (err) => { setError(err.fields?.file ?? err.fields?.text ?? err.message); return true; },
   });
+  // Check the size here: a host that caps request sizes answers with an error page, not a message.
+  const readFile = (file) => {
+    if (file.size > importLimit) setError(`“${file.name}” is larger than ${formatLimit(importLimit)}. Paste the text instead, or split the document.`);
+    else parse.mutate(file);
+  };
   const chosen = drafts.filter((d) => d.include);
   const save = useAction(() => api.post(`/question-banks/${bankId}/questions/bulk`, { questions: chosen.map(({ key, include, warnings, errors, number, ...q }) => q) }), {
     success: (r) => `${plural(r.saved, 'question')} added to the bank.`,
@@ -124,9 +135,9 @@ function ImportDialog({ bankId, onClose, onSaved }) {
           <button type="button" onClick={() => fileInput.current?.click()} disabled={parse.isPending} className="flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed border-line-strong px-4 py-8 text-center hover:border-brand hover:text-brand">
             <Upload className="size-7 text-brand" aria-hidden="true" />
             <span className="text-sm font-semibold text-ink">{parse.isPending ? 'Reading the document…' : 'Choose a Word (.docx), PDF or text file'}</span>
-            <span className="text-xs text-faint">Up to 10 MB. Nothing is saved until you review the questions.</span>
+            <span className="text-xs text-faint">Up to {formatLimit(importLimit)}. Nothing is saved until you review the questions.</span>
           </button>
-          <input ref={fileInput} type="file" hidden accept=".docx,.pdf,.txt,.md" onChange={(e) => { const file = e.target.files?.[0]; if (file) parse.mutate(file); e.target.value = ''; }} />
+          <input ref={fileInput} type="file" hidden accept=".docx,.pdf,.txt,.md" onChange={(e) => { const file = e.target.files?.[0]; if (file) readFile(file); e.target.value = ''; }} />
           <div>
             <label htmlFor="import-text" className="mb-1.5 block text-sm font-medium text-ink">…or paste the questions</label>
             <Textarea id="import-text" rows={8} value={text} onChange={(e) => setText(e.target.value)} className="font-mono text-[13px]" placeholder={'1. Which part of the computer is known as its "brain"?\nA. RAM\n*B. CPU\nC. Hard disk\nD. Monitor\n\n2. True or False: One byte is made of 8 bits.\nAnswer: True'} />
