@@ -75,7 +75,7 @@ const messageView = (m) => ({
   attachments: m.deletedAt ? [] : (m.attachments ?? []).filter((f) => !f.deletedAt).map(fileSummary),
 });
 
-async function unreadCount(userId) {
+export async function unreadCount(userId) {
   const rows = await prisma.$queryRaw`
     SELECT COUNT(*)::int AS count
     FROM "Message" m

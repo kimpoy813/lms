@@ -85,6 +85,8 @@ async function sessionPayload(user, csrfToken) {
     csrfToken,
     permissions: await permissionsFor(user.role),
     settings: await getPublicSettings(),
+    // What this server can do; the web app adapts (timed refresh without push, upload size check).
+    runtime: { realtime: env.realtime, maxUploadBytes: env.maxUploadBytes },
   };
 }
 

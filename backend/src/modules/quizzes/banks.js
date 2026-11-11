@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
+import { env } from '../../config/env.js';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { created, idParams, noContent, ok, pageMeta, pageQuery, paging, patchOf, zId, zTitle } from '../../lib/http.js';
@@ -16,7 +17,9 @@ export const banksRouter = Router();
 banksRouter.use(requireAuth, requireRole('TEACHER', 'ADMIN'));
 
 const bankParams = idParams('bankId');
-const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+// A document to import questions from. Never more than the server accepts as a single upload
+// (function platforms cap the size of a request).
+const MAX_IMPORT_BYTES = Math.min(10 * 1024 * 1024, env.maxUploadBytes);
 // The uploaded paper is parsed in memory and discarded; it is never stored.
 const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMPORT_BYTES, files: 1 } }).single('file');
 
@@ -194,7 +197,7 @@ function runImportUpload(req, res) {
   return new Promise((resolve, reject) => {
     importUpload(req, res, (err) => {
       if (!err) return resolve();
-      if (err.code === 'LIMIT_FILE_SIZE') return reject(new AppError(413, 'FILE_TOO_LARGE', 'The document is larger than 10 MB.'));
+      if (err.code === 'LIMIT_FILE_SIZE') return reject(new AppError(413, 'FILE_TOO_LARGE', `The document is larger than ${Math.floor(MAX_IMPORT_BYTES / (1024 * 1024))} MB.`));
       return reject(new AppError(400, 'UPLOAD_FAILED', 'The file could not be uploaded.'));
     });
   });

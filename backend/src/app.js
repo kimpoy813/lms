@@ -8,12 +8,14 @@ import helmet from 'helmet';
 import compression from 'compression';
 import pinoHttp from 'pino-http';
 import { env } from './config/env.js';
-import { prisma } from './db/prisma.js';
+import { Prisma, prisma } from './db/prisma.js';
+import { runInBackground } from './lib/background.js';
 import { logger } from './lib/logger.js';
 import { csrfProtection, loadSession } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { apiRouter } from './routes.js';
+import { checkDueJobs } from './services/scheduler.js';
 
 function corsMiddleware(req, res, next) {
   const origin = req.get('origin');
@@ -63,11 +65,17 @@ function securityHeaders() {
   });
 }
 
-export function createApp() {
+/**
+ * @param {{ prelude?: import('express').RequestHandler[] }} [options] `prelude` runs before
+ *        everything else; a hosting platform's entry point uses it to undo what the platform did
+ *        to the request (see api/index.js).
+ */
+export function createApp({ prelude = [] } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', env.trustProxy);
   app.set('query parser', 'simple');
+  for (const middleware of prelude) app.use(middleware);
 
   app.use((req, res, next) => {
     req.id = randomUUID();
@@ -96,16 +104,34 @@ export function createApp() {
 
   // Liveness / readiness probes (no authentication, no sensitive data).
   app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
+  // Ready = the database answers and has every table this version of the code uses.
+  const tables = Prisma.dmmf.datamodel.models.map((model) => model.dbName ?? model.name);
   app.get('/readyz', async (req, res) => {
+    const started = performance.now();
     try {
-      await prisma.$queryRaw`SELECT 1`;
-      res.json({ status: 'ready' });
-    } catch {
-      res.status(503).json({ status: 'database unavailable' });
+      const [{ missing }] = await prisma.$queryRaw`
+        SELECT count(*)::int AS "missing" FROM unnest(${tables}::text[]) AS t("name")
+        WHERE to_regclass(format('%I.%I', current_schema(), t."name")) IS NULL`;
+      if (missing > 0) return res.status(503).json({ status: 'database not set up' });
+      // The round trip tells whether the API and the database sit in the same region.
+      return res.json({ status: 'ready', databaseMs: Math.round(performance.now() - started) });
+    } catch (err) {
+      // The answer stays terse (anybody can ask); the reason goes to the log.
+      logger.warn({ err }, 'readiness check failed');
+      return res.status(503).json({ status: 'database unavailable' });
     }
   });
 
   if (env.corsOrigins.length > 0) app.use('/api', corsMiddleware);
+
+  // No timer survives between function invocations, so requests drive the background jobs.
+  if (env.serverless && env.schedulerEnabled) {
+    app.use('/api', (req, res, next) => {
+      const pending = checkDueJobs();
+      if (pending) runInBackground(() => pending, 'background jobs');
+      next();
+    });
+  }
 
   app.use(
     '/api',

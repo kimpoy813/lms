@@ -2,6 +2,7 @@
 // CSRF protection, and role / permission guards.
 import { prisma } from '../db/prisma.js';
 import { env } from '../config/env.js';
+import { runInBackground } from '../lib/background.js';
 import { forbidden, unauthorized, AppError } from '../lib/errors.js';
 import { randomToken, safeEqual, sha256 } from '../lib/tokens.js';
 import { hasPermission } from '../services/permissions.js';
@@ -123,10 +124,9 @@ export async function loadSession(req, res, next) {
     throw new AppError(403, 'PASSWORD_CHANGE_REQUIRED', 'Choose a new password before you continue.');
   }
   if (Date.now() - session.lastSeenAt.getTime() > TOUCH_INTERVAL_MS) {
-    // Sliding expiry: an active session keeps extending itself.
-    prisma.session
-      .update({ where: { id: session.id }, data: { lastSeenAt: new Date(), expiresAt: new Date(Date.now() + env.sessionTtlMs) } })
-      .catch(() => {});
+    // Sliding expiry: an active session keeps extending itself. The request does not wait for it.
+    const data = { lastSeenAt: new Date(), expiresAt: new Date(Date.now() + env.sessionTtlMs) };
+    runInBackground(() => prisma.session.update({ where: { id: session.id }, data }).catch(() => {}), 'session touch');
   }
   return next();
 }

@@ -1,10 +1,12 @@
 // Mounts every feature router under /api.
 import { Router } from 'express';
 import { env } from './config/env.js';
-import { notFound } from './lib/errors.js';
+import { notFound, unauthorized } from './lib/errors.js';
 import { ok } from './lib/http.js';
+import { safeEqual } from './lib/tokens.js';
 import { requireAuth } from './middleware/auth.js';
 import { clearDevOutbox, devOutbox } from './services/mail.js';
+import { runDueJobs } from './services/scheduler.js';
 import { adminSystemRouter } from './modules/admin/system.js';
 import { adminUsersRouter } from './modules/admin/users.js';
 import { catalogRouter } from './modules/admin/catalog.js';
@@ -36,6 +38,17 @@ import './jobs/attendance.js';
 import './jobs/publishing.js';
 
 export const apiRouter = Router();
+
+// Scheduled call for hosts where no process stays up to run the background jobs on a timer
+// (vercel.json asks Vercel to make it once a day). With CRON_SECRET set, the caller must present
+// it and every job runs. Without a secret anybody can call this, so it then does no more than any
+// other request does: run the jobs that are due.
+apiRouter.get('/internal/cron', async (req, res) => {
+  const given = /^Bearer (.+)$/.exec(req.get('authorization') ?? '')?.[1] ?? '';
+  const trusted = Boolean(env.cronSecret) && safeEqual(given, env.cronSecret);
+  if (env.cronSecret && !trusted) throw unauthorized();
+  ok(res, { ran: env.jobsAllowed ? await runDueJobs({ force: trusted }) : [] });
+});
 
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/files', filesRouter);

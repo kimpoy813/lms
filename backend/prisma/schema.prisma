@@ -809,6 +809,25 @@ model File {
   @@index([correctionRequestId])
 }
 
+/// The bytes of uploaded files when STORAGE_DRIVER=database (hosts without a lasting disk).
+/// Kept apart from File so that ordinary queries never load file contents. No foreign key: the
+/// two rows are written one after the other exactly as a file and its row are on disk, and a
+/// housekeeping job removes bytes whose File row is gone.
+model FileBlob {
+  storedName String   @id
+  sizeBytes  Int
+  data       Bytes
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+}
+
+/// When each background job last ran. Only used when the API runs as function invocations
+/// (SERVERLESS): there is no timer, so a request claims a job that is due by updating this row.
+model JobState {
+  name      String   @id
+  everyMs   Int
+  lastRunAt DateTime @db.Timestamptz(3)
+}
+
 // ───────────────────────────── Attendance ─────────────────────────────
 
 model ClassroomLocation {

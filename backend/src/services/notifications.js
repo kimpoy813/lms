@@ -1,6 +1,7 @@
 // In-app notifications (stored, pushed over Socket.IO) with optional e-mail copies.
 import { prisma } from '../db/prisma.js';
 import { env } from '../config/env.js';
+import { runInBackground } from '../lib/background.js';
 import { logger } from '../lib/logger.js';
 import { emitToUser } from './realtime.js';
 import { getSetting } from './settings.js';
@@ -40,38 +41,38 @@ export async function notify(userIds, notification, options = {}) {
       link: notification.link ?? null,
     });
   }
-  // E-mail copies are optional and never block or fail the calling request.
-  if (!options.tx) queueEmails(ids, notification);
-  else setImmediate(() => queueEmails(ids, notification));
+  // E-mail copies are optional and never block or fail the calling request. Inside a transaction
+  // they wait a tick, so that the rows are usually committed by the time the e-mails go out.
+  if (mailConfigured()) {
+    runInBackground(async () => {
+      if (options.tx) await new Promise((resolve) => setImmediate(resolve));
+      await sendEmailCopies(ids, notification);
+    }, 'sending notification e-mails');
+  }
 }
 
-function queueEmails(userIds, notification) {
-  Promise.resolve()
-    .then(async () => {
-      if (!mailConfigured()) return;
-      if (!(await getSetting('email.notificationsEnabled'))) return;
-      const users = await prisma.user.findMany({
-        where: { id: { in: userIds }, emailNotifications: true, status: 'ACTIVE', anonymizedAt: null },
-        select: { id: true, email: true },
-      });
-      for (const user of users) {
-        await sendMail({
-          to: user.email,
-          subject: notification.title,
-          text: notification.body ?? notification.title,
-          title: notification.title,
-          paragraphs: notification.body ? [notification.body] : [],
-          action: notification.link ? { label: 'Open in EduSphere', url: `${env.appUrl}${notification.link}` } : undefined,
-        });
-      }
-      if (users.length > 0) {
-        await prisma.notification.updateMany({
-          where: { userId: { in: users.map((u) => u.id) }, type: notification.type, emailedAt: null, link: notification.link ?? null },
-          data: { emailedAt: new Date() },
-        });
-      }
-    })
-    .catch((err) => logger.error({ err }, 'failed to send notification e-mails'));
+async function sendEmailCopies(userIds, notification) {
+  if (!(await getSetting('email.notificationsEnabled'))) return;
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds }, emailNotifications: true, status: 'ACTIVE', anonymizedAt: null },
+    select: { id: true, email: true },
+  });
+  for (const user of users) {
+    await sendMail({
+      to: user.email,
+      subject: notification.title,
+      text: notification.body ?? notification.title,
+      title: notification.title,
+      paragraphs: notification.body ? [notification.body] : [],
+      action: notification.link ? { label: 'Open in EduSphere', url: `${env.appUrl}${notification.link}` } : undefined,
+    });
+  }
+  if (users.length > 0) {
+    await prisma.notification.updateMany({
+      where: { userId: { in: users.map((u) => u.id) }, type: notification.type, emailedAt: null, link: notification.link ?? null },
+      data: { emailedAt: new Date() },
+    });
+  }
 }
 
 /** Ids of students currently enrolled in a class. */

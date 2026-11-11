@@ -13,6 +13,7 @@ import { mailConfigured } from '../../services/mail.js';
 import { notify } from '../../services/notifications.js';
 import { permissionMatrix, setRolePermission } from '../../services/permissions.js';
 import { getSettings, SETTING_DEFINITIONS, updateSettings } from '../../services/settings.js';
+import { storageUsage } from '../../services/storage.js';
 import { classLabel } from '../classes/access.js';
 
 export const adminSystemRouter = Router();
@@ -57,6 +58,11 @@ adminSystemRouter.get('/status', async (req, res) => {
     ai: { configured: env.ai.configured, provider: env.ai.provider, model: env.ai.configured ? env.ai.model : null },
     codeRunner: { configured: env.codeRunner.configured, provider: env.codeRunner.provider },
     maxUploadBytes: env.maxUploadBytes,
+    // How the API is hosted, and what follows from it.
+    platform: env.platform,
+    serverless: env.serverless,
+    realtime: env.realtime,
+    storage: await storageUsage(),
   });
 });
 

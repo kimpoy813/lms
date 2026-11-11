@@ -19,7 +19,51 @@ function sqlState(err) {
   );
 }
 
+// Prisma: cannot reach the server, timed out, connection closed, no free connection in the pool.
+const PRISMA_UNAVAILABLE = new Set(['P1001', 'P1002', 'P1008', 'P1017', 'P2024']);
+const DRIVER_UNAVAILABLE = new Set(['DatabaseNotReachable', 'ConnectionClosed', 'SocketTimeout', 'TooManyConnections']);
+// PostgreSQL: too many connections, shutting down, crashed, still starting up.
+const SQLSTATE_UNAVAILABLE = new Set(['53300', '57P01', '57P02', '57P03']);
+
+/**
+ * True when the failure is the database being away rather than something wrong with the request:
+ * it is restarting, waking up after a pause, out of connections, or the network dropped. A hosted
+ * database that pauses when idle makes this an everyday event, so it gets an honest answer
+ * ("try again in a moment") instead of a generic server error. Wrong credentials and certificate
+ * problems are not included: those do not go away by trying again.
+ */
+export function isDatabaseUnavailable(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (PRISMA_UNAVAILABLE.has(err.code)) return true;
+  const driver = err.meta?.driverAdapterError?.cause ?? err.cause;
+  if (driver && DRIVER_UNAVAILABLE.has(driver.kind)) return true;
+  const state = sqlState(err);
+  if (state && (state.startsWith('08') || SQLSTATE_UNAVAILABLE.has(state))) return true;
+  // node-postgres reports these two without a code.
+  return /timeout exceeded when trying to connect|Connection terminated/i.test(String(err.message ?? ''));
+}
+
+/**
+ * True when a table or a column the code expects is not there: the database changes of this
+ * version were never applied. Typical for a preview deployment that shares a database with an
+ * older live site, and for a first deployment whose database step failed.
+ */
+export function isSchemaOutOfDate(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (err.code === 'P2021' || err.code === 'P2022') return true;
+  const driver = err.meta?.driverAdapterError?.cause ?? err.cause;
+  if (driver && (driver.kind === 'TableDoesNotExist' || driver.kind === 'ColumnNotFound')) return true;
+  const state = sqlState(err);
+  return state === '42P01' || state === '42703';
+}
+
 function fromPrisma(err) {
+  if (isDatabaseUnavailable(err)) {
+    return new AppError(503, 'DATABASE_UNAVAILABLE', 'The database is not answering right now. Please try again in a moment.');
+  }
+  if (isSchemaOutOfDate(err)) {
+    return new AppError(503, 'DATABASE_OUT_OF_DATE', 'The database has not been set up for this version of the site yet. An administrator has to apply the database changes.');
+  }
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {
       const fields = err.meta?.driverAdapterError?.cause?.constraint?.fields ?? err.meta?.target ?? [];
@@ -77,6 +121,7 @@ export function errorHandler(err, req, res, next) {
   if (known) {
     if (known.status >= 500) logger.error({ err, reqId: req.id }, known.message);
     if (res.headersSent) return res.end();
+    if (known.status === 503) res.setHeader('Retry-After', '5');
     return res.status(known.status).json({
       error: { code: known.code, message: known.message, ...(known.details ? { details: known.details } : {}) },
     });

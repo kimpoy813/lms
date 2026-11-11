@@ -60,7 +60,8 @@ function client(base) {
     if (body !== undefined && !form) headers['content-type'] = 'application/json';
     const res = await fetch(`${base}/api${path}`, { method, headers, body: form ?? (body !== undefined ? JSON.stringify(body) : undefined) });
     const set = res.headers.getSetCookie?.() ?? [];
-    for (const c of set) if (c.startsWith('es_sid=')) cookie = c.split(';')[0];
+    // The cookie is called __Host-es_sid when it is marked Secure (COOKIE_SECURE=true, or behind HTTPS).
+    for (const c of set) if (/^(__Host-)?es_sid=/.test(c)) cookie = c.split(';')[0];
     const text = await res.text();
     const json = text ? JSON.parse(text) : {};
     if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(json.error ?? json).slice(0, 400)}`);

@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { pgOptionsFromUrl } from '../../src/db/connection.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(here, '..', '..', 'prisma', 'migrations');
@@ -80,7 +81,7 @@ export default async function setup(project) {
   }
 
   const database = `edusphere_test_${process.pid}_${Date.now()}`;
-  const admin = new pg.Client({ connectionString: adminUrl });
+  const admin = new pg.Client(pgOptionsFromUrl(adminUrl));
   await admin.connect();
   await admin.query(`CREATE DATABASE "${database}"`);
   await admin.end();
@@ -90,7 +91,7 @@ export default async function setup(project) {
   const databaseUrl = url.toString();
 
   // Apply the committed migrations exactly as they will run in production.
-  const client = new pg.Client({ connectionString: databaseUrl });
+  const client = new pg.Client(pgOptionsFromUrl(databaseUrl));
   await client.connect();
   for (const migration of migrationFiles()) {
     await client.query(fs.readFileSync(migration.file, 'utf8'));
@@ -105,7 +106,7 @@ export default async function setup(project) {
 
   return async function teardown() {
     try {
-      const drop = new pg.Client({ connectionString: adminUrl });
+      const drop = new pg.Client(pgOptionsFromUrl(adminUrl));
       await drop.connect();
       await drop.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
       await drop.end();

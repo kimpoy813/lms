@@ -7,6 +7,7 @@
 // `migrate dev` (use the default engine for authoring new migrations).
 import pg from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { pgFieldsFromUrl } from '../src/db/connection.js';
 
 // @prisma/adapter-pg 6.19 has no mapping for the PostgreSQL `name` type (OID 19) that system
 // catalogs return, so the WASM engine cannot read them. Report those columns as `text` instead.
@@ -47,16 +48,8 @@ function patchPgClient() {
 
 export function createMigrationAdapter(databaseUrl) {
   patchPgClient();
-  const url = new URL(databaseUrl);
   // Discrete parameters (not `connectionString`) so the adapter can swap the database name when
-  // it needs a temporary shadow database.
-  return new PrismaPg({
-    host: url.hostname,
-    port: Number(url.port || 5432),
-    user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: decodeURIComponent(url.pathname.slice(1)),
-    ssl: url.searchParams.get('sslmode') === 'require' ? { rejectUnauthorized: false } : undefined,
-    allowExitOnIdle: true,
-  });
+  // it needs a temporary shadow database. TLS follows the same rule as the application
+  // (src/db/connection.js): `sslmode=require` encrypts and verifies the server certificate.
+  return new PrismaPg({ ...pgFieldsFromUrl(databaseUrl), allowExitOnIdle: true });
 }
