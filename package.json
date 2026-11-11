@@ -1,0 +1,47 @@
+{
+  "name": "edusphere",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EduSphere — all-in-one Learning Management System for colleges and universities",
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w frontend",
+    "start": "npm run start -w backend",
+    "db:embedded": "node scripts/embedded-postgres.mjs",
+    "db:generate": "npm run db:generate -w backend",
+    "db:migrate": "npm run db:migrate -w backend",
+    "db:deploy": "npm run db:deploy -w backend",
+    "db:seed": "npm run db:seed -w backend",
+    "db:reset": "npm run db:reset -w backend",
+    "test": "npm run test -w backend && npm run test -w frontend",
+    "test:backend": "npm run test -w backend",
+    "test:frontend": "npm run test -w frontend",
+    "test:e2e": "playwright test -c e2e/playwright.config.js",
+    "lint": "eslint .",
+    "docs:api": "npm run docs:api -w backend"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2",
+    "eslint": {
+      "minimatch": "^11.0.7"
+    },
+    "@eslint/config-array": {
+      "minimatch": "^11.0.7"
+    }
+  }
+}
