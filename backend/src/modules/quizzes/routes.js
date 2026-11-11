@@ -587,6 +587,7 @@ async function answerFiles(answerIds) {
 /** One answer as shown in a review. `reveal` adds the key and the explanation. */
 function reviewAnswer(answer, files, { reveal, scores }) {
   return {
+    answerId: answer.id,
     position: answer.position,
     points: answer.points,
     question: publicQuestion(answer.snapshot),

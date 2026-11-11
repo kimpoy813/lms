@@ -187,6 +187,39 @@ describe('resources', () => {
     expect((await students[0].get(`/api/files/${fileId}`)).status).toBe(404);
   });
 
+  it('shows a picture embedded in a lesson to the class once the lesson is published', async () => {
+    const { teacher, cls, students } = await classroom(1);
+    const outsider = await actor('STUDENT');
+    const otherTeacher = await actor('TEACHER');
+    // A real 1×1 PNG: uploads are checked by content, not by file name.
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+    const upload = await teacher.upload([{ name: 'diagram.png', content: png }], '/api/files?kind=image');
+    expect(upload.status).toBe(201);
+    const fileId = upload.body.data[0].id;
+    const src = `/api/files/${fileId}/view`;
+
+    const mod = await mk(teacher, cls, { status: 'DRAFT' });
+    const lesson = await mkLesson(teacher, mod.id, { contentHtml: `<p>See the figure.</p><img src="${src}" alt="CPU diagram" onerror="alert(1)">`, status: 'PUBLISHED' });
+    // The address survives sanitising; the script does not.
+    expect(lesson.contentHtml).toContain(`src="${src}"`);
+    expect(lesson.contentHtml).not.toContain('onerror');
+
+    // Draft module: only the teacher can load the picture.
+    expect((await teacher.get(src)).status).toBe(200);
+    expect((await students[0].get(src)).status).toBe(404);
+
+    await teacher.patch(`/api/modules/${mod.id}`, { status: 'PUBLISHED' });
+    const seen = await students[0].get(src);
+    expect(seen.status).toBe(200);
+    expect(seen.headers['content-type']).toContain('image/png');
+    expect((await outsider.get(src)).status).toBe(404);
+    expect((await otherTeacher.get(src)).status).toBe(404);
+
+    // Only pictures can be uploaded for embedding.
+    const notImage = await teacher.upload([{ name: 'notes.pdf', content: '%PDF-1.4 notes' }], '/api/files?kind=image');
+    expect(notImage.status).toBe(415);
+  });
+
   it('cannot turn somebody else\'s upload into a class resource', async () => {
     const { teacher, cls, students } = await classroom(1);
     const upload = await students[0].upload([{ name: 'private.pdf', content: '%PDF-1.4 private' }]);

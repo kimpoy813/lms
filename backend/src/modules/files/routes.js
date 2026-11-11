@@ -12,7 +12,7 @@ import { validate } from '../../middleware/validate.js';
 import {
   fileSummary, openFileStream, persistUploads, removeStoredFile, storedFileExists, upload,
 } from '../../services/storage.js';
-import { isPublished } from '../../lib/visibility.js';
+import { isPublished, publishedWhere } from '../../lib/visibility.js';
 
 export const filesRouter = Router();
 filesRouter.use(requireAuth);
@@ -30,6 +30,56 @@ async function isEnrolled(user, classId) {
     select: { status: true },
   });
   return enrollment?.status === 'ENROLLED';
+}
+
+/**
+ * Is this picture embedded in rich text the user is allowed to read? The editor inserts pictures
+ * as <img src="/api/files/<id>/view">, so the address (which contains an unguessable id) is
+ * looked up in the content of the user's own classes. Students only match published content.
+ */
+async function isEmbeddedInVisibleContent(user, fileId) {
+  const contains = `/api/files/${fileId}/view`;
+  const now = new Date();
+  const student = user.role === 'STUDENT';
+  const classes = student
+    ? await prisma.enrollment.findMany({ where: { studentId: user.id, status: 'ENROLLED' }, select: { classId: true } })
+    : await prisma.class.findMany({ where: { teacherId: user.id }, select: { id: true } });
+  const classIds = classes.map((c) => c.classId ?? c.id);
+  const live = student ? [publishedWhere(now)] : [];
+
+  // Institution-wide announcements are readable by everyone who is signed in.
+  const announcement = await prisma.announcement.findFirst({
+    where: {
+      contentHtml: { contains },
+      deletedAt: null,
+      AND: live,
+      OR: [
+        { audience: 'INSTITUTION' },
+        ...(student
+          ? [{ classId: { in: classIds }, audience: 'CLASS' }, { classId: { in: classIds }, recipients: { some: { studentId: user.id } } }]
+          : [{ classId: { in: classIds } }]),
+      ],
+    },
+    select: { id: true },
+  });
+  if (announcement) return true;
+  if (classIds.length === 0) return false;
+
+  const [lesson, assignment, quiz, syllabus] = await Promise.all([
+    prisma.lesson.findFirst({
+      where: {
+        contentHtml: { contains },
+        deletedAt: null,
+        ...(student ? { status: 'PUBLISHED' } : {}),
+        module: { classId: { in: classIds }, deletedAt: null, AND: live },
+      },
+      select: { id: true },
+    }),
+    prisma.assignment.findFirst({ where: { instructionsHtml: { contains }, classId: { in: classIds }, deletedAt: null, AND: live }, select: { id: true } }),
+    prisma.quiz.findFirst({ where: { instructionsHtml: { contains }, classId: { in: classIds }, deletedAt: null, AND: live }, select: { id: true } }),
+    prisma.class.findFirst({ where: { id: { in: classIds }, syllabusHtml: { contains } }, select: { id: true } }),
+  ]);
+  return Boolean(lesson || assignment || quiz || syllabus);
 }
 
 /**
@@ -105,6 +155,9 @@ export async function canAccessFile(user, file) {
     const hidden = t.isHidden || t.deletedAt || (!file.threadId && (thread.isHidden || thread.deletedAt));
     return !hidden && (await isEnrolled(user, t.classId));
   }
+
+  // Pictures placed inside rich text (a lesson, instructions, an announcement, the syllabus).
+  if (file.mimeType?.startsWith('image/') && (await isEmbeddedInVisibleContent(user, file.id))) return true;
 
   // Learning resources (class library and lesson attachments).
   const resources = await prisma.learningResource.findMany({

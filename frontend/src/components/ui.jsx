@@ -45,7 +45,11 @@ export function IconButton({ icon: Icon, label, className, size = 'md', variant 
 }
 
 // ── Form controls ────────────────────────────────────────────────────────────
-const control = 'w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-faint transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 disabled:bg-raised disabled:text-faint aria-[invalid=true]:border-bad aria-[invalid=true]:ring-bad/20';
+const controlBase = 'rounded-lg border border-line-strong bg-surface px-3 text-ink placeholder:text-faint transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 disabled:bg-raised disabled:text-faint aria-[invalid=true]:border-bad aria-[invalid=true]:ring-bad/20';
+// A caller's width, height or text size replaces the default instead of fighting with it.
+const has = (className, pattern) => pattern.test(className ?? '');
+const control = (className, height) =>
+  cn(controlBase, !has(className, /(^|\s)w-/) && 'w-full', height && !has(className, /(^|\s)h-/) && height, !has(className, /(^|\s)text-(xs|sm|base|lg|xl|\[)/) && 'text-sm', className);
 
 const FieldContext = createContext(null);
 
@@ -75,14 +79,15 @@ function useFieldProps(props) {
 }
 
 export function Input({ className, ...props }) {
-  return <input className={cn(control, 'h-10', className)} {...props} {...useFieldProps(props)} />;
+  return <input {...props} className={control(className, 'h-10')} {...useFieldProps(props)} />;
 }
 export function Textarea({ className, rows = 4, ...props }) {
-  return <textarea rows={rows} className={cn(control, 'py-2.5 leading-relaxed', className)} {...props} {...useFieldProps(props)} />;
+  return <textarea rows={rows} {...props} className={control(cn('py-2.5 leading-relaxed', className))} {...useFieldProps(props)} />;
 }
+const CHEVRON = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c84a0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")";
 export function Select({ className, children, ...props }) {
   return (
-    <select className={cn(control, 'h-10 appearance-none bg-[length:1rem] bg-[right_0.7rem_center] bg-no-repeat pr-9', className)} style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c84a0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")" }} {...props} {...useFieldProps(props)}>
+    <select {...props} className={control(cn('appearance-none bg-[length:1rem] bg-[right_0.7rem_center] bg-no-repeat pr-9', className), 'h-10')} style={{ backgroundImage: CHEVRON }} {...useFieldProps(props)}>
       {children}
     </select>
   );
@@ -124,7 +129,7 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
   return (
     <div className={cn('relative', className)}>
       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" aria-hidden="true" />
-      <input type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} className={cn(control, 'h-10 pl-9')} {...props} />
+      <input type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} className={control('pl-9', 'h-10')} {...props} />
     </div>
   );
 }
@@ -136,7 +141,7 @@ export function Segmented({ value, onChange, options, size = 'md', className, la
       {options.map((o) => {
         const active = o.value === value;
         return (
-          <button key={o.value} type="button" role="radio" aria-checked={active} onClick={() => onChange(o.value)} title={o.title} className={cn('rounded-md font-medium transition-colors', size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3.5 py-1.5 text-sm', active ? cn('bg-surface shadow-sm', o.tone ?? 'text-ink') : 'text-soft hover:text-ink')}>
+          <button key={o.value} type="button" role="radio" aria-checked={active} onClick={() => onChange(o.value)} title={o.title} className={cn('rounded-md font-medium whitespace-nowrap transition-colors', size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3.5 py-1.5 text-sm', active ? cn('bg-surface shadow-sm', o.tone ?? 'text-ink') : 'text-soft hover:text-ink')}>
             {o.label}
           </button>
         );
@@ -228,8 +233,8 @@ export function PageLoader({ label = 'Loading…' }) {
   );
 }
 
-export function Skeleton({ className }) {
-  return <div className={cn('animate-pulse rounded-lg bg-raised', className)} aria-hidden="true" />;
+export function Skeleton({ className, style }) {
+  return <div className={cn('animate-pulse rounded-lg bg-raised', className)} style={style} aria-hidden="true" />;
 }
 
 export function EmptyState({ icon: Icon, title, description, action, className, compact }) {
@@ -358,6 +363,11 @@ export function Modal({ open, onClose, title, description, children, footer, siz
     </div>,
     document.body,
   );
+}
+
+/** Buttons pinned to the bottom of a long form inside a Modal (use instead of the `footer` prop when the form owns its own state). */
+export function ModalActions({ children }) {
+  return <div className="sticky -bottom-4 z-10 -mx-5 -mb-4 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-line bg-surface px-5 py-3.5">{children}</div>;
 }
 
 /** A confirmation step for destructive or irreversible actions. */
