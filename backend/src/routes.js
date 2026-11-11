@@ -7,6 +7,7 @@ import { clearDevOutbox, devOutbox } from './services/mail.js';
 import { adminSystemRouter } from './modules/admin/system.js';
 import { adminUsersRouter } from './modules/admin/users.js';
 import { catalogRouter } from './modules/admin/catalog.js';
+import { attendanceRouter, classAttendanceRouter } from './modules/attendance/routes.js';
 import { authRouter } from './modules/auth/routes.js';
 import { classesRouter } from './modules/classes/routes.js';
 import { classPeopleRouter, enrollmentsRouter } from './modules/enrollments/routes.js';
@@ -14,6 +15,7 @@ import { filesRouter } from './modules/files/routes.js';
 
 // Background jobs register themselves when imported.
 import './jobs/maintenance.js';
+import './jobs/attendance.js';
 
 export const apiRouter = Router();
 
@@ -22,7 +24,9 @@ apiRouter.use('/files', filesRouter);
 apiRouter.use('/catalog', catalogRouter);
 apiRouter.use('/enrollments', enrollmentsRouter);
 apiRouter.use('/classes/:classId/people', classPeopleRouter);
+apiRouter.use('/classes/:classId/attendance', classAttendanceRouter);
 apiRouter.use('/classes', classesRouter);
+apiRouter.use('/attendance', attendanceRouter);
 apiRouter.use('/admin/users', requireAuth, adminUsersRouter);
 apiRouter.use('/admin', requireAuth, adminSystemRouter);
 

@@ -12,7 +12,9 @@ const adapter = new PrismaPg({
 
 export const prisma = new PrismaClient({
   adapter,
-  log: env.isDevelopment ? ['warn', 'error'] : ['error'],
+  // Query errors are not logged here: expected ones (e.g. a unique-constraint race that the code
+  // handles) would only be noise, and unexpected ones are logged once by the error middleware.
+  log: env.isDevelopment ? ['warn'] : [],
   transactionOptions: { maxWait: 5_000, timeout: 15_000 },
 });
 
