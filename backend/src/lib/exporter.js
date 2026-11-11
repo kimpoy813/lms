@@ -12,6 +12,8 @@ export const safeFilename = (name) =>
     .replace(/[^\w.\- ]+/g, '')
     .trim()
     .replace(/\s+/g, '-')
+    // Never a hidden file or a ".." path segment (these names also become ZIP entry names).
+    .replace(/^\.+/, '')
     .slice(0, 100) || 'export';
 
 export function sendBuffer(res, buffer, filename, contentType) {

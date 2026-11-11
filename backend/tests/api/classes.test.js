@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  actor, anonymous, classroom, createClass, createCourse, createSemester, createUser, enroll, loginAs, prepare, prisma, setSetting, clearSetting, uid,
+  actor, anonymous, classroom, createClass, createCourse, createSemester, createUser, loginAs, prepare, prisma, uid,
 } from '../helpers/index.js';
 
 beforeAll(prepare);

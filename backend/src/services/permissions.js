@@ -18,6 +18,7 @@ export const PERMISSION_CATALOG = [
   { key: 'discussion.create_thread', category: 'Discussions', description: 'Start new discussion threads', roles: ['STUDENT'], defaults: ['STUDENT'] },
   { key: 'grades.export', category: 'Records', description: 'Export grade sheets', roles: ['TEACHER'], defaults: ['TEACHER'] },
   { key: 'attendance.export', category: 'Records', description: 'Export attendance records', roles: ['TEACHER'], defaults: ['TEACHER'] },
+  { key: 'submissions.download', category: 'Records', description: 'Download all submissions of an assignment as one archive', roles: ['TEACHER'], defaults: ['TEACHER'] },
   { key: 'records.download', category: 'Records', description: 'Download their own grade report', roles: ['STUDENT'], defaults: ['STUDENT'] },
   { key: 'ai.use', category: 'AI', description: 'Use AI-assisted module and assessment authoring', roles: ['TEACHER'], defaults: ['TEACHER'] },
 ];
