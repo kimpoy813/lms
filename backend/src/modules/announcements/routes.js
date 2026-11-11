@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
-import { created, fullName, idParams, noContent, ok, pageMeta, pageQuery, paging, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
+import { created, fullName, idParams, noContent, ok, pageMeta, pageQuery, paging, patchOf, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
@@ -191,7 +191,7 @@ announcementsRouter.get('/:announcementId', validate({ params: idParams('announc
   ok(res, { ...v, comments: comments.map((c) => commentView(c, req.user, v.canManage)) });
 });
 
-announcementsRouter.patch('/:announcementId', validate({ params: idParams('announcementId'), body: body.omit({ classId: true }).partial() }), async (req, res) => {
+announcementsRouter.patch('/:announcementId', validate({ params: idParams('announcementId'), body: patchOf(body.omit({ classId: true })) }), async (req, res) => {
   const a = await loadManaged(req);
   const b = req.valid.body;
   const publication = resolvePublication({ status: b.status, publishAt: b.publishAt ?? a.publishAt }, a);

@@ -18,6 +18,8 @@ import { classPeopleRouter, enrollmentsRouter } from './modules/enrollments/rout
 import { filesRouter } from './modules/files/routes.js';
 import { classGradebookRouter, gradesRouter } from './modules/gradebook/routes.js';
 import { notificationsRouter } from './modules/notifications/routes.js';
+import { banksRouter } from './modules/quizzes/banks.js';
+import { attemptsRouter, classQuizzesRouter, quizzesRouter } from './modules/quizzes/routes.js';
 
 // Background jobs register themselves when imported.
 import './jobs/maintenance.js';
@@ -34,6 +36,7 @@ apiRouter.use('/classes/:classId/people', classPeopleRouter);
 apiRouter.use('/classes/:classId/attendance', classAttendanceRouter);
 apiRouter.use('/classes/:classId/gradebook', classGradebookRouter);
 apiRouter.use('/classes/:classId/assignments', classAssignmentsRouter);
+apiRouter.use('/classes/:classId/quizzes', classQuizzesRouter);
 apiRouter.use('/classes/:classId', classContentRouter);
 apiRouter.use('/classes', classesRouter);
 apiRouter.use('/attendance', attendanceRouter);
@@ -42,6 +45,9 @@ apiRouter.use('/notifications', notificationsRouter);
 apiRouter.use('/grades', gradesRouter);
 apiRouter.use('/assignments', assignmentsRouter);
 apiRouter.use('/rubrics', rubricsRouter);
+apiRouter.use('/question-banks', banksRouter);
+apiRouter.use('/quizzes', quizzesRouter);
+apiRouter.use('/attempts', attemptsRouter);
 apiRouter.use(CONTENT_PREFIXES, requireAuth);
 apiRouter.use('/', contentRouter);
 apiRouter.use('/admin/users', requireAuth, adminUsersRouter);

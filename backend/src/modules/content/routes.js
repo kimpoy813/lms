@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
-import { created, fullName, idParams, noContent, ok, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
+import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
@@ -221,7 +221,7 @@ contentRouter.get('/modules/:moduleId', validate({ params: idParams('moduleId') 
   ok(res, view);
 });
 
-contentRouter.patch('/modules/:moduleId', validate({ params: idParams('moduleId'), body: moduleBody.partial() }), async (req, res) => {
+contentRouter.patch('/modules/:moduleId', validate({ params: idParams('moduleId'), body: patchOf(moduleBody) }), async (req, res) => {
   const { mod, cls } = await loadManagedModule(req);
   const body = req.valid.body;
   const publication = resolvePublication({ status: body.status, publishAt: body.publishAt ?? mod.publishAt }, mod);
@@ -448,7 +448,7 @@ async function loadManagedLesson(req) {
   return { lesson, cls: access.cls };
 }
 
-contentRouter.patch('/lessons/:lessonId', validate({ params: idParams('lessonId'), body: lessonBody.partial() }), async (req, res) => {
+contentRouter.patch('/lessons/:lessonId', validate({ params: idParams('lessonId'), body: patchOf(lessonBody) }), async (req, res) => {
   const { lesson } = await loadManagedLesson(req);
   const body = req.valid.body;
   if (body.prerequisiteLessonId !== undefined) await assertLessonPrerequisite(lesson.moduleId, body.prerequisiteLessonId, lesson.id);
@@ -655,7 +655,7 @@ async function loadManagedResource(req) {
 
 contentRouter.patch(
   '/resources/:resourceId',
-  validate({ params: idParams('resourceId'), body: resourceBody.pick({ title: true, description: true, url: true, moduleId: true, lessonId: true, allowDownload: true, isPublished: true }).partial() }),
+  validate({ params: idParams('resourceId'), body: patchOf(resourceBody.pick({ title: true, description: true, url: true, moduleId: true, lessonId: true, allowDownload: true, isPublished: true })) }),
   async (req, res) => {
     const resource = await loadManagedResource(req);
     const body = req.valid.body;

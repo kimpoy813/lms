@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { lockKey, prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { exportFormat, sendTable } from '../../lib/exporter.js';
-import { created, fullName, idParams, noContent, ok, round, zDateKey, zId, zTime } from '../../lib/http.js';
+import { created, fullName, idParams, noContent, ok, patchOf, round, zDateKey, zId, zTime } from '../../lib/http.js';
 import { plainText } from '../../lib/sanitize.js';
 import { addDays, atTime, dateKey, dateKeyToDb, timeKey } from '../../lib/time.js';
 import { randomDigits, randomToken } from '../../lib/tokens.js';
@@ -76,7 +76,7 @@ attendanceRouter.post('/locations', requireRole('TEACHER', 'ADMIN'), validate({ 
   created(res, locationView(row));
 });
 
-attendanceRouter.patch('/locations/:locationId', requireRole('TEACHER', 'ADMIN'), validate({ params: idParams('locationId'), body: locationBody.partial() }), async (req, res) => {
+attendanceRouter.patch('/locations/:locationId', requireRole('TEACHER', 'ADMIN'), validate({ params: idParams('locationId'), body: patchOf(locationBody) }), async (req, res) => {
   const existing = await prisma.classroomLocation.findUnique({ where: { id: req.valid.params.locationId } });
   if (!existing || existing.teacherId !== req.user.id) throw notFound('Location');
   const body = req.valid.body;

@@ -57,6 +57,15 @@ describe('assignments', () => {
     expect(await prisma.notification.count({ where: { userId: students[0].user.id, type: 'assignment.published' } })).toBe(2);
   });
 
+  it('changes only the fields that were sent', async () => {
+    const { teacher, cls } = await classroom(0);
+    const made = await create(teacher, cls, { points: 40, allowLate: false, allowFiles: false, maxFiles: 2, latePenaltyType: 'PERCENT_FLAT', latePenaltyValue: 10, dueAt: iso(60) });
+    const patched = await teacher.patch(`/api/assignments/${made.body.data.id}`, { title: 'Renamed' });
+    expect(patched.status).toBe(200);
+    expect(patched.body.data).toMatchObject({ title: 'Renamed', status: 'PUBLISHED', points: 40, allowLate: false, allowFiles: false, maxFiles: 2, latePenaltyType: 'PERCENT_FLAT', latePenaltyValue: 10 });
+    expect(patched.body.data.dueAt).toBe(made.body.data.dueAt);
+  });
+
   it('validates dates, points and submission types', async () => {
     const { teacher, cls } = await classroom(0);
     const fields = async (body) => (await create(teacher, cls, body)).body.error?.details?.fields ?? {};

@@ -20,6 +20,21 @@ export function pageMeta({ page = 1, pageSize = 20 } = {}, total) {
   return { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
 }
 
+/**
+ * Schema for a PATCH body derived from a create schema: every field becomes optional and loses
+ * its default. (zod's own `.partial()` keeps applying defaults, which would silently reset every
+ * field the client did not send.)
+ */
+export function patchOf(schema) {
+  const shape = {};
+  for (const [key, field] of Object.entries(schema.shape)) {
+    let inner = field;
+    while (inner instanceof z.ZodDefault) inner = inner.unwrap();
+    shape[key] = inner.optional();
+  }
+  return z.object(shape);
+}
+
 // Reusable field schemas ---------------------------------------------------
 
 export const zId = z.string().min(1).max(40).regex(/^[A-Za-z0-9_-]+$/, 'Invalid identifier');

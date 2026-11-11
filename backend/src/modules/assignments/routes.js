@@ -2,10 +2,10 @@
 import { Router } from 'express';
 import { zipSync } from 'fflate';
 import { z } from 'zod';
-import { lockKey, prisma } from '../../db/prisma.js';
+import { Prisma, lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
 import { safeFilename, sendBuffer } from '../../lib/exporter.js';
-import { created, fullName, idParams, noContent, ok, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
+import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { escapeHtml, excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
@@ -304,7 +304,7 @@ assignmentsRouter.get('/:assignmentId', validate({ params: assignmentParams }), 
   });
 });
 
-assignmentsRouter.patch('/:assignmentId', validate({ params: assignmentParams, body: body.partial() }), async (req, res) => {
+assignmentsRouter.patch('/:assignmentId', validate({ params: assignmentParams, body: patchOf(body) }), async (req, res) => {
   const { assignment, cls } = await loadManaged(req);
   const b = req.valid.body;
   const next = { ...assignment, ...Object.fromEntries(Object.entries(b).filter(([, v]) => v !== undefined)) };
@@ -318,7 +318,7 @@ assignmentsRouter.patch('/:assignmentId', validate({ params: assignmentParams, b
   const title = b.title !== undefined ? plainText(b.title, 200) : assignment.title;
 
   if (b.rubricId !== undefined && b.rubricId !== assignment.rubricId) {
-    const scored = await prisma.assignmentSubmission.count({ where: { assignmentId: assignment.id, rubricScores: { not: null } } });
+    const scored = await prisma.assignmentSubmission.count({ where: { assignmentId: assignment.id, rubricScores: { not: Prisma.AnyNull } } });
     if (scored > 0) throw conflict('Submissions have already been graded with the current rubric, so it cannot be replaced.', 'RUBRIC_IN_USE');
   }
   if (points < assignment.points) {

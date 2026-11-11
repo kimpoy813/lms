@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { exportFormat, sendTable } from '../../lib/exporter.js';
-import { created, fullName, idParams, noContent, ok, round, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
+import { created, fullName, idParams, noContent, ok, patchOf, round, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { plainText } from '../../lib/sanitize.js';
 import { dateKey } from '../../lib/time.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
@@ -330,7 +330,7 @@ async function loadItem(req, cls) {
   return item;
 }
 
-classGradebookRouter.patch('/items/:itemId', validate({ params: idParams('classId', 'itemId'), body: itemBody.partial() }), async (req, res) => {
+classGradebookRouter.patch('/items/:itemId', validate({ params: idParams('classId', 'itemId'), body: patchOf(itemBody) }), async (req, res) => {
   const cls = await managed(req);
   const item = await loadItem(req, cls);
   const body = req.valid.body;

@@ -1,7 +1,7 @@
 // Reusable grading rubrics. A rubric belongs to the teacher who wrote it.
 import { Router } from 'express';
 import { z } from 'zod';
-import { prisma } from '../../db/prisma.js';
+import { Prisma, prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { created, idParams, noContent, ok, round, zTitle } from '../../lib/http.js';
 import { plainText } from '../../lib/sanitize.js';
@@ -64,7 +64,7 @@ async function loadOwned(req) {
   return rubric;
 }
 
-const usedForGrading = (rubricId) => prisma.assignmentSubmission.count({ where: { assignment: { rubricId }, rubricScores: { not: null } } });
+const usedForGrading = (rubricId) => prisma.assignmentSubmission.count({ where: { assignment: { rubricId }, rubricScores: { not: Prisma.AnyNull } } });
 
 rubricsRouter.get('/', async (req, res) => {
   const rubrics = await prisma.rubric.findMany({ where: { ownerId: req.user.id }, include, orderBy: { updatedAt: 'desc' } });

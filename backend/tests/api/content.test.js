@@ -27,6 +27,17 @@ describe('learning modules', () => {
     expect(await prisma.notification.count({ where: { userId: students[0].user.id, type: 'module.published' } })).toBe(1);
   });
 
+  it('changes only the fields that were sent', async () => {
+    const { teacher, cls } = await classroom(0);
+    const mod = await mk(teacher, cls, { objectives: ['One', 'Two'] });
+    const lesson = await mkLesson(teacher, mod.id, { kind: 'ACTIVITY', status: 'DRAFT', estimatedMinutes: 15 });
+    expect((await teacher.patch(`/api/modules/${mod.id}`, { title: 'Renamed' })).body.data).toMatchObject({ title: 'Renamed', status: 'PUBLISHED', objectives: ['One', 'Two'] });
+    const patched = (await teacher.patch(`/api/lessons/${lesson.id}`, { title: 'Renamed lesson' })).body.data;
+    expect(patched).toMatchObject({ title: 'Renamed lesson', kind: 'ACTIVITY', status: 'DRAFT', estimatedMinutes: 15, contentHtml: '<p>Hello</p>' });
+    const a = await teacher.post('/api/announcements', { classId: cls.id, title: 'Pinned', contentHtml: '<p>Body</p>', priority: 'URGENT', isPinned: true, allowComments: true });
+    expect((await teacher.patch(`/api/announcements/${a.body.data.id}`, { title: 'Still pinned' })).body.data).toMatchObject({ title: 'Still pinned', priority: 'URGENT', isPinned: true, allowComments: true, status: 'PUBLISHED' });
+  });
+
   it('publishes scheduled modules when their time comes', async () => {
     const { teacher, cls, students } = await classroom(1);
     const noDate = await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Later', status: 'SCHEDULED' });

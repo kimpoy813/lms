@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
-import { created, idParams, noContent, ok, pageMeta, pageQuery, paging, zDateKey, zId } from '../../lib/http.js';
+import { created, idParams, noContent, ok, pageMeta, pageQuery, paging, patchOf, zDateKey, zId } from '../../lib/http.js';
 import { plainText } from '../../lib/sanitize.js';
 import { dateKeyToDb, dbToDateKey } from '../../lib/time.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
@@ -110,7 +110,7 @@ const departments = crud({
   orderBy: { code: 'asc' },
   include: { _count: { select: { programs: true, courses: true, teachers: true } } },
   createSchema: z.object(departmentFields),
-  updateSchema: z.object(departmentFields).partial(),
+  updateSchema: patchOf(z.object(departmentFields)),
   check: async (body, existing) => {
     await assertUnique('department', 'code', body.code, existing, 'This department code is already used.');
     return body;
@@ -128,7 +128,7 @@ const programs = crud({
   orderBy: { code: 'asc' },
   include: { department: { select: { id: true, code: true, name: true } }, _count: { select: { students: true, sections: true } } },
   createSchema: z.object(programFields),
-  updateSchema: z.object(programFields).partial(),
+  updateSchema: patchOf(z.object(programFields)),
   check: async (body, existing) => {
     await assertUnique('academicProgram', 'code', body.code, existing, 'This program code is already used.');
     await assertExists('department', body.departmentId, 'departmentId', 'Choose a department.');
@@ -149,7 +149,7 @@ const academicYears = crud({
   orderBy: { startDate: 'desc' },
   include: { semesters: { orderBy: { startDate: 'asc' }, include: { _count: { select: { classes: true } } } } },
   createSchema: z.object(yearFields),
-  updateSchema: z.object(yearFields).partial(),
+  updateSchema: patchOf(z.object(yearFields)),
   check: async (body, existing) => {
     await assertUnique('academicYear', 'name', body.name, existing, 'An academic year with this name already exists.');
     const data = { ...(body.name ? { name: body.name } : {}), ...dateRange(body, existing) };
@@ -170,7 +170,7 @@ const semesters = crud({
   orderBy: [{ startDate: 'desc' }],
   include: { academicYear: true, _count: { select: { classes: true } } },
   createSchema: z.object(semesterFields),
-  updateSchema: z.object(semesterFields).partial(),
+  updateSchema: patchOf(z.object(semesterFields)),
   check: async (body, existing) => {
     const academicYearId = body.academicYearId ?? existing?.academicYearId;
     const year = await prisma.academicYear.findUnique({ where: { id: academicYearId } });
@@ -206,7 +206,7 @@ const courses = crud({
   orderBy: { code: 'asc' },
   include: { department: { select: { id: true, code: true, name: true } }, _count: { select: { classes: true } } },
   createSchema: z.object(courseFields),
-  updateSchema: z.object(courseFields).partial(),
+  updateSchema: patchOf(z.object(courseFields)),
   filter: { query: { departmentId: zId.optional() }, where: (q) => (q.departmentId ? { departmentId: q.departmentId } : {}) },
   check: async (body, existing) => {
     await assertUnique('course', 'code', body.code, existing, 'This course code is already used.');
@@ -225,7 +225,7 @@ const sections = crud({
   orderBy: { name: 'asc' },
   include: { program: { select: { id: true, code: true, name: true } }, _count: { select: { classes: true, students: true } } },
   createSchema: z.object(sectionFields),
-  updateSchema: z.object(sectionFields).partial(),
+  updateSchema: patchOf(z.object(sectionFields)),
   filter: { query: { programId: zId.optional() }, where: (q) => (q.programId ? { programId: q.programId } : {}) },
   check: async (body, existing) => {
     await assertUnique('section', 'name', body.name, existing, 'A section with this name already exists.');
