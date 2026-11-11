@@ -85,7 +85,6 @@ function baseView(a) {
     module: a.module ?? null,
     gradeCategory: a.gradeItem ? { id: a.gradeItem.categoryId, name: a.gradeItem.category.name, period: a.gradeItem.category.period.name } : null,
     hasRubric: Boolean(a.rubricId),
-    programmingProblemId: a.programmingProblemId,
   };
 }
 

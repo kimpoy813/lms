@@ -210,7 +210,6 @@ function ModuleDialog({ module: m, modules, onClose }) {
           <legend className="mb-1.5 text-sm font-medium text-ink">Learning objectives <span className="text-xs font-normal text-faint">optional</span></legend>
           <ul className="space-y-2">
             {values.objectives.map((o, i) => (
-              // eslint-disable-next-line react/no-array-index-key
               <li key={i} className="flex items-center gap-2">
                 <Input value={o} onChange={(e) => set('objectives', values.objectives.map((x, n) => (n === i ? e.target.value : x)))} aria-label={`Objective ${i + 1}`} maxLength={300} />
                 <Button variant="ghost" size="sm" icon={X} aria-label="Remove this objective" onClick={() => set('objectives', values.objectives.filter((_, n) => n !== i))} />

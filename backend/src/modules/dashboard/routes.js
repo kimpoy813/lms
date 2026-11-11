@@ -166,12 +166,12 @@ async function teacherDashboard(user) {
   const labelOf = new Map(classes.map((c) => [c.id, classLabel(c)]));
   const soon = new Date(now.getTime() + WEEK_MS);
 
-  const [toGradeGroups, quizGrading, pendingEnrollments, corrections, appeals, upcomingAssignments, upcomingQuizzes, openSessions, drafts] = await Promise.all([
+  const [toGradeGroups, quizGrading, pendingEnrollments, correctionRows, appealGroups, upcomingAssignments, upcomingQuizzes, openSessions, drafts] = await Promise.all([
     prisma.assignmentSubmission.groupBy({ by: ['assignmentId'], where: { status: { in: ['SUBMITTED', 'UNDER_REVIEW'] }, assignment: { classId: { in: classIds }, deletedAt: null } }, _count: { _all: true } }),
     prisma.quizAttempt.groupBy({ by: ['quizId'], where: { needsManualGrading: true, status: { not: 'IN_PROGRESS' }, quiz: { classId: { in: classIds }, deletedAt: null } }, _count: { _all: true } }),
     prisma.enrollment.groupBy({ by: ['classId'], where: { classId: { in: classIds }, status: 'PENDING' }, _count: { _all: true } }),
-    prisma.attendanceCorrectionRequest.count({ where: { status: 'PENDING', session: { classId: { in: classIds } } } }),
-    prisma.gradeAppeal.count({ where: { status: 'PENDING', classId: { in: classIds } } }),
+    prisma.attendanceCorrectionRequest.findMany({ where: { status: 'PENDING', session: { classId: { in: classIds } } }, select: { session: { select: { classId: true } } } }),
+    prisma.gradeAppeal.groupBy({ by: ['classId'], where: { status: 'PENDING', classId: { in: classIds } }, _count: { _all: true } }),
     prisma.assignment.findMany({ where: { classId: { in: classIds }, deletedAt: null, status: 'PUBLISHED', dueAt: { gt: now, lte: soon } }, select: { id: true, classId: true, title: true, dueAt: true, _count: { select: { submissions: { where: { status: { not: 'DRAFT' } } } } } }, orderBy: { dueAt: 'asc' }, take: 8 }),
     prisma.quiz.findMany({ where: { classId: { in: classIds }, deletedAt: null, status: 'PUBLISHED', availableUntil: { gt: now, lte: soon } }, select: { id: true, classId: true, title: true, kind: true, availableUntil: true }, orderBy: { availableUntil: 'asc' }, take: 8 }),
     prisma.attendanceSession.findMany({ where: { classId: { in: classIds }, status: 'OPEN' }, select: { id: true, classId: true, title: true, startTime: true, endTime: true, _count: { select: { records: true } } }, orderBy: { startTime: 'desc' }, take: 5 }),
@@ -213,6 +213,12 @@ async function teacherDashboard(user) {
   atRisk.sort((a, b) => b.reasons.length - a.reasons.length || (a.percent ?? 101) - (b.percent ?? 101));
 
   const pendingByClass = new Map(pendingEnrollments.map((p) => [p.classId, p._count._all]));
+  // Per class, so that the dashboard can link straight to the class that has something waiting.
+  const correctionsByClass = new Map();
+  for (const row of correctionRows) correctionsByClass.set(row.session.classId, (correctionsByClass.get(row.session.classId) ?? 0) + 1);
+  const appealsByClass = new Map(appealGroups.map((g) => [g.classId, g._count._all]));
+  const corrections = correctionRows.length;
+  const appeals = appealGroups.reduce((a, g) => a + g._count._all, 0);
   const students = classes.reduce((a, c) => a + c._count.enrollments, 0);
   return {
     role: 'TEACHER',
@@ -235,7 +241,8 @@ async function teacherDashboard(user) {
     announcements: await latestAnnouncements(user, classIds, now),
     classes: classes.map((cls) => ({
       id: cls.id, label: classLabel(cls), title: cls.course.title, color: cls.color, semester: cls.semester.name, students: cls._count.enrollments,
-      pendingEnrollments: pendingByClass.get(cls.id) ?? 0, toGrade: toGrade.filter((t) => t.classId === cls.id).reduce((a, t) => a + t.count, 0),
+      pendingEnrollments: pendingByClass.get(cls.id) ?? 0, pendingCorrections: correctionsByClass.get(cls.id) ?? 0, pendingAppeals: appealsByClass.get(cls.id) ?? 0,
+      toGrade: toGrade.filter((t) => t.classId === cls.id).reduce((a, t) => a + t.count, 0),
     })),
   };
 }

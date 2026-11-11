@@ -82,7 +82,6 @@ function Review({ draft, onBack, configured }) {
           <div className="mb-2 flex items-center justify-between"><h2 className="text-base font-semibold text-ink">{plural(c.lessons.length, 'lesson')}</h2>{!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.lessons.length >= 20} onClick={() => { change({ lessons: [...c.lessons, { title: 'New lesson', kind: 'LESSON', estimatedMinutes: null, contentHtml: '' }] }); setOpen(c.lessons.length); }}>Add a lesson</Button>}</div>
           <ol className="space-y-3">
             {c.lessons.map((l, i) => (
-              // eslint-disable-next-line react/no-array-index-key
               <li key={i} className="rounded-2xl border border-line bg-surface shadow-card">
                 <div className="flex items-center gap-2 p-3">
                   <button type="button" onClick={() => setOpen(open === i ? -1 : i)} aria-expanded={open === i} className="flex min-w-0 flex-1 items-center gap-3 text-left">
@@ -121,7 +120,6 @@ function Review({ draft, onBack, configured }) {
             <CardHeader title="Practice activities" description="Added to the module as one “Practice activities” lesson." action={!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.activities.length >= 10} onClick={() => change({ activities: [...c.activities, { title: '', instructions: '' }] })}>Add</Button>} />
             <ul className="space-y-3">
               {c.activities.map((a, i) => (
-                // eslint-disable-next-line react/no-array-index-key
                 <li key={i} className="rounded-xl border border-line p-3">
                   <div className="flex gap-2"><Input value={a.title} disabled={locked} onChange={(e) => change({ activities: c.activities.map((x, n) => (n === i ? { ...x, title: e.target.value } : x)) })} placeholder="Activity title" aria-label={`Activity ${i + 1} title`} maxLength={200} />{!locked && <IconButton icon={X} label="Remove activity" onClick={() => change({ activities: c.activities.filter((_, n) => n !== i) })} />}</div>
                   <Textarea rows={3} className="mt-2" value={a.instructions} disabled={locked} onChange={(e) => change({ activities: c.activities.map((x, n) => (n === i ? { ...x, instructions: e.target.value } : x)) })} placeholder="Instructions" aria-label={`Activity ${i + 1} instructions`} maxLength={3000} />

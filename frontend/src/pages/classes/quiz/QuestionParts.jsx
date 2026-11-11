@@ -103,7 +103,6 @@ export function AnswerInput({ question: q, response, onChange, disabled, name, f
       return (
         <ol className="space-y-2">
           {blanks.map((value, i) => (
-            // eslint-disable-next-line react/no-array-index-key
             <li key={i} className="flex items-center gap-3">
               <span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-bold text-brand">{i + 1}</span>
               <Input value={value} disabled={disabled} onChange={(e) => { const next = blanks.map((b, n) => (n === i ? e.target.value : b)); onChange(next.some((b) => b.trim()) ? { blanks: next } : null); }} aria-label={`Blank ${i + 1}`} maxLength={300} autoComplete="off" spellCheck={false} className="max-w-sm" />
@@ -151,17 +150,7 @@ export function AnswerInput({ question: q, response, onChange, disabled, name, f
     }
     case 'FILE_UPLOAD':
       return <FileUpload value={files} disabled={disabled} max={5} onChange={(list) => { onFiles?.(list); onChange(list.length ? { fileIds: list.map((f) => f.id) } : null); }} label="Upload your answer" hint="Up to 5 files" />;
-    case 'PROGRAMMING':
-      return (
-        <div>
-          <Textarea rows={12} value={r.code ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value ? { language: r.language ?? 'python', code: e.target.value } : null)} spellCheck={false} placeholder="Write your code here" aria-label="Your code" className="font-mono text-[13px]" />
-          <label className="mt-2 flex items-center gap-2 text-[13px] text-soft">Language
-            <Select value={r.language ?? 'python'} disabled={disabled} onChange={(e) => onChange({ language: e.target.value, code: r.code ?? '' })} className="h-8 w-40">
-              {['python', 'javascript', 'java', 'c', 'cpp'].map((l) => <option key={l} value={l}>{l}</option>)}
-            </Select>
-          </label>
-        </div>
-      );
+    // PROGRAMMING answers are edited in the code workbench (components/CodeWorkbench.jsx), not here.
     default:
       return <p className="text-sm text-faint">This question type cannot be answered here.</p>;
   }
@@ -230,7 +219,6 @@ export function AnswerReview({ item }) {
             const accepted = correct?.blanks?.[i];
             const ok = accepted ? accepted.some((a) => a.trim().toLowerCase() === given.trim().toLowerCase()) : null;
             return (
-              // eslint-disable-next-line react/no-array-index-key
               <li key={i} className="flex flex-wrap items-center gap-2">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-raised text-[11px] font-bold text-soft">{i + 1}</span>
                 <span className={cn('rounded-md border px-2.5 py-1', ok === null ? 'border-line' : ok ? 'border-ok/50 bg-ok-soft' : 'border-bad/50 bg-bad-soft')}>{given || <em className="text-faint">blank</em>}</span>

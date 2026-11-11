@@ -29,7 +29,7 @@ export default function ProblemView() {
             <div className="min-w-0 space-y-5">
               <Card><CardHeader icon={Code2} title="Problem" /><ProblemStatement problem={p} /></Card>
               <Card>
-                <CardHeader icon={History} title={isStudent ? 'My submissions' : 'Submissions'} description={isStudent ? 'Your best result counts.' : 'Latest first.'} />
+                <CardHeader icon={History} title={isStudent ? 'My submissions' : 'Submissions'} description={isStudent ? 'Latest first. Practice does not count toward your grade.' : 'Latest first.'} />
                 <QueryState query={submissions} loader={<p className="text-sm text-faint">Loading…</p>}>
                   {(rows) => rows.length === 0 ? <EmptyState compact icon={History} title="No submissions yet" /> : (
                     <ul className="divide-y divide-line">

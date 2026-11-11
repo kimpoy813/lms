@@ -43,7 +43,6 @@ export function TestResults({ result }) {
         {result.results.map((r, i) => {
           const o = OUTCOME[r.outcome] ?? OUTCOME.WRONG_ANSWER;
           return (
-            // eslint-disable-next-line react/no-array-index-key
             <li key={i} className={cn('rounded-lg border p-3 text-[13px]', r.passed ? 'border-ok/40' : 'border-bad/40')}>
               <p className="flex flex-wrap items-center gap-2 font-semibold text-ink"><o.icon className={cn('size-4', r.passed ? 'text-ok' : o.tone === 'warn' ? 'text-warn' : 'text-bad')} aria-hidden="true" />Test {i + 1}: {o.label}{r.isHidden && <Badge icon={EyeOff}>Hidden test</Badge>}</p>
               {!r.isHidden && !r.passed && (
@@ -75,6 +74,8 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const configured = problem.runner?.configured !== false;
+  // Inside a quiz the code is part of the saved answer; in practice nothing is kept unless it is checked.
+  const inQuiz = Boolean(studentAnswerId);
 
   const update = (next) => { setCode(next.code); setLanguage(next.language); onChange?.(next.code.trim() ? next : null); };
   const call = async (kind) => {
@@ -87,7 +88,7 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
       if (kind === 'submit') onSubmitted?.(data);
     } catch (err) {
       setResult(null);
-      setError(err.code === 'CODE_RUNNER_UNAVAILABLE' ? 'Automatic checking is not available on this server right now. Your code is saved with your answer, and your teacher will check it.' : err.fields?.language ?? err.message);
+      setError(err.code === 'CODE_RUNNER_UNAVAILABLE' ? `Automatic checking is not available on this server right now. ${inQuiz ? 'Your code is saved with your answer, and your teacher will mark it.' : 'Please try again later.'}` : err.fields?.language ?? err.message);
     } finally {
       setBusy(null);
     }
@@ -105,7 +106,7 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
         <span className="ml-auto text-xs text-faint">Limit: {problem.timeLimitMs / 1000}s per test</span>
       </div>
       <LazyCodeEditor value={code} language={language} readOnly={readOnly} minHeight={minHeight} onChange={(next) => update({ language, code: next })} ariaLabel="Your code" />
-      {!configured && <Alert tone="info" title="Code is not run automatically on this server">{problem.runner?.message ?? 'An administrator needs to connect a code runner.'}</Alert>}
+      {!configured && <Alert tone="info" title="Code is not run automatically on this server">{inQuiz ? 'Write your program as usual: it is saved with your answer, and your teacher marks it by hand.' : 'You can write code here, but it cannot be run or checked until an administrator connects a code runner.'}</Alert>}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" icon={Play} loading={busy === 'run'} disabled={!code.trim() || !configured || Boolean(busy)} onClick={() => call('run')}>Run sample tests</Button>
@@ -138,7 +139,7 @@ export function ProgrammingAnswer({ problemId, studentAnswerId, value, onChange,
     <div className="space-y-4">
       {p.statementHtml && <ProblemStatement problem={p} />}
       <CodeWorkbench problem={p} value={value} onChange={onChange} studentAnswerId={studentAnswerId} canSubmit readOnly={disabled} minHeight={300} />
-      <p className="text-xs text-faint">Your code is saved with your answer. “Submit for checking” runs all tests, including hidden ones; the best result counts.</p>
+      <p className="text-xs text-faint">Your code is saved with your answer as you type.{p.runner?.configured !== false && ' “Submit for checking” runs all tests, including hidden ones; your best checked result counts.'}</p>
     </div>
   );
 }

@@ -1,8 +1,8 @@
 // One question bank: its questions, and importing an existing test paper into it.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, ChevronLeft, Copy, FileUp, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Upload, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, FileUp, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Upload, XCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { useParams } from 'react-router';
 import { toast } from '../components/toast.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, IconButton, Menu, MenuItem, Modal, PageHeader, Pagination, QueryState, SearchInput, Select, Textarea, useDebounced } from '../components/ui.jsx';
 import { api } from '../lib/api.js';

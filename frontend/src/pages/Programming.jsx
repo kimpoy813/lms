@@ -24,11 +24,11 @@ export default function Programming() {
 
   return (
     <>
-      <PageHeader title={isStudent ? 'Coding practice' : 'Coding problems'} description={isStudent ? 'Practice problems shared by your teachers. Your program is checked against test cases.' : 'Write a problem once, then use it for practice, as an assignment, or as a question in a quiz.'}
+      <PageHeader title={isStudent ? 'Coding practice' : 'Coding problems'} description={isStudent ? 'Practice problems shared by your teachers. Your program is checked against test cases.' : 'Write a problem once, then share it with a class for practice or use it as a question in a quiz.'}
         actions={!isStudent && <Button icon={Plus} onClick={() => setDialog({ edit: null })}>New problem</Button>} />
       {status.data && !status.data.configured && (
         <Alert tone="warn" className="mb-5" title="Programs are not run automatically on this server yet">
-          {isStudent ? 'You can still write and save your code; your teacher checks it.' : 'An administrator needs to connect a code runner (set CODE_RUNNER_PROVIDER and CODE_RUNNER_URL). Until then, problems can be written and code is saved, but nothing is executed.'}
+          {isStudent ? 'You can read the problems and write code, but it cannot be run or checked here until your school connects a code runner. Code you write in a quiz is still saved with your answers, and your teacher marks it.' : 'An administrator needs to connect a code runner (set CODE_RUNNER_PROVIDER and CODE_RUNNER_URL). Until then you can write problems and add them to quizzes; students’ code in a quiz is saved for you to mark by hand, and practice problems cannot be checked.'}
         </Alert>
       )}
       <SearchInput value={search} onChange={setSearch} placeholder="Search problems…" className="mb-4 w-full sm:w-72" />
@@ -142,7 +142,6 @@ function ProblemForm({ problem, languages, onClose }) {
         {errors.testCases && <p className="mb-2 text-[13px] text-bad" role="alert">{errors.testCases}</p>}
         <ol className="space-y-3">
           {v.testCases.map((t, i) => (
-            // eslint-disable-next-line react/no-array-index-key
             <li key={i} className={cn('rounded-xl border p-3', t.isHidden ? 'border-line bg-raised/50' : 'border-line')}>
               <div className="mb-2 flex flex-wrap items-center gap-3">
                 <span className="text-sm font-semibold text-ink">Test {i + 1}</span>

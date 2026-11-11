@@ -60,7 +60,6 @@ export default function Setup({ data }) {
             {periods.map((p, i) => {
               const total = sum(p.categories);
               return (
-                // eslint-disable-next-line react/no-array-index-key
                 <div key={p.id ?? `new-${i}`} className="rounded-xl border border-line">
                   <div className="flex flex-wrap items-end gap-3 border-b border-line bg-raised/60 p-3">
                     <Field label="Grading period" className="min-w-0 flex-1 basis-40"><Input value={p.name} onChange={(e) => updatePeriod(i, { name: e.target.value })} placeholder="e.g. Midterm" maxLength={60} /></Field>
@@ -69,7 +68,6 @@ export default function Setup({ data }) {
                   </div>
                   <div className="space-y-2 p-3">
                     {p.categories.map((c, j) => (
-                      // eslint-disable-next-line react/no-array-index-key
                       <div key={c.id ?? `new-${j}`} className="grid grid-cols-[1fr_auto] items-center gap-2 sm:grid-cols-[1fr_12rem_7rem_auto]">
                         <Input value={c.name} onChange={(e) => updateCategory(i, j, { name: e.target.value })} placeholder="Category name" aria-label="Category name" maxLength={60} />
                         <Select value={c.kind} onChange={(e) => updateCategory(i, j, { kind: e.target.value, name: c.name || KINDS[e.target.value].replace(' (automatic)', '') })} aria-label="Kind of work" className="max-sm:col-start-1">

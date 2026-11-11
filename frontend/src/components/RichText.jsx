@@ -37,6 +37,5 @@ export const isEmptyHtml = (html) => !html || html.replace(/<(?!img|iframe)[^>]*
 export default function RichText({ html, className, empty = null }) {
   const clean = useMemo(() => sanitizeHtml(html), [html]);
   if (isEmptyHtml(clean)) return empty;
-  // eslint-disable-next-line react/no-danger
   return <div className={cn('rich', className)} dangerouslySetInnerHTML={{ __html: clean }} />;
 }

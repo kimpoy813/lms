@@ -1115,46 +1115,44 @@ model RubricCriterion {
 }
 
 model Assignment {
-  id                   String          @id @default(cuid())
-  classId              String
-  moduleId             String?
-  title                String
-  instructionsHtml     String          @default("")
-  points               Float           @default(100)
-  status               PublishStatus   @default(DRAFT)
-  publishAt            DateTime?       @db.Timestamptz(3)
-  publishedAt          DateTime?       @db.Timestamptz(3)
+  id                String          @id @default(cuid())
+  classId           String
+  moduleId          String?
+  title             String
+  instructionsHtml  String          @default("")
+  points            Float           @default(100)
+  status            PublishStatus   @default(DRAFT)
+  publishAt         DateTime?       @db.Timestamptz(3)
+  publishedAt       DateTime?       @db.Timestamptz(3)
   /// Submissions open at this instant (null = as soon as published).
-  availableFrom        DateTime?       @db.Timestamptz(3)
-  dueAt                DateTime?       @db.Timestamptz(3)
+  availableFrom     DateTime?       @db.Timestamptz(3)
+  dueAt             DateTime?       @db.Timestamptz(3)
   /// Hard cut-off. Null = the due date is the cut-off unless late work is allowed.
-  closeAt              DateTime?       @db.Timestamptz(3)
-  allowLate            Boolean         @default(true)
-  latePenaltyType      LatePenaltyType @default(NONE)
-  latePenaltyValue     Float           @default(0)
+  closeAt           DateTime?       @db.Timestamptz(3)
+  allowLate         Boolean         @default(true)
+  latePenaltyType   LatePenaltyType @default(NONE)
+  latePenaltyValue  Float           @default(0)
   /// Cap on the total late deduction, as a percentage of the score.
-  latePenaltyMax       Float           @default(100)
-  allowText            Boolean         @default(true)
-  allowFiles           Boolean         @default(true)
-  maxFiles             Int             @default(5)
-  allowResubmission    Boolean         @default(true)
-  rubricId             String?
-  programmingProblemId String?
+  latePenaltyMax    Float           @default(100)
+  allowText         Boolean         @default(true)
+  allowFiles        Boolean         @default(true)
+  maxFiles          Int             @default(5)
+  allowResubmission Boolean         @default(true)
+  rubricId          String?
   /// Set once the "due soon" reminder has been sent, so it is never sent twice.
-  reminderSentAt       DateTime?       @db.Timestamptz(3)
-  createdById          String
-  createdAt            DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime        @updatedAt @db.Timestamptz(3)
-  deletedAt            DateTime?       @db.Timestamptz(3)
+  reminderSentAt    DateTime?       @db.Timestamptz(3)
+  createdById       String
+  createdAt         DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(3)
+  deletedAt         DateTime?       @db.Timestamptz(3)
 
-  class              Class                  @relation(fields: [classId], references: [id], onDelete: Restrict)
-  module             LearningModule?        @relation(fields: [moduleId], references: [id], onDelete: SetNull)
-  rubric             Rubric?                @relation(fields: [rubricId], references: [id], onDelete: SetNull)
-  programmingProblem ProgrammingProblem?    @relation(fields: [programmingProblemId], references: [id], onDelete: SetNull)
-  createdBy          User                   @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  attachments        File[]
-  submissions        AssignmentSubmission[]
-  gradeItem          GradeItem?
+  class       Class                  @relation(fields: [classId], references: [id], onDelete: Restrict)
+  module      LearningModule?        @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  rubric      Rubric?                @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  createdBy   User                   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  attachments File[]
+  submissions AssignmentSubmission[]
+  gradeItem   GradeItem?
 
   @@index([classId, status])
   @@index([status, publishAt])
@@ -1439,7 +1437,6 @@ model ProgrammingProblem {
   class       Class?                  @relation(fields: [classId], references: [id], onDelete: SetNull)
   testCases   ProgrammingTestCase[]
   submissions ProgrammingSubmission[]
-  assignments Assignment[]
   questions   Question[]
 
   @@index([ownerId])

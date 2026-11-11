@@ -102,7 +102,6 @@ export function RubricDialog({ rubric, draft, onClose, onSaved }) {
         </div>
         <ol className="space-y-4">
           {v.criteria.map((c, i) => (
-            // eslint-disable-next-line react/no-array-index-key
             <li key={i} className="rounded-xl border border-line">
               <div className="grid gap-3 border-b border-line bg-raised/60 p-3 sm:grid-cols-[1fr_7rem_auto] sm:items-end">
                 <Field label={`Criterion ${i + 1}`}><Input value={c.title} onChange={(e) => setCriterion(i, { title: e.target.value })} placeholder="e.g. Content and insight" maxLength={120} required /></Field>
@@ -113,13 +112,16 @@ export function RubricDialog({ rubric, draft, onClose, onSaved }) {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-faint">Levels of performance</p>
                 <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                   {c.levels.map((l, j) => (
-                    // eslint-disable-next-line react/no-array-index-key
                     <li key={j} className="rounded-lg border border-line p-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <Input value={l.title} onChange={(e) => setLevel(i, j, { title: e.target.value })} placeholder="Level" aria-label={`Level ${j + 1} name`} maxLength={60} className="h-8 text-[13px] font-semibold" />
-                        <Input type="number" min="0" max={c.maxPoints} step="any" value={l.points} onChange={(e) => setLevel(i, j, { points: e.target.value })} aria-label={`Level ${j + 1} points`} className="h-8 w-16 px-2 text-right text-[13px] tabular-nums" />
-                        <button type="button" onClick={() => setCriterion(i, { levels: c.levels.filter((_, n) => n !== j) })} className="rounded p-1 text-faint hover:text-bad" aria-label={`Remove level ${l.title || j + 1}`}><X className="size-4" /></button>
+                      {/* Name on its own line so that "Needs work" or "Developing" is not cut off. */}
+                      <div className="flex items-center gap-1">
+                        <Input value={l.title} onChange={(e) => setLevel(i, j, { title: e.target.value })} placeholder="Level name" aria-label={`Level ${j + 1} name`} maxLength={60} className="h-8 min-w-0 flex-1 text-[13px] font-semibold" />
+                        <button type="button" onClick={() => setCriterion(i, { levels: c.levels.filter((_, n) => n !== j) })} className="shrink-0 rounded p-1 text-faint hover:text-bad" aria-label={`Remove level ${l.title || j + 1}`}><X className="size-4" /></button>
                       </div>
+                      <label className="mt-1.5 flex items-center gap-2 text-xs text-soft">
+                        <Input type="number" min="0" max={c.maxPoints} step="any" value={l.points} onChange={(e) => setLevel(i, j, { points: e.target.value })} aria-label={`Level ${j + 1} points`} className="h-8 w-20 px-2 text-right text-[13px] tabular-nums" />
+                        points
+                      </label>
                       <Textarea rows={2} value={l.description} onChange={(e) => setLevel(i, j, { description: e.target.value })} placeholder="What this level looks like" aria-label={`Description of ${l.title || `level ${j + 1}`}`} maxLength={500} className="mt-1.5 text-[13px]" />
                     </li>
                   ))}

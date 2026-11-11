@@ -62,7 +62,7 @@ export function codeRunnerStatus() {
     configured: codeRunnerConfigured(),
     provider: codeRunnerConfigured() ? (transport ? 'test' : env.codeRunner.provider) : 'none',
     languages: Object.entries(LANGUAGES).map(([id, l]) => ({ id, label: l.label })),
-    message: codeRunnerConfigured() ? null : 'Automatic code checking is not set up on this server. Answers are saved and checked by the teacher.',
+    message: codeRunnerConfigured() ? null : 'Automatic code checking is not set up on this server.',
   };
 }
 

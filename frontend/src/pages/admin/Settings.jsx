@@ -76,7 +76,7 @@ export default function AdminSettings() {
                 <ul className="space-y-3 text-sm">
                   <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText="Not configured. Password resets are done by an administrator, and nothing is e-mailed." />
                   <Service icon={Bot} name="AI drafting" on={s.ai.configured} onText={`Provider: ${s.ai.provider}${s.ai.model ? ` · ${s.ai.model}` : ''}`} offText="Not configured. The AI studio shows a notice and generates nothing." />
-                  <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={`Provider: ${s.codeRunner.provider}`} offText="Not configured. Programming answers are saved, and teachers check them by hand." />
+                  <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={`Provider: ${s.codeRunner.provider}`} offText="Not configured. Code is not run: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be checked." />
                   <li className="border-t border-line pt-3 text-[13px] text-soft">
                     <p>Environment: <span className="font-medium text-ink">{s.environment}</span></p>
                     <p>Largest upload: <span className="font-medium text-ink">{formatBytes(s.maxUploadBytes)}</span></p>

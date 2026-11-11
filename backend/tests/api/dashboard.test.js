@@ -72,11 +72,14 @@ describe('teacher dashboard', () => {
     await prisma.class.update({ where: { id: cls.id }, data: { enrollmentRequiresApproval: true } });
     const code = (await prisma.class.findUnique({ where: { id: cls.id } })).enrollmentCode;
     expect((await joiner.post('/api/enrollments/join', { code })).status).toBeLessThan(300);
+    expect((await students[0].post(`/api/classes/${cls.id}/gradebook/appeals`, { reason: 'Please re-check my midterm standing, I think one score is missing.' })).status).toBe(201);
 
     const d = (await teacher.get('/api/dashboard')).body.data;
     expect(d.role).toBe('TEACHER');
-    expect(d.stats).toMatchObject({ classes: 1, students: 3, toGrade: 1 });
-    expect(d.requests.enrollments).toBe(1);
+    expect(d.stats).toMatchObject({ classes: 1, students: 3, toGrade: 1, pendingRequests: 2 });
+    expect(d.requests).toEqual({ enrollments: 1, attendanceCorrections: 0, gradeAppeals: 1 });
+    // …and says which class each request belongs to, so the dashboard can link to it.
+    expect(d.classes[0]).toMatchObject({ id: cls.id, pendingEnrollments: 1, pendingCorrections: 0, pendingAppeals: 1 });
     expect(d.toGrade[0]).toMatchObject({ id: due.id, count: 1 });
     expect(d.upcoming.map((u) => u.id)).toContain(due.id);
     // 4/20 = 20% → low grade; everyone misses the overdue lab but one item is under the threshold of 2.

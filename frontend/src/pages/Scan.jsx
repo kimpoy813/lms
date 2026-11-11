@@ -42,7 +42,6 @@ export default function Scan() {
     try {
       for (let step = 0; step < 3; step += 1) {
         setState((s) => ({ stage: location ? 'sending' : s.stage === 'locating' ? 'locating' : 'sending', session: s.session }));
-        // eslint-disable-next-line no-await-in-loop
         const result = await api.post('/attendance/check-in', { ...current, ...(location ? { location } : {}) });
         if (result.status !== 'LOCATION_REQUIRED') {
           setState({ stage: 'done', result });
@@ -54,7 +53,6 @@ export default function Scan() {
         // The code was accepted; now the server needs to know where this device is.
         current = { ticket: result.ticket };
         setState({ stage: 'locating', session: result.session, accuracy: null });
-        // eslint-disable-next-line no-await-in-loop
         location = await readLocation({ goodEnoughMeters: 25, maxWaitMs: 14_000, onProgress: (accuracy) => setState((s) => (s.stage === 'locating' ? { ...s, accuracy } : s)) });
       }
       setState({ stage: 'failed', message: 'Your location could not be confirmed. Please try again.', retry: current });

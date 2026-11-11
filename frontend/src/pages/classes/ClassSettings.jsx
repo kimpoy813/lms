@@ -84,7 +84,6 @@ export default function ClassSettings() {
               <legend className="mb-1.5 text-sm font-medium text-ink">Learning outcomes</legend>
               <ul className="space-y-2">
                 {values.learningOutcomes.map((o, i) => (
-                  // eslint-disable-next-line react/no-array-index-key
                   <li key={i} className="flex items-center gap-2">
                     <Input value={o} onChange={(e) => set('learningOutcomes', values.learningOutcomes.map((x, n) => (n === i ? e.target.value : x)))} aria-label={`Learning outcome ${i + 1}`} maxLength={300} />
                     <Button variant="ghost" size="sm" icon={X} aria-label="Remove this outcome" onClick={() => set('learningOutcomes', values.learningOutcomes.filter((_, n) => n !== i))} />

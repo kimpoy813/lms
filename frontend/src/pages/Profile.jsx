@@ -5,7 +5,7 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { toast } from '../components/toast.jsx';
-import { Alert, Avatar, Badge, Button, Card, CardHeader, DescriptionList, Field, Input, PageHeader, QueryState, Spinner, Switch, Textarea } from '../components/ui.jsx';
+import { Alert, Avatar, Badge, Button, Card, CardHeader, Field, Input, PageHeader, QueryState, Spinner, Switch, Textarea } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { formatDateTime, relativeTime } from '../lib/format.js';
 import { useAction } from '../lib/query.js';

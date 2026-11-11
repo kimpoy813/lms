@@ -64,7 +64,6 @@ function Form({ existing, onSaved, onCancel }) {
   return (
     <form id="assignment-form" onSubmit={(e) => { e.preventDefault(); setErrors({}); save.mutate(); }} className="space-y-5">
       {hasErrors && <Alert tone="bad">Please check the highlighted fields.</Alert>}
-      {existing?.programmingProblemId && <Alert tone="info">This assignment is linked to a coding problem. Students submit code, which is checked by the code runner.</Alert>}
       <Field label="Title" required error={errors.title}><Input value={v.title} onChange={(e) => set('title', e.target.value)} maxLength={200} required placeholder="e.g. Activity 3: Flowchart of a Daily Routine" /></Field>
       <Field label="Instructions" error={errors.instructionsHtml}>
         <LazyEditor value={v.instructionsHtml} onChange={(html) => set('instructionsHtml', html)} placeholder="What should students do, and how will it be graded?" minHeight={170} ariaLabel="Instructions" />

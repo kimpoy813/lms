@@ -296,7 +296,6 @@ export function ScheduleEditor({ value, onChange }) {
       {value.length > 0 && (
         <ul className="mb-2 space-y-2">
           {value.map((s, i) => (
-            // eslint-disable-next-line react/no-array-index-key
             <li key={i} className="flex flex-wrap items-center gap-2">
               <Select value={s.dayOfWeek} onChange={(e) => update(i, { dayOfWeek: Number(e.target.value) })} aria-label="Day" className="w-36">
                 {DAYS.map((d, n) => <option key={d} value={n}>{d}</option>)}

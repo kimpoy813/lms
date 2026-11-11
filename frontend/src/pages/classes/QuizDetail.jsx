@@ -6,7 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, CardHeader, Checkbox, cn, ConfirmDialog, DescriptionList, EmptyState, Field, IconButton, Input, Modal, QueryState, Select, Spinner } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, CardHeader, cn, ConfirmDialog, DescriptionList, EmptyState, Field, IconButton, Input, Modal, QueryState, Select, Spinner } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, plural } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -369,7 +369,6 @@ function PoolsDialog({ quiz, invalidate, onClose }) {
         <>
           <ul className="space-y-3">
             {pools.map((p, i) => (
-              // eslint-disable-next-line react/no-array-index-key
               <li key={i} className="grid grid-cols-2 items-end gap-3 rounded-xl border border-line p-3 lg:grid-cols-[1.4fr_1fr_1fr_1fr_5rem_5rem_auto]">
                 <Field label="Bank" className="col-span-2 lg:col-span-1"><Select value={p.bankId} onChange={(e) => update(i, { bankId: e.target.value })}><option value="">Choose…</option>{(banks.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.title} ({b.questionCount})</option>)}</Select></Field>
                 <Field label="Topic"><Input value={p.topic} onChange={(e) => update(i, { topic: e.target.value })} placeholder="Any" /></Field>

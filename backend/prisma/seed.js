@@ -422,7 +422,13 @@ async function demo() {
       await itStudents[0].patch(`/tasks/${done.id}`, { completed: true });
       await teacher.post('/tasks', { title: 'Check Activity 2 submissions', dueAt: ahead(1).toISOString() });
     });
-    await step('programming practice problem', async () => {
+    await step('programming practice problems', async () => {
+      await teacher.post('/programming/problems', {
+        title: 'Even or odd', classId: it101.id, allowedLanguages: ['PYTHON', 'JAVA', 'C', 'CPP', 'JAVASCRIPT'],
+        statementHtml: '<p>Read one whole number and print <code>EVEN</code> if it is divisible by 2, otherwise print <code>ODD</code>.</p><h4>Example</h4><pre><code>Input\n7\n\nOutput\nODD</code></pre><p>Zero and negative numbers are valid input.</p>',
+        starterCode: { PYTHON: 'n = int(input())\n# print EVEN or ODD\n', JAVASCRIPT: "const n = Number(require('fs').readFileSync(0, 'utf8').trim());\n// print EVEN or ODD\n" },
+        testCases: [{ input: '7\n', expectedOutput: 'ODD' }, { input: '10\n', expectedOutput: 'EVEN' }, { input: '0\n', expectedOutput: 'EVEN', isHidden: true }, { input: '-3\n', expectedOutput: 'ODD', isHidden: true }],
+      });
       await teacher.post('/programming/problems', {
         title: 'Sum of an array', classId: cs201.id, allowedLanguages: ['PYTHON', 'JAVA', 'CPP'],
         statementHtml: '<p>The first line contains an integer <code>n</code>. The second line contains <code>n</code> integers separated by spaces. Print their sum.</p><h4>Example</h4><pre><code>Input\n4\n3 1 4 1\n\nOutput\n9</code></pre>',

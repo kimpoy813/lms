@@ -78,7 +78,6 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
             <legend className="mb-1.5 text-sm font-medium text-ink">Choices <span className="text-xs font-normal text-faint">— mark the correct {q.type === 'MULTIPLE_CHOICE' ? 'one' : 'ones'}</span></legend>
             <ul className="space-y-2">
               {q.choices.map((c, i) => (
-                // eslint-disable-next-line react/no-array-index-key
                 <li key={i} className="flex items-center gap-2.5">
                   <input type={q.type === 'MULTIPLE_CHOICE' ? 'radio' : 'checkbox'} name="correct-choice" checked={c.isCorrect} onChange={(e) => setChoice(i, { isCorrect: q.type === 'MULTIPLE_CHOICE' ? true : e.target.checked })} className="size-[18px] shrink-0 accent-[var(--ok)]" aria-label={`Choice ${i + 1} is correct`} />
                   <Input value={c.text} onChange={(e) => setChoice(i, { text: e.target.value })} placeholder={`Choice ${i + 1}`} maxLength={1000} aria-label={`Choice ${i + 1}`} className={cn(c.isCorrect && 'border-ok')} />
@@ -118,7 +117,6 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
             {blanksNeeded === 0 ? <p className="text-sm text-warn">No blank found yet. Type ___ in the question where each blank goes.</p> : (
               <ol className="space-y-2">
                 {blanks.map((b, i) => (
-                  // eslint-disable-next-line react/no-array-index-key
                   <li key={i} className="flex items-center gap-3">
                     <span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-bold text-brand">{i + 1}</span>
                     <Input value={b.join(' | ')} onChange={(e) => set('blanks', blanks.map((x, n) => (n === i ? e.target.value.split('|').map((s) => s.trimStart()) : x)))} onBlur={() => set('blanks', blanks.map((x) => x.map((s) => s.trim()).filter(Boolean)))} placeholder="Accepted answer (separate alternatives with |)" aria-label={`Accepted answers for blank ${i + 1}`} />
@@ -134,7 +132,6 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
             <legend className="mb-1.5 text-sm font-medium text-ink">Pairs <span className="text-xs font-normal text-faint">— the right-hand column is shuffled for students</span></legend>
             <ul className="space-y-2">
               {q.pairs.map((p, i) => (
-                // eslint-disable-next-line react/no-array-index-key
                 <li key={i} className="flex items-center gap-2">
                   <Input value={p.left} onChange={(e) => set('pairs', q.pairs.map((x, n) => (n === i ? { ...x, left: e.target.value } : x)))} placeholder="Item" aria-label={`Pair ${i + 1}, item`} maxLength={500} />
                   <span className="text-faint" aria-hidden="true">→</span>
@@ -152,7 +149,6 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
             <legend className="mb-1.5 text-sm font-medium text-ink">Items in the correct order <span className="text-xs font-normal text-faint">— students see them shuffled</span></legend>
             <ol className="space-y-2">
               {q.items.map((item, i) => (
-                // eslint-disable-next-line react/no-array-index-key
                 <li key={i} className="flex items-center gap-2">
                   <span className="w-5 shrink-0 text-right text-sm font-semibold text-faint">{i + 1}.</span>
                   <Input value={item} onChange={(e) => set('items', q.items.map((x, n) => (n === i ? e.target.value : x)))} aria-label={`Item ${i + 1}`} maxLength={500} />

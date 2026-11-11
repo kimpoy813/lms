@@ -10,13 +10,14 @@ import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, ProgressBar, QueryState, Skeleton, StatCard } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
-import { dueLabel, formatBytes, formatClock, formatDateKey, formatDay, formatPercent, formatScore, formatTime, plural, relativeTime } from '../lib/format.js';
+import { dueLabel, formatBytes, formatClock, formatDateKey, formatDay, formatPercent, formatScore, formatTime, getTimeZone, plural, relativeTime } from '../lib/format.js';
 import { classColor } from './classes/classColors.js';
 
 const AdminCharts = lazy(() => import('./DashboardCharts.jsx'));
 
 const greeting = () => {
-  const hour = Number(new Intl.DateTimeFormat('en-PH', { hour: 'numeric', hourCycle: 'h23', timeZone: 'Asia/Manila' }).format(new Date()));
+  // The hour on the school's clock, not the device's.
+  const hour = Number(new Intl.DateTimeFormat('en-PH', { hour: 'numeric', hourCycle: 'h23', timeZone: getTimeZone() }).format(new Date()));
   return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 };
 
@@ -312,15 +313,16 @@ function TeacherDashboard({ data }) {
             <CardHeader icon={Inbox} title="Requests" />
             <ul className="space-y-1.5 text-sm">
               {[
-                ['Enrolment requests', requests.enrollments, UserPlus, data.classes.find((c) => c.pendingEnrollments > 0)?.id, 'people'],
-                ['Attendance corrections', requests.attendanceCorrections, ClipboardCheck, data.classes[0]?.id, 'attendance?tab=requests'],
-                ['Grade appeals', requests.gradeAppeals, GraduationCap, data.classes[0]?.id, 'gradebook?tab=appeals'],
-              ].map(([label, count, Icon, classId, path]) => (
+                ['Enrolment requests', requests.enrollments, UserPlus, data.classes.filter((c) => c.pendingEnrollments > 0), 'people'],
+                ['Attendance corrections', requests.attendanceCorrections, ClipboardCheck, data.classes.filter((c) => c.pendingCorrections > 0), 'attendance?tab=requests'],
+                ['Grade appeals', requests.gradeAppeals, GraduationCap, data.classes.filter((c) => c.pendingAppeals > 0), 'gradebook?tab=appeals'],
+              ].map(([label, count, Icon, waiting, path]) => (
                 <li key={label} className="flex items-center gap-3 rounded-xl px-2 py-2">
                   <Icon className="size-[18px] text-faint" aria-hidden="true" />
                   <span className="flex-1 text-soft">{label}</span>
                   {count > 0 ? <Badge tone="warn">{count} pending</Badge> : <span className="text-xs text-faint">None</span>}
-                  {count > 0 && classId && data.classes.length === 1 && <Link to={`/classes/${classId}/${path}`} className="text-[13px] font-medium text-brand hover:underline">Review</Link>}
+                  {/* Goes to the first class with something waiting; its label is spoken when several classes do. */}
+                  {count > 0 && waiting[0] && <Link to={`/classes/${waiting[0].id}/${path}`} title={waiting.map((c) => c.label).join(', ')} className="text-[13px] font-medium text-brand hover:underline">Review<span className="sr-only"> {label.toLowerCase()} in {waiting[0].label}</span></Link>}
                 </li>
               ))}
             </ul>
