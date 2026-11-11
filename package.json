@@ -9,7 +9,7 @@
     "frontend"
   ],
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.12 <27"
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -26,7 +26,8 @@
     "test:frontend": "npm run test -w frontend",
     "test:e2e": "playwright test -c e2e/playwright.config.js",
     "lint": "eslint .",
-    "docs:api": "npm run docs:api -w backend"
+    "docs:api": "npm run docs:api -w backend",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

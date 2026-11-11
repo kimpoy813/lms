@@ -1,0 +1,101 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "node scripts/vercel-build.mjs",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 120,
+      "includeFiles": "node_modules/.prisma/client/query_compiler_bg.wasm",
+      "excludeFiles": "{frontend,e2e,docs}/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api?__path=api/$1"
+    },
+    {
+      "source": "/healthz",
+      "destination": "/api?__path=healthz"
+    },
+    {
+      "source": "/readyz",
+      "destination": "/api?__path=readyz"
+    },
+    {
+      "source": "/((?!api$|api/|assets/)[^.]*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/((?!api$|api/|healthz$|readyz$).*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self';script-src 'self';style-src 'self' 'unsafe-inline';img-src 'self' data: blob: https:;font-src 'self' data:;connect-src 'self';media-src 'self' blob:;frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com;worker-src 'self' blob:;manifest-src 'self';object-src 'none';base-uri 'self';form-action 'self';frame-ancestors 'self'"
+        },
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Origin-Agent-Cluster",
+          "value": "?1"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "geolocation=(self), camera=(self), microphone=(), payment=()"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-DNS-Prefetch-Control",
+          "value": "off"
+        },
+        {
+          "key": "X-Download-Options",
+          "value": "noopen"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "X-Permitted-Cross-Domain-Policies",
+          "value": "none"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/internal/cron",
+      "schedule": "0 17 * * *"
+    }
+  ]
+}

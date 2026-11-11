@@ -62,6 +62,8 @@ export function FileUpload({ value = [], onChange, max = 10, accept, label = 'Ad
       const saved = await api.upload(files);
       onChange([...value, ...saved]);
     } catch (err) {
+      // Files are sent one at a time; keep the ones that were stored before the failure.
+      if (err.saved?.length) onChange([...value, ...err.saved]);
       toast.error(err.message);
     } finally {
       setBusy(false);

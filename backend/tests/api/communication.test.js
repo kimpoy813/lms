@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { actor, classroom, createUser, enroll, loginAs, minutesFromNow, prepare, prisma } from '../helpers/index.js';
+import { actor, anonymous, classroom, createUser, enroll, loginAs, minutesFromNow, prepare, prisma } from '../helpers/index.js';
 import { setRolePermission } from '../../src/services/permissions.js';
 
 beforeAll(async () => {
@@ -22,6 +22,10 @@ describe('direct messages', () => {
     expect(sent.body.data.body).toBe('Good day po, if a<b && c>d is this <script>alert(1)</script> right?');
 
     expect((await teacher.get('/api/messages/unread-count')).body.data.count).toBe(1);
+    // The page header asks for both of its numbers at once.
+    const notifications = (await teacher.get('/api/notifications/unread-count')).body.data.unread;
+    expect((await teacher.get('/api/notifications/badges')).body.data).toEqual({ notifications, messages: 1 });
+    expect((await anonymous().get('/api/notifications/badges')).status).toBe(401);
     const list = (await teacher.get('/api/messages/conversations')).body.data;
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ id, unread: 1 });

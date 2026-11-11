@@ -4,13 +4,14 @@ A learning management system for colleges and universities: classes, lessons, as
 quizzes, QR + GPS attendance, a weighted gradebook, messaging and administration — for
 administrators, teachers and students.
 
-- **Backend** — Node.js 22, Express 5, PostgreSQL through Prisma, Socket.IO
+- **Backend** — Node.js 22 or newer, Express 5, PostgreSQL through Prisma, Socket.IO
 - **Web app** — React 19, React Router 7, TanStack Query, Tailwind CSS 4 (installable, works on phones)
-- **Tests** — 277 API and unit tests, 19 web-app unit tests, 20 end-to-end browser tests
+- **Hosting** — one Node.js server, or Vercel with a Neon database ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md))
+- **Tests** — 308 API and unit tests, 22 web-app unit tests, 27 end-to-end browser tests
 
 ## Quick start
 
-You need **Node.js 22.12 or newer**. A PostgreSQL server is optional for development.
+You need **Node.js 22.12 or newer** (tested with 22, 24 and 26). A PostgreSQL server is optional for development.
 
 ```bash
 npm install
@@ -95,6 +96,7 @@ Student code is never executed by EduSphere itself.
 | `npm run db:seed` | Loads the demo data and creates the first administrator (does nothing if they exist) |
 | `npm run db:reset` | **Deletes all data**, re-creates the tables and loads the demo data. Asks first; refuses in production. `-- --yes` skips the question |
 | `npm run docs:api` | Regenerates [docs/API.md](docs/API.md) from the route definitions |
+| `npm run smoke -- <address>` | Checks a running production site from outside: pages, security headers, API, database |
 
 ## Configuration
 
@@ -108,7 +110,10 @@ Real environment variables take precedence over `backend/.env`. The most importa
 | `NODE_ENV` | `production` switches off demo accounts and development helpers |
 | `TRUST_PROXY` | Set when the API is behind a reverse proxy |
 | `STORAGE_DIR` | Where uploaded files are kept (outside the web root) |
+| `STORAGE_DRIVER` | `disk` (default) or `database`, for hosts without a lasting disk |
 | `SERVE_FRONTEND` | Serve the built web app from the API (one port in production) |
+
+On Vercel none of these needs to be set; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#vercel-and-neon).
 
 Institution-level options (time zone, registration rules, lockout, attendance radius limits,
 at-risk thresholds, AI quota) are changed in the web app under **Settings** by an administrator.
@@ -116,11 +121,13 @@ at-risk thresholds, AI quota) are changed in the web app under **Settings** by a
 ## Project layout
 
 ```
-backend/     API: src/modules/<feature>, src/services, src/middleware, prisma/ (schema, migration, seed), tests/
+backend/     API: src/modules/<feature>, src/services, src/middleware, prisma/ (schema, migrations, seed), tests/
 frontend/    Web app: src/pages, src/components, src/lib, src/layout
-e2e/         Browser tests (Playwright)
-scripts/     dev.mjs (one-command launcher), embedded-postgres.mjs
+api/         The API as a Vercel Function (entry point only)
+e2e/         Browser tests (Playwright); vercel/serve.mjs runs a Vercel build locally
+scripts/     dev.mjs (one-command launcher), embedded-postgres.mjs, vercel-build.mjs, smoke.mjs
 docs/        Architecture, deployment, security and privacy, attendance, grading, testing, API reference
+vercel.json  Build, routing and security headers on Vercel
 ```
 
 ## Documentation
@@ -141,10 +148,16 @@ Read this before relying on EduSphere for real classes.
   tested against fake services, never against a real AI provider or a real Piston instance.
   E-mail was never sent through a real SMTP server.
 - **Not checked at all.** Scanning a QR code with a real camera (the scan link and typing the
-  code were tested), map tiles, Windows and macOS, PostgreSQL versions other than the embedded 18.
-- **One API instance.** Rate limits and real-time delivery live in the memory of one process.
-  Running several instances needs a shared rate-limit store and a Socket.IO adapter, which are
-  not included. Uploaded files are stored on local disk.
+  code were tested), map tiles, Windows and macOS, PostgreSQL versions other than 18.
+- **One API instance on a server.** Rate limits and real-time delivery live in the memory of one
+  process. Running several instances needs a shared rate-limit store and a Socket.IO adapter,
+  which are not included. Uploaded files are stored on local disk, or in the database.
+- **On Vercel the application gives things up:** files of at most 4 MB (300 MB in total by
+  default), screens that refresh every few seconds instead of at once, timed work that waits for
+  the next visitor, looser rate limits. The free plans of Vercel and Neon stop the site when a
+  monthly allowance runs out. This setup was checked against the output of Vercel's own build
+  tool, served by a local stand-in — not under real use.
+  See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#vercel-and-neon).
 - **GPS attendance is a deterrent, not proof.** A student who fakes the phone's location can
   pass the geofence. See [docs/ATTENDANCE.md](docs/ATTENDANCE.md) for what is and is not prevented.
 - **Not included:** single sign-on, two-factor authentication, integration with a student

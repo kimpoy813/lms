@@ -5,6 +5,7 @@ import { prisma } from '../../db/prisma.js';
 import { idParams, noContent, ok, pageMeta, pageQuery, paging, zBoolQuery } from '../../lib/http.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
+import { unreadCount as unreadMessages } from '../messages/routes.js';
 
 export const notificationsRouter = Router();
 notificationsRouter.use(requireAuth);
@@ -20,6 +21,16 @@ notificationsRouter.get('/', validate({ query: z.object({ unread: zBoolQuery.opt
     prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
   ]);
   ok(res, rows.map(view), { ...pageMeta(q, total), unread });
+});
+
+// Both numbers the page header shows, in one request: every signed-in tab asks for them again
+// and again, so one round trip instead of two is the largest saving there is.
+notificationsRouter.get('/badges', async (req, res) => {
+  const [notifications, messages] = await Promise.all([
+    prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
+    unreadMessages(req.user.id),
+  ]);
+  ok(res, { notifications, messages });
 });
 
 notificationsRouter.get('/unread-count', async (req, res) => {

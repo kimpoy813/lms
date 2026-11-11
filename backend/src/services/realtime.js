@@ -1,6 +1,9 @@
 // Socket.IO: real-time notifications, direct messages and the live attendance monitor.
 // Sockets authenticate with the same HTTP-only session cookie as the REST API.
-import { Server } from 'socket.io';
+//
+// Real-time push is an extra, not a requirement: when it is off (REALTIME_ENABLED=false, or the
+// API runs as function invocations) the emit functions below do nothing and the web app refreshes
+// the same screens on a timer.
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { logger } from '../lib/logger.js';
@@ -23,7 +26,9 @@ function originAllowed(req) {
   return allowed.has(origin.replace(/\/+$/, ''));
 }
 
-export function attachRealtime(httpServer) {
+export async function attachRealtime(httpServer) {
+  // Loaded here, not at the top: function deployments never open sockets and should not pay for it.
+  const { Server } = await import('socket.io');
   io = new Server(httpServer, {
     path: '/socket.io',
     serveClient: false,

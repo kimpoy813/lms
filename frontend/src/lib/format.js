@@ -105,6 +105,8 @@ export function formatBytes(bytes) {
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
+/** A size limit in words: "4 MB", "2.5 MB" (formatBytes without a pointless ".0"). */
+export const formatLimit = (bytes) => formatBytes(bytes).replace('.0 ', ' ');
 /** 4 → "4", 4.5 → "4.5", 4.333 → "4.33" */
 export const formatScore = (n, digits = 2) => (n === null || n === undefined || Number.isNaN(Number(n)) ? '—' : String(Math.round(Number(n) * 10 ** digits) / 10 ** digits));
 export const formatPercent = (n, digits = 1) => (n === null || n === undefined ? '—' : `${formatScore(n, digits)}%`);

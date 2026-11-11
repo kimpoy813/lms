@@ -11,6 +11,8 @@ import { Avatar, Badge, Button, cn, EmptyState, IconButton, Menu, MenuItem, Page
 import { toast } from '../components/toast.jsx';
 import { api } from '../lib/api.js';
 import { relativeTime } from '../lib/format.js';
+import { fetchBadges } from '../lib/badges.js';
+import { useLiveInterval, useOnReturn } from '../lib/live.js';
 import { useSocketEvent } from '../lib/socket.js';
 import { useTheme } from '../lib/theme.js';
 import { SearchDialog } from './SearchDialog.jsx';
@@ -128,7 +130,7 @@ function NotificationBell() {
   const client = useQueryClient();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const count = useQuery({ queryKey: ['notifications', 'count'], queryFn: () => api.get('/notifications/unread-count'), refetchInterval: 120_000 });
+  const count = useQuery({ queryKey: ['notifications', 'count'], queryFn: async () => ({ unread: (await fetchBadges()).notifications }), refetchInterval: useLiveInterval(60_000, 120_000) });
   const list = useQuery({ queryKey: ['notifications', 'recent'], queryFn: () => api.get('/notifications', { pageSize: 8 }), enabled: open });
   const unread = count.data?.unread ?? 0;
 
@@ -237,7 +239,13 @@ export default function AppShell() {
   const client = useQueryClient();
   const [drawer, setDrawer] = useState(false);
   const [search, setSearch] = useState(false);
-  const messages = useQuery({ queryKey: ['messages', 'unread'], queryFn: () => api.get('/messages/unread-count'), refetchInterval: 120_000 });
+  const messages = useQuery({ queryKey: ['messages', 'unread'], queryFn: async () => ({ count: (await fetchBadges()).messages }), refetchInterval: useLiveInterval(60_000, 120_000) });
+
+  // Back at the keyboard after a pause: the two header numbers were not refreshed meanwhile.
+  useOnReturn(useCallback(() => {
+    client.invalidateQueries({ queryKey: ['notifications', 'count'] });
+    client.invalidateQueries({ queryKey: ['messages', 'unread'] });
+  }, [client]));
 
   useSocketEvent('message:new', useCallback((m) => {
     client.invalidateQueries({ queryKey: ['messages'] });

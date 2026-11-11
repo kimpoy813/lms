@@ -26,12 +26,14 @@ async function main() {
 
   const app = createApp();
   const server = http.createServer(app);
-  attachRealtime(server);
+  if (env.realtime) await attachRealtime(server);
   if (env.schedulerEnabled) startScheduler();
 
   server.listen(env.port, env.host, () => {
     logger.info(`EduSphere API listening on http://${env.host}:${env.port} (${env.nodeEnv})`);
     if (env.demoAccountsEnabled) logger.info('Demo accounts are ENABLED (non-production mode).');
+    if (!env.realtime) logger.info('Real-time push is off; the web app refreshes its live screens on a timer.');
+    if (env.storageDriver === 'database') logger.info('Uploaded files are kept in the database (STORAGE_DRIVER=database).');
     if (!env.ai.configured) logger.info('AI authoring is not configured (set AI_PROVIDER and AI_API_KEY to enable it).');
     if (!env.codeRunner.configured) logger.info('Code execution is not configured (set CODE_RUNNER_PROVIDER and CODE_RUNNER_URL to enable it).');
   });

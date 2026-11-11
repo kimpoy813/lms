@@ -43,6 +43,11 @@ export async function apiAs(who, baseURL) {
     put: (path, data) => call('PUT', path, data),
     patch: (path, data) => call('PATCH', path, data),
     delete: (path) => call('DELETE', path),
+    /** The response itself, for downloads: `(await api.raw('GET', path)).body()` is a Buffer. */
+    raw: (method, path, options = {}) => context.fetch(`/api${path}`, { method, ...options, headers: { 'X-CSRF-Token': csrfToken, ...options.headers } }),
+    /** Send one file as a form field, the way the browser does. Resolves to the response. */
+    sendFile: (path, field, { name, mimeType, buffer }) =>
+      context.fetch(`/api${path}`, { method: 'POST', multipart: { [field]: { name, mimeType, buffer } }, headers: { 'X-CSRF-Token': csrfToken } }),
     dispose: () => context.dispose(),
   };
 }

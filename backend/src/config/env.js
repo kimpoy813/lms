@@ -1,10 +1,23 @@
 // Loads and validates configuration from the environment exactly once.
 // Nothing else in the code base reads process.env directly.
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// Vercel runs the API as a function: no process that stays up, no disk that keeps files, no
+// WebSockets. It announces itself with VERCEL=1, and the defaults below follow from it. Every one
+// of them can still be set explicitly. See docs/DEPLOYMENT.md, "Vercel and Neon".
+const onVercel = process.env.VERCEL === '1';
+const onVercelPreview = onVercel && Boolean(process.env.VERCEL_ENV) && process.env.VERCEL_ENV !== 'production';
+if (onVercel) {
+  // A function must never come up in development mode (demo accounts, the development mailbox).
+  process.env.NODE_ENV ||= 'production';
+  // Database integrations do not agree on the variable name.
+  process.env.DATABASE_URL ||= process.env.POSTGRES_URL ?? '';
+}
 
 // Real environment variables always take precedence over .env files.
 if (process.env.NODE_ENV !== 'test') {
@@ -36,11 +49,28 @@ const schema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
 
   /** Public URL of the web app. Used in e-mail links and as a trusted origin. */
-  APP_URL: z.string().url().default('http://localhost:5173'),
+  APP_URL: z
+    .string()
+    .url()
+    .default(onVercel && process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:5173'),
   /** Extra origins allowed to call the API with credentials (comma separated). */
   CORS_ORIGINS: optionalString,
-  /** Express "trust proxy" setting: false, true, or a hop count. */
-  TRUST_PROXY: z.string().default('false'),
+  /** Express "trust proxy" setting: false, true, or a hop count. Vercel always sits in front. */
+  TRUST_PROXY: z.string().default(onVercel ? 'true' : 'false'),
+
+  /**
+   * true = the API runs as short-lived function invocations instead of one process that stays up.
+   * Background jobs then run when a request comes in, and real-time push is off.
+   */
+  SERVERLESS: bool(onVercel),
+  /** Live updates over WebSockets. Needs a process that stays up, so it is off when SERVERLESS. */
+  REALTIME_ENABLED: bool(true),
+  /** Most database connections one process (or one function instance) keeps open. */
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).optional(),
+  /** How long an unused database connection is kept, in milliseconds. Default 30000; 1000 when SERVERLESS. */
+  DATABASE_POOL_IDLE_MS: z.coerce.number().int().min(100).max(600_000).optional(),
+  /** When set, GET /api/internal/cron requires "Authorization: Bearer <this value>". */
+  CRON_SECRET: optionalString,
 
   SESSION_TTL_HOURS: z.coerce.number().positive().default(168),
   COOKIE_SECURE: z.enum(['auto', 'true', 'false']).default('auto'),
@@ -53,9 +83,23 @@ const schema = z.object({
 
   SERVE_FRONTEND: bool(false),
   FRONTEND_DIST: z.string().default(path.join(backendRoot, '..', 'frontend', 'dist')),
-  STORAGE_DIR: z.string().default(path.join(backendRoot, 'storage')),
-  MAX_UPLOAD_MB: z.coerce.number().positive().max(500).default(25),
-  SCHEDULER_ENABLED: bool(true),
+  /**
+   * Where uploaded files are kept: `disk` (STORAGE_DIR) or `database` (a table in PostgreSQL, for
+   * hosts whose disk does not survive a restart). Default: database when SERVERLESS, else disk.
+   */
+  STORAGE_DRIVER: z.enum(['disk', 'database']).optional(),
+  /** With the disk driver: the files. With the database driver: only short-lived temporary files. */
+  STORAGE_DIR: optionalString,
+  /** Largest single upload. Default 25; 4 when SERVERLESS (Vercel refuses request bodies over 4.5 MB). */
+  MAX_UPLOAD_MB: z.coerce.number().positive().max(500).optional(),
+  /** Total space for uploads in megabytes, 0 = no limit. Default: 300 with the database driver, else 0. */
+  STORAGE_QUOTA_MB: z.coerce.number().min(0).optional(),
+  /**
+   * Background jobs (auto-submit quizzes, close attendance, scheduled publishing, reminders).
+   * Off by default on Vercel preview deployments: they usually share the production database, and
+   * code from a branch should not act on live data by itself.
+   */
+  SCHEDULER_ENABLED: bool(!onVercelPreview),
 
   SMTP_HOST: optionalString,
   SMTP_PORT: z.coerce.number().int().default(587),
@@ -83,7 +127,8 @@ const schema = z.object({
   CODE_RUNNER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 });
 
-const parsed = schema.safeParse(process.env);
+// A variable that is present but empty ("PORT=" in an .env file) means "not set".
+const parsed = schema.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== '')));
 if (!parsed.success) {
   const lines = parsed.error.issues.map((i) => `  • ${i.path.join('.') || '(root)'}: ${i.message}`);
   console.error(`Invalid environment configuration:\n${lines.join('\n')}`);
@@ -92,8 +137,22 @@ if (!parsed.success) {
 }
 
 const raw = parsed.data;
+if (onVercel && !process.env.APP_URL && !process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+  console.warn('APP_URL is not set and Vercel did not provide the address of the site: links in e-mails and QR codes will be wrong.');
+}
 const isProduction = raw.NODE_ENV === 'production';
 const isTest = raw.NODE_ENV === 'test';
+const serverless = raw.SERVERLESS;
+const storageDriver = raw.STORAGE_DRIVER ?? (serverless ? 'database' : 'disk');
+
+// Vercel answers 413 itself when a request body exceeds 4.5 MB, before the API sees it. A larger
+// setting could only produce uploads that fail without a useful message.
+const VERCEL_MAX_UPLOAD_MB = 4;
+let maxUploadMb = raw.MAX_UPLOAD_MB ?? (serverless ? VERCEL_MAX_UPLOAD_MB : 25);
+if (onVercel && maxUploadMb > VERCEL_MAX_UPLOAD_MB) {
+  console.warn(`MAX_UPLOAD_MB=${maxUploadMb} is more than Vercel accepts in one request; using ${VERCEL_MAX_UPLOAD_MB}.`);
+  maxUploadMb = VERCEL_MAX_UPLOAD_MB;
+}
 
 function parseTrustProxy(value) {
   if (value === 'true') return true;
@@ -112,9 +171,20 @@ export const env = Object.freeze({
   isProduction,
   isTest,
   isDevelopment: raw.NODE_ENV === 'development',
+  /** 'vercel' or 'node' — for log lines and the administrator's system page only. */
+  platform: onVercel ? 'vercel' : 'node',
+  serverless,
+  /** WebSocket push. Without it the web app refreshes its live screens on a timer. */
+  realtime: raw.REALTIME_ENABLED && !serverless,
   host: raw.HOST,
   port: raw.PORT,
   databaseUrl: raw.DATABASE_URL,
+  databasePoolMax: raw.DATABASE_POOL_MAX ?? (isTest || serverless ? 5 : 15),
+  // A server keeps connections warm. A function instance stays awake (and is counted as running)
+  // until its idle connections are closed, so there they are kept just long enough to serve the
+  // burst of requests one page makes.
+  databasePoolIdleMs: raw.DATABASE_POOL_IDLE_MS ?? (serverless ? 1_000 : 30_000),
+  cronSecret: raw.CRON_SECRET,
   logLevel: raw.LOG_LEVEL ?? (isTest ? 'silent' : isProduction ? 'info' : 'debug'),
 
   appUrl: raw.APP_URL.replace(/\/+$/, ''),
@@ -133,10 +203,17 @@ export const env = Object.freeze({
 
   serveFrontend: raw.SERVE_FRONTEND,
   frontendDist: path.resolve(backendRoot, raw.FRONTEND_DIST),
+  storageDriver,
   // Relative paths are relative to the backend folder, whatever the working directory is.
-  storageDir: path.resolve(backendRoot, raw.STORAGE_DIR),
-  maxUploadBytes: Math.round(raw.MAX_UPLOAD_MB * 1024 * 1024),
+  // A function may write only below the system's temporary folder.
+  storageDir: path.resolve(backendRoot, raw.STORAGE_DIR ?? (serverless ? path.join(os.tmpdir(), 'edusphere') : 'storage')),
+  maxUploadBytes: Math.round(maxUploadMb * 1024 * 1024),
+  /** 0 = unlimited. */
+  storageQuotaBytes: Math.round((raw.STORAGE_QUOTA_MB ?? (storageDriver === 'database' ? 300 : 0)) * 1024 * 1024),
+  /** Run background jobs by themselves (on a timer, or driven by requests). Never in the test-suite. */
   schedulerEnabled: raw.SCHEDULER_ENABLED && !isTest,
+  /** SCHEDULER_ENABLED as configured: whether an explicit scheduled call may run the jobs here. */
+  jobsAllowed: raw.SCHEDULER_ENABLED,
 
   /** Demo accounts exist only outside production. This cannot be overridden. */
   demoAccountsEnabled: !isProduction,
