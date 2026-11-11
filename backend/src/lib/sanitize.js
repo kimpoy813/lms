@@ -67,6 +67,18 @@ export function plainText(value, maxLength) {
   return maxLength ? trimmed.slice(0, maxLength) : trimmed;
 }
 
+/**
+ * Text that is stored exactly as typed (chat messages, code-like remarks) and is only ever
+ * rendered as text by the client, never as HTML. Control characters are removed; "<" and "&"
+ * are kept so that "if a<b && c" survives.
+ */
+export function cleanText(value, maxLength) {
+  if (typeof value !== 'string') return '';
+  // eslint-disable-next-line no-control-regex
+  const text = value.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').replace(/\n{4,}/g, '\n\n\n').trim();
+  return maxLength ? text.slice(0, maxLength) : text;
+}
+
 /** Plain-text excerpt of rich HTML, for notifications and search results. */
 export function excerpt(html, length = 160) {
   const text = sanitizeHtml(String(html ?? ''), { allowedTags: [], allowedAttributes: {} })
