@@ -10,6 +10,7 @@ node_modules/
 dist/
 build/
 coverage/
+.vercel/
 
 # Local runtime data (embedded PostgreSQL, uploads, logs)
 .local/

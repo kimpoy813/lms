@@ -1,0 +1,142 @@
+// Hosting details that are easy to break without noticing: how a database URL turns into
+// connection options, and whether vercel.json still matches what the application does.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import request from 'supertest';
+import { describe, expect, it } from 'vitest';
+import { createApp } from '../../src/app.js';
+import { pgFieldsFromUrl, pgOptionsFromUrl } from '../../src/db/connection.js';
+import { isDatabaseUnavailable, isSchemaOutOfDate } from '../../src/middleware/errors.js';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+describe('database connection options', () => {
+  it('leaves a plain local URL alone', () => {
+    const url = 'postgresql://postgres:postgres@127.0.0.1:5433/edusphere';
+    expect(pgOptionsFromUrl(url)).toEqual({ connectionString: url });
+  });
+
+  it('encrypts and checks the certificate when a hosted database asks for sslmode=require', () => {
+    const options = pgOptionsFromUrl('postgresql://app:secret@ep-quiet-1.eu.aws.neon.tech/neondb?sslmode=require&channel_binding=require&connect_timeout=15');
+    expect(options.ssl).toEqual({ rejectUnauthorized: true });
+    expect(options.enableChannelBinding).toBe(true);
+    // The TLS decisions are made here; node-postgres must not read them a second time.
+    expect(options.connectionString).toBe('postgresql://app:secret@ep-quiet-1.eu.aws.neon.tech/neondb?connect_timeout=15');
+  });
+
+  it('skips the certificate check only when told to, and uses no TLS when told to', () => {
+    expect(pgOptionsFromUrl('postgresql://u:p@db.internal/app?sslmode=no-verify').ssl).toEqual({ rejectUnauthorized: false });
+    expect(pgOptionsFromUrl('postgresql://u:p@db.internal/app?sslmode=verify-full').ssl).toEqual({ rejectUnauthorized: true });
+    expect(pgOptionsFromUrl('postgresql://u:p@db.internal/app?sslmode=disable').ssl).toBeUndefined();
+    // Channel binding only means something on an encrypted connection.
+    expect(pgOptionsFromUrl('postgresql://u:p@db.internal/app?channel_binding=require').enableChannelBinding).toBeUndefined();
+  });
+
+  it('passes unusual URLs through untouched', () => {
+    const clientCert = 'postgresql://u:p@db.internal/app?sslmode=verify-full&sslcert=/etc/client.crt&sslkey=/etc/client.key';
+    expect(pgOptionsFromUrl(clientCert)).toEqual({ connectionString: clientCert });
+    expect(pgOptionsFromUrl('not a url')).toEqual({ connectionString: 'not a url' });
+    const socket = 'postgresql:///app?host=/var/run/postgresql';
+    expect(pgOptionsFromUrl(socket)).toEqual({ connectionString: socket });
+  });
+
+  it('gives the migration tool the same connection as separate fields', () => {
+    expect(pgFieldsFromUrl('postgresql://app%40team:p%2Fss%3Aword@db.example.org:6543/school%20db?sslmode=require')).toEqual({
+      host: 'db.example.org', port: 6543, user: 'app@team', password: 'p/ss:word', database: 'school db', ssl: { rejectUnauthorized: true },
+    });
+    expect(pgFieldsFromUrl('postgresql://postgres:postgres@127.0.0.1/edusphere')).toEqual({ host: '127.0.0.1', port: 5432, user: 'postgres', password: 'postgres', database: 'edusphere' });
+  });
+});
+
+describe('a database that is away', () => {
+  // The shapes are what Prisma, its PostgreSQL adapter and node-postgres really throw.
+  const adapterError = (cause) => ({ code: 'P2010', meta: { driverAdapterError: { name: 'DriverAdapterError', cause } } });
+
+  it('is recognised however the failure is reported', () => {
+    expect(isDatabaseUnavailable({ code: 'P1001', message: "Can't reach database server at db:5432" })).toBe(true);
+    expect(isDatabaseUnavailable({ code: 'P2024', message: 'Timed out fetching a new connection from the connection pool.' })).toBe(true);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'DatabaseNotReachable', host: 'db', port: 5432 }))).toBe(true);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'ConnectionClosed' }))).toBe(true);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'TooManyConnections', cause: 'sorry, too many clients already' }))).toBe(true);
+    // PostgreSQL itself: "the database system is starting up", an administrator's shutdown, a lost connection.
+    expect(isDatabaseUnavailable(adapterError({ kind: 'postgres', originalCode: '57P03' }))).toBe(true);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'postgres', originalCode: '57P01' }))).toBe(true);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'postgres', originalCode: '08006' }))).toBe(true);
+    expect(isDatabaseUnavailable(new Error('timeout exceeded when trying to connect'))).toBe(true);
+    expect(isDatabaseUnavailable(new Error('Connection terminated unexpectedly'))).toBe(true);
+  });
+
+  it('is not confused with a mistake in the request or in the configuration', () => {
+    expect(isDatabaseUnavailable(adapterError({ kind: 'UniqueConstraintViolation', originalCode: '23505' }))).toBe(false);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'TableDoesNotExist', originalCode: '42P01', table: 'User' }))).toBe(false);
+    // These do not go away by trying again, so they stay server errors with the cause in the log.
+    expect(isDatabaseUnavailable(adapterError({ kind: 'AuthenticationFailed', originalCode: '28P01', user: 'app' }))).toBe(false);
+    expect(isDatabaseUnavailable(adapterError({ kind: 'TlsConnectionError', reason: 'self-signed certificate' }))).toBe(false);
+    expect(isDatabaseUnavailable({ code: 'P2025', message: 'Record not found' })).toBe(false);
+    expect(isDatabaseUnavailable(new Error('boom'))).toBe(false);
+    expect(isDatabaseUnavailable(null)).toBe(false);
+  });
+
+  it('is told apart from a database whose tables were never created or updated', () => {
+    const missingTable = adapterError({ kind: 'TableDoesNotExist', originalCode: '42P01', table: 'SystemSetting' });
+    expect(isSchemaOutOfDate(missingTable)).toBe(true);
+    expect(isSchemaOutOfDate(adapterError({ kind: 'ColumnNotFound', originalCode: '42703', column: 'runtime' }))).toBe(true);
+    expect(isSchemaOutOfDate({ code: 'P2021', message: 'The table `public.User` does not exist in the current database.' })).toBe(true);
+    expect(isSchemaOutOfDate(adapterError({ kind: 'UniqueConstraintViolation', originalCode: '23505' }))).toBe(false);
+    expect(isSchemaOutOfDate(adapterError({ kind: 'DatabaseNotReachable' }))).toBe(false);
+    expect(isSchemaOutOfDate(new Error('boom'))).toBe(false);
+  });
+});
+
+describe('readiness', () => {
+  it('means the database answers and has the tables this version needs', async () => {
+    const res = await request(createApp()).get('/readyz');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'ready', databaseMs: expect.any(Number) });
+  });
+});
+
+describe('vercel.json', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+  const staticHeaders = Object.fromEntries(config.headers[0].headers.map((h) => [h.key.toLowerCase(), h.value]));
+
+  it('gives the web app the same security headers the API sends', async () => {
+    // On Vercel the pages come from the CDN, not from the API, so the headers are repeated in
+    // vercel.json. This fails when one side changes without the other.
+    const res = await request(createApp()).get('/healthz');
+    const fromApi = Object.fromEntries(
+      Object.entries(res.headers).filter(([name]) => /^(content-security-policy|permissions-policy|referrer-policy|origin-agent-cluster|cross-origin-|x-(?!request-id))/.test(name)),
+    );
+    expect(Object.keys(fromApi).length).toBeGreaterThanOrEqual(10);
+    expect(staticHeaders).toEqual(fromApi);
+  });
+
+  it('keeps those headers away from API responses, which set their own', () => {
+    // A stored file is served with a stricter policy than a page; a blanket header would undo it.
+    expect(config.headers[0].source).toBe('/((?!api$|api/|healthz$|readyz$).*)');
+  });
+
+  it('sends the API paths and the health checks to the one function', () => {
+    expect(config.rewrites.slice(0, 3)).toEqual([
+      { source: '/api/(.*)', destination: '/api?__path=api/$1' },
+      { source: '/healthz', destination: '/api?__path=healthz' },
+      { source: '/readyz', destination: '/api?__path=readyz' },
+    ]);
+    expect(fs.existsSync(path.join(root, 'api', 'index.js'))).toBe(true);
+    expect(Object.keys(config.functions)).toEqual(['api/index.js']);
+  });
+
+  it('ships the file the database client reads at run time but does not import', () => {
+    // Vercel copies what the code imports. The query compiler is read from disk by its path, so
+    // it has to be named; without it no query works.
+    expect(config.functions['api/index.js'].includeFiles).toBe('node_modules/.prisma/client/query_compiler_bg.wasm');
+    expect(fs.existsSync(path.join(root, config.functions['api/index.js'].includeFiles))).toBe(true);
+  });
+
+  it('schedules a call that the API answers', async () => {
+    expect(config.crons).toEqual([{ path: '/api/internal/cron', schedule: expect.stringMatching(/^\d+ \d+ \* \* \*$/) }]);
+    const res = await request(createApp()).get(config.crons[0].path);
+    expect(res.status).not.toBe(404);
+  });
+});
