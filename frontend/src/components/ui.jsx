@@ -151,8 +151,8 @@ export function Segmented({ value, onChange, options, size = 'md', className, la
 }
 
 // ── Surfaces ─────────────────────────────────────────────────────────────────
-export function Card({ className, children, as: Tag = 'div', padded = true, ...props }) {
-  return <Tag className={cn('rounded-2xl border border-line bg-surface shadow-card', padded && 'p-5', className)} {...props}>{children}</Tag>;
+export function Card({ className, children, as: Tag = 'div', padded = true, ref, ...props }) {
+  return <Tag ref={ref} className={cn('rounded-2xl border border-line bg-surface shadow-card', padded && 'p-5', className)} {...props}>{children}</Tag>;
 }
 
 export function CardHeader({ title, description, action, icon: Icon, className }) {

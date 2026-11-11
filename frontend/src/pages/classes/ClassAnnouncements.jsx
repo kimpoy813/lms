@@ -1,4 +1,7 @@
-// __STUB__
-export default function Stub() {
-  return <p className="p-6 text-soft">This page is being built.</p>;
+import AnnouncementFeed from '../announcements/Feed.jsx';
+import { useClass } from './useClass.js';
+
+export default function ClassAnnouncements() {
+  const { cls, canManage } = useClass();
+  return <AnnouncementFeed classId={cls.id} canPost={canManage} readOnly={cls.status === 'ARCHIVED'} />;
 }
