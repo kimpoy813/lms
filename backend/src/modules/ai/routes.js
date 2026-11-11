@@ -23,12 +23,12 @@ import { audit } from '../../services/audit.js';
 import { getSetting, getTimeZone } from '../../services/settings.js';
 import { readStoredFile } from '../../services/storage.js';
 import { classLabel, requireWritableClassManager } from '../classes/access.js';
+import { LESSON_KINDS } from '../content/routes.js';
 
 export const aiRouter = Router();
 aiRouter.use(requireAuth, requireRole('TEACHER', 'ADMIN'));
 
 const REFERENCE_CHAR_BUDGET = 24_000;
-const LESSON_KINDS = ['LESSON', 'ACTIVITY', 'DISCUSSION', 'SUMMARY'];
 const SYSTEM = [
   'You are an instructional designer helping a college teacher in the Philippines prepare course material.',
   'Write accurately and concisely. If you are not sure about a fact, say so instead of inventing it.',
@@ -172,7 +172,7 @@ function modulePrompt(b, cls, references) {
     '',
     'Answer with one JSON object and nothing else:',
     `{ "title": string, "overview": string (2-4 sentences), "objectives": [string] (3-6 measurable objectives),
-  "lessons": [{ "title": string, "kind": "LESSON" | "ACTIVITY" | "DISCUSSION" | "SUMMARY", "estimatedMinutes": number, "contentHtml": string }],
+  "lessons": [{ "title": string, "kind": "LESSON" | "ACTIVITY" | "SUMMARY", "estimatedMinutes": number, "contentHtml": string }],
   "activities": [{ "title": string, "instructions": string }] (2-3 practice activities),
   "assessment": ${b.includeAssessment ? '[question] (6-10 questions of mixed types)' : '[]'},
   "references": [string] }`,

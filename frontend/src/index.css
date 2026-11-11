@@ -119,6 +119,10 @@
   button:disabled { cursor: not-allowed; }
   ::selection { background: color-mix(in srgb, var(--brand) 28%, transparent); }
   * { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+  /* A sideways scroller is the containing block of its content. Otherwise absolutely positioned
+     descendants (for example .sr-only labels in a wide table) escape the scroller and make the
+     whole page scroll sideways. In the base layer, so `sticky`/`absolute` utilities still win. */
+  .overflow-x-auto, .overflow-auto { position: relative; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }

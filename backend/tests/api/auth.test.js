@@ -369,6 +369,17 @@ describe('rate limiting', () => {
     expect(last.status).toBe(429);
     expect(last.body.error.code).toBe('RATE_LIMITED');
   });
+
+  it('does not count successful sign-ins against the limit', async () => {
+    const user = await createUser('STUDENT');
+    for (let i = 0; i < 18; i += 1) {
+      const res = await anonymous().post('/api/auth/login').set('x-test-rate-limit', '1').send({ email: user.email, password: PASSWORD });
+      expect(res.status).toBe(200);
+    }
+    // …while wrong passwords for the same account still add up (the account locks first, which is also a refusal).
+    const wrong = await anonymous().post('/api/auth/login').set('x-test-rate-limit', '1').send({ email: user.email, password: 'not-the-password' });
+    expect(wrong.status).toBe(401);
+  });
 });
 
 describe('security headers', () => {

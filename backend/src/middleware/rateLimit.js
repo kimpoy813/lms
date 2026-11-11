@@ -13,7 +13,7 @@ const handler = (req, res) => {
   });
 };
 
-function limiter({ windowMs, limit, keyGenerator }) {
+function limiter({ windowMs, limit, keyGenerator, failuresOnly = false }) {
   return rateLimit({
     windowMs,
     limit,
@@ -21,6 +21,9 @@ function limiter({ windowMs, limit, keyGenerator }) {
     legacyHeaders: false,
     skip,
     handler,
+    // failuresOnly: a request that succeeds does not use up the allowance, so the limit slows
+    // down guessing without ever locking out people who simply sign in often.
+    skipSuccessfulRequests: failuresOnly,
     ...(keyGenerator ? { keyGenerator } : {}),
   });
 }
@@ -37,10 +40,19 @@ export const authLimiter = limiter({
   keyGenerator: (req) => `ip:${ipKeyGenerator(req.ip ?? '')}`,
 });
 
-/** Per-account sign-in attempts regardless of source address. */
+/** Failed sign-ins from one address (a shared campus network signs in successfully all day). */
+export const signInLimiter = limiter({
+  windowMs: 15 * 60_000,
+  limit: 30,
+  failuresOnly: true,
+  keyGenerator: (req) => `signin:${ipKeyGenerator(req.ip ?? '')}`,
+});
+
+/** Failed sign-ins for one account, regardless of source address. */
 export const loginLimiter = limiter({
   windowMs: 15 * 60_000,
   limit: 15,
+  failuresOnly: true,
   keyGenerator: (req) => `login:${String(req.body?.email ?? '').toLowerCase().slice(0, 254)}`,
 });
 

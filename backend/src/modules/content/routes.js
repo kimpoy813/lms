@@ -22,7 +22,7 @@ export const CONTENT_PREFIXES = ['/modules', '/lessons', '/resources', '/bookmar
 const classParams = idParams('classId');
 const statusEnum = z.enum(['DRAFT', 'SCHEDULED', 'PUBLISHED']);
 const objectives = z.array(z.string().trim().min(1).max(300)).max(20);
-const LESSON_KINDS = ['LESSON', 'ACTIVITY', 'ASSESSMENT', 'SUMMARY', 'REFERENCE'];
+export const LESSON_KINDS = ['LESSON', 'ACTIVITY', 'ASSESSMENT', 'SUMMARY', 'REFERENCE'];
 
 const cleanList = (list) => (list ?? []).map((item) => plainText(item, 300)).filter(Boolean);
 

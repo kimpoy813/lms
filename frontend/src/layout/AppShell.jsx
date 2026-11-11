@@ -305,16 +305,21 @@ export default function AppShell() {
 }
 
 /** Shown by the router when a page throws while rendering. */
+/** True when a page's code could not be downloaded — usually because a new version was deployed. */
+const isChunkError = (error) => /dynamically imported module|Importing a module script failed|Failed to fetch/i.test(String(error?.message ?? ''));
+
 export function PageError({ error, reset }) {
+  const stale = isChunkError(error);
   return (
     <div className="grid min-h-[50vh] place-items-center p-6">
       <div className="max-w-md text-center">
-        <h1 className="text-xl font-bold">This page could not be displayed</h1>
-        <p className="mt-2 text-sm text-soft">Something went wrong while showing this page. Your data is safe — try again, or go back to the dashboard.</p>
+        <h1 className="text-xl font-bold">{stale ? 'This page needs to be reloaded' : 'This page could not be displayed'}</h1>
+        <p className="mt-2 text-sm text-soft">{stale ? 'Part of the app could not be downloaded. You may be offline, or a newer version of EduSphere was just installed. Reloading fixes it.' : 'Something went wrong while showing this page. Your data is safe — try again, or go back to the dashboard.'}</p>
         {import.meta.env.DEV && error && <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-raised p-3 text-left text-xs text-bad">{String(error?.stack ?? error)}</pre>}
         <div className="mt-5 flex justify-center gap-2">
-          <Button variant="secondary" onClick={reset ?? (() => window.location.reload())}>Try again</Button>
-          <Button to="/">Go to dashboard</Button>
+          {/* A lazily loaded page that failed to download stays failed until the document is reloaded. */}
+          <Button variant={stale ? 'primary' : 'secondary'} onClick={stale || !reset ? () => window.location.reload() : reset}>{stale ? 'Reload' : 'Try again'}</Button>
+          {!stale && <Button to="/">Go to dashboard</Button>}
         </div>
       </div>
     </div>

@@ -380,27 +380,88 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, children, confi
 }
 
 /** A small menu anchored to a button. */
+/**
+ * A small dropdown menu. The list is rendered in a portal and positioned next to its trigger, so
+ * it is never clipped by a scrolling table, card or dialog, and it flips upward near the bottom
+ * of the screen. Keyboard: arrows move, Home/End jump, Escape or Tab closes.
+ */
 export function Menu({ trigger, children, align = 'right', className }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState(null);
   const ref = useRef(null);
+  const list = useRef(null);
+
+  const close = (refocus) => {
+    setOpen(false);
+    if (refocus) ref.current?.querySelector('button, [href]')?.focus({ preventScroll: true });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const anchor = ref.current?.getBoundingClientRect();
+      const menu = list.current;
+      if (!anchor || !menu) return;
+      const gap = 6;
+      const edge = 8;
+      const { offsetWidth: width, offsetHeight: height } = menu;
+      const left = Math.max(edge, Math.min(align === 'right' ? anchor.right - width : anchor.left, window.innerWidth - width - edge));
+      const below = anchor.bottom + gap;
+      const fitsBelow = below + height <= window.innerHeight - edge;
+      const top = fitsBelow || anchor.top - gap - height < edge ? Math.min(below, Math.max(edge, window.innerHeight - height - edge)) : anchor.top - gap - height;
+      setPosition({ left, top });
+    };
+    place();
+    // Stay attached to the trigger while anything scrolls or the window changes size.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open, align]);
+
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = (e) => !ref.current?.contains(e.target) && setOpen(false);
-    const onKey = (e) => e.key === 'Escape' && setOpen(false);
+    list.current?.querySelector('[role="menuitem"]')?.focus({ preventScroll: true });
+    const onDown = (e) => {
+      if (!ref.current?.contains(e.target) && !list.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      const items = [...(list.current?.querySelectorAll('[role="menuitem"]:not([disabled])') ?? [])];
+      const at = items.indexOf(document.activeElement);
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        // Captured before a surrounding dialog sees it, so Escape closes only the menu.
+        e.preventDefault();
+        e.stopPropagation();
+        close(true);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+      } else if (e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        items.at(e.key === 'Home' ? 0 : -1)?.focus();
+      }
+    };
     document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     return () => {
       document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
   return (
     <div ref={ref} className={cn('relative', className)}>
       {trigger({ open, toggle: () => setOpen((v) => !v), props: { 'aria-haspopup': 'menu', 'aria-expanded': open } })}
-      {open && (
-        <div role="menu" className={cn('animate-pop absolute z-40 mt-1.5 min-w-[12rem] rounded-xl border border-line bg-surface p-1.5 shadow-pop', align === 'right' ? 'right-0' : 'left-0')} onClick={(e) => e.target.closest('[role="menuitem"]') && setOpen(false)}>
+      {open && createPortal(
+        <div ref={list} role="menu" style={{ left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? 'visible' : 'hidden' }}
+          className="animate-pop fixed z-[70] max-h-[calc(100dvh-1rem)] min-w-[12rem] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-pop"
+          onClick={(e) => e.target.closest('[role="menuitem"]') && close(true)}>
           {children}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -448,7 +509,7 @@ export function Pagination({ meta, onPage }) {
 // ── Tables ───────────────────────────────────────────────────────────────────
 export function Table({ children, className }) {
   return (
-    <div className={cn('overflow-x-auto rounded-2xl border border-line bg-surface shadow-card', className)}>
+    <div className={cn('relative overflow-x-auto rounded-2xl border border-line bg-surface shadow-card', className)}>
       <table className="w-full border-collapse text-left text-sm">{children}</table>
     </div>
   );

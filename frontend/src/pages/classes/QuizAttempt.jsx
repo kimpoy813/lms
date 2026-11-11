@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CircleDashed, Clock, CloudOff, Flag, Grid3x3, Send, Timer, WifiOff, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { ProgrammingAnswer } from '../../components/CodeWorkbench.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, PageLoader, Spinner } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatDuration, formatPercent, formatScore, plural } from '../../lib/format.js';
@@ -245,9 +246,13 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
               </div>
             </div>
             <QuestionText question={current.question} className="mb-5 text-[17px] leading-relaxed" />
+            {current.question.type === 'PROGRAMMING' ? (
+              <ProgrammingAnswer key={current.position} problemId={current.question.programmingProblemId} studentAnswerId={current.answerId} value={value.response} onChange={(response) => change(current.position, { response }, 900)} />
+            ) : (
             <AnswerInput key={current.position} name={`q-${current.position}`} question={current.question} response={value.response} files={value.files}
               onFiles={(files) => setAnswers((a) => ({ ...a, [current.position]: { ...a[current.position], files } }))}
               onChange={(response) => change(current.position, { response }, ['MULTIPLE_CHOICE', 'TRUE_FALSE', 'MULTIPLE_RESPONSE', 'MATCHING', 'ORDERING', 'FILE_UPLOAD'].includes(current.question.type) ? 150 : 900)} />
+            )}
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
               <button type="button" onClick={() => change(current.position, { flagged: !value.flagged }, 150)} aria-pressed={value.flagged} className={cn('inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium', value.flagged ? 'bg-warn-soft text-warn' : 'text-soft hover:bg-raised')}>
                 <Flag className={cn('size-4', value.flagged && 'fill-current')} aria-hidden="true" />{value.flagged ? 'Flagged for review' : 'Flag for review'}

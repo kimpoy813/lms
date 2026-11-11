@@ -97,6 +97,13 @@ export const api = {
   patch: async (path, body = {}, options) => (await json('PATCH', path, { ...options, body })).data,
   delete: async (path, body, options) => (await json('DELETE', path, { ...options, body })).data,
 
+  /** POST a multipart form (e.g. one document to be parsed). `fields` is { name: File | string }. */
+  async postForm(path, fields) {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(fields)) form.append(name, value, value instanceof File ? value.name : undefined);
+    return (await json('POST', path, { form })).data;
+  },
+
   /** Upload files; resolves to [{ id, name, mimeType, sizeBytes }]. */
   async upload(files, path = '/files', field = 'files') {
     const form = new FormData();

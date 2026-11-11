@@ -12,7 +12,7 @@ import { plainText } from '../../lib/sanitize.js';
 import {
   clearSessionCookie, requireAuth, revokeAllSessions, revokeSession, startSession,
 } from '../../middleware/auth.js';
-import { authLimiter, loginLimiter } from '../../middleware/rateLimit.js';
+import { authLimiter, loginLimiter, signInLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
 import { sendMail } from '../../services/mail.js';
@@ -125,7 +125,7 @@ authRouter.get('/session', async (req, res) => {
 // ── Sign in ───────────────────────────────────────────────────────────────────
 authRouter.post(
   '/login',
-  authLimiter,
+  signInLimiter,
   loginLimiter,
   validate({ body: z.object({ email: zEmail, password: z.string().min(1, 'Enter your password').max(200) }) }),
   async (req, res) => {
