@@ -40,10 +40,12 @@ operates it. No independent security review has been done.
 | SQL | All queries go through Prisma with parameters |
 | Rich text | Everything typed into an editor, and all AI output, is sanitised on the server before it is stored. Scripts, event handlers and unknown tags are removed. Video frames may only come from YouTube and Vimeo |
 | Browser policy | Content-Security-Policy without inline scripts, `frame-ancestors 'self'`, `nosniff`, a restrictive Permissions-Policy (location and camera for the app itself only), HSTS in production |
-| Uploads | Accepted only if the extension is on the allow-list **and** the content matches it. Stored outside the web root under random names. Served only after a permission check, as a download or — for a few safe types — in a sandboxed preview. Size limit `MAX_UPLOAD_MB` |
+| Uploads | Accepted only if the extension is on the allow-list **and** the content matches it. Stored outside the web root, or in the database, under random names. Served only after a permission check, as a download or — for a few safe types — in a sandboxed preview. Size limit `MAX_UPLOAD_MB` |
 | Rate limits | Per user or address: general API use, sign-in, uploads, check-ins, messages, AI requests, code runs |
 | Errors and logs | Unexpected errors return a generic message with a request id. Cookies, passwords, tokens and API keys are removed from logs |
 | API responses | Sent with `Cache-Control: no-store`; the service worker never caches them |
+| Database connection | A database address with `sslmode=require` (or stricter) is encrypted and the server's certificate is verified; only `sslmode=no-verify` skips the check |
+| Scheduled call | `GET /api/internal/cron` runs the background jobs on hosts without a timer. With `CRON_SECRET` set it requires that secret; without one it only runs jobs that are due anyway, which any request does |
 
 ## Personal data
 
@@ -66,9 +68,12 @@ sees their records.
 - **Keep `NODE_ENV=production`** on real installations: it disables demo accounts and the
   development mailbox, and enables HSTS.
 - **Set `TRUST_PROXY`** correctly behind a reverse proxy; otherwise rate limits and the audit log
-  see the proxy's address instead of the user's.
+  see the proxy's address instead of the user's. (On Vercel this is set by itself.)
 - **Back up** the database and the upload directory, and protect the backups: they contain
-  student records.
+  student records. When files are kept in the database, the database backup contains them too.
+- **On Vercel, treat preview deployments as production.** Unless they have a database of their
+  own they read and write the live records. They are behind Vercel's own sign-in by default;
+  keep it that way. Set `CRON_SECRET`.
 - **Run the code judge isolated.** EduSphere never runs student code itself, but the judge does.
   Keep it on its own host or network with no access to the database.
 - **Decide what may go to an AI provider** before enabling it, and tell teachers.
@@ -79,9 +84,13 @@ sees their records.
 ## Known gaps
 
 - No two-factor authentication and no single sign-on.
-- No encryption of uploaded files at rest beyond what the disk provides.
+- No encryption of uploaded files at rest beyond what the disk or the database provides.
 - Rate limits are kept in memory per process, so they reset on restart and are not shared
-  between instances.
+  between instances. On Vercel, where instances come and go, they are correspondingly weaker;
+  the lockout of an account after failed sign-ins is kept in the database and is not affected.
+- On Vercel the security headers of pages come from `vercel.json` and those of API responses
+  from the application. A test fails when the two differ, but a header changed in the Vercel
+  dashboard would not be noticed.
 - A faked GPS position passes the attendance geofence. See [ATTENDANCE.md](ATTENDANCE.md).
 - The development mailbox (`/api/dev/mailbox`, never in production) holds password-reset links.
   It answers only requests made on the same computer, but a development server should still not
