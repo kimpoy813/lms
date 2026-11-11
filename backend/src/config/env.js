@@ -132,8 +132,9 @@ export const env = Object.freeze({
   passwordHashCost: raw.PASSWORD_HASH_COST,
 
   serveFrontend: raw.SERVE_FRONTEND,
-  frontendDist: path.resolve(raw.FRONTEND_DIST),
-  storageDir: path.resolve(raw.STORAGE_DIR),
+  frontendDist: path.resolve(backendRoot, raw.FRONTEND_DIST),
+  // Relative paths are relative to the backend folder, whatever the working directory is.
+  storageDir: path.resolve(backendRoot, raw.STORAGE_DIR),
   maxUploadBytes: Math.round(raw.MAX_UPLOAD_MB * 1024 * 1024),
   schedulerEnabled: raw.SCHEDULER_ENABLED && !isTest,
 

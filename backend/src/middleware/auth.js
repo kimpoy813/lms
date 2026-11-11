@@ -182,22 +182,26 @@ export function requireAuth(req, res, next) {
 
 /** requireRole('TEACHER', 'ADMIN') */
 export function requireRole(...roles) {
-  return function roleGuard(req, res, next) {
+  function roleGuard(req, res, next) {
     if (!req.user) throw unauthorized();
     if (!roles.includes(req.user.role)) throw forbidden();
     return next();
-  };
+  }
+  roleGuard.roles = roles; // read by the API reference generator
+  return roleGuard;
 }
 
 /** requirePermission('grades.export') — administrators always pass. */
 export function requirePermission(key) {
-  return async function permissionGuard(req, res, next) {
+  async function permissionGuard(req, res, next) {
     if (!req.user) throw unauthorized();
     if (!(await hasPermission(req.user.role, key))) {
       throw forbidden('This action has been disabled for your role by the administrator.', 'PERMISSION_DENIED');
     }
     return next();
-  };
+  }
+  permissionGuard.permission = key; // read by the API reference generator
+  return permissionGuard;
 }
 
 export async function assertPermission(user, key) {

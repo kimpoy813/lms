@@ -15,7 +15,7 @@ export function zodFieldErrors(error) {
  * validate({ body: zodSchema, query: zodSchema, params: zodSchema })
  */
 export function validate(schemas) {
-  return function validator(req, res, next) {
+  function validator(req, res, next) {
     req.valid ??= {};
     for (const part of ['params', 'query', 'body']) {
       const schema = schemas[part];
@@ -34,5 +34,8 @@ export function validate(schemas) {
       req.valid[part] = result.data;
     }
     return next();
-  };
+  }
+  // Kept for the API reference generator (scripts/generate-api-docs.js).
+  validator.schemas = schemas;
+  return validator;
 }

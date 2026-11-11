@@ -21,6 +21,15 @@ export function pageMeta({ page = 1, pageSize = 20 } = {}, total) {
 }
 
 /**
+ * parent.use(path, child) that also remembers the path. Express 5 does not keep the mount path of
+ * a nested router, and the API reference generator needs it.
+ */
+export function mount(parent, path, child) {
+  parent.use(path, child);
+  (parent.mounted ??= []).push({ path, router: child });
+}
+
+/**
  * Schema for a PATCH body derived from a create schema: every field becomes optional and loses
  * its default. (zod's own `.partial()` keeps applying defaults, which would silently reset every
  * field the client did not send.)

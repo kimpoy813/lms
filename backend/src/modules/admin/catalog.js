@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
-import { created, idParams, noContent, ok, pageMeta, pageQuery, paging, patchOf, zDateKey, zId } from '../../lib/http.js';
+import { created, idParams, mount, noContent, ok, pageMeta, pageQuery, paging, patchOf, zDateKey, zId } from '../../lib/http.js';
 import { plainText } from '../../lib/sanitize.js';
 import { dateKeyToDb, dbToDateKey } from '../../lib/time.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
@@ -322,10 +322,10 @@ gradingScales.delete('/:id', requireRole('ADMIN'), validate({ params: idParams('
  */
 export const catalogRouter = Router();
 catalogRouter.use(requireAuth, requireRole('ADMIN', 'TEACHER'));
-catalogRouter.use('/departments', departments);
-catalogRouter.use('/programs', programs);
-catalogRouter.use('/academic-years', academicYears);
-catalogRouter.use('/semesters', semesters);
-catalogRouter.use('/courses', courses);
-catalogRouter.use('/sections', sections);
-catalogRouter.use('/grading-scales', gradingScales);
+mount(catalogRouter, '/departments', departments);
+mount(catalogRouter, '/programs', programs);
+mount(catalogRouter, '/academic-years', academicYears);
+mount(catalogRouter, '/semesters', semesters);
+mount(catalogRouter, '/courses', courses);
+mount(catalogRouter, '/sections', sections);
+mount(catalogRouter, '/grading-scales', gradingScales);
