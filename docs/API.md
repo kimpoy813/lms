@@ -23,7 +23,7 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/auth/config` | public |  |  |
-| GET | `/api/auth/session` | public |  |  |
+| GET | `/api/auth/session` | public | `optional?`: "1" \| "true" |  |
 | POST | `/api/auth/login` | public<br>rate limited |  | `email`: string<br>`password`: string |
 | POST | `/api/auth/logout` | public |  |  |
 | POST | `/api/auth/register` | public<br>rate limited |  | `role?`: "STUDENT" \| "TEACHER" = "STUDENT"<br>`firstName`: string<br>`lastName`: string<br>`email`: string<br>`password`: string<br>`studentNumber?`: string<br>`acceptPrivacyNotice`: true |
@@ -411,19 +411,19 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | GET | `/api/classes/:classId/modules-progress` | signed in |  |  |
 | POST | `/api/classes/:classId/resources` | signed in |  | `title`: string<br>`description?`: string \| null<br>`type`: "FILE" \| "LINK" \| "EMBED"<br>`fileId?`: string<br>`url?`: string<br>`moduleId?`: string \| null<br>`lessonId?`: string \| null<br>`allowDownload?`: boolean = true<br>`isPublished?`: boolean = true |
 | GET | `/api/classes/:classId/resources` | signed in |  |  |
-| GET | `/api//modules/:moduleId` | public |  |  |
-| PATCH | `/api//modules/:moduleId` | public |  | `title?`: string<br>`description?`: string \| null<br>`objectives?`: string[]<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: any \| null<br>`availableUntil?`: any \| null<br>`prerequisiteModuleId?`: string \| null |
-| DELETE | `/api//modules/:moduleId` | public |  |  |
-| PUT | `/api//modules/:moduleId/lessons/order` | public |  | `ids`: string[] |
-| POST | `/api//modules/:moduleId/copy` | public |  | `targetClassId?`: string |
-| POST | `/api//modules/:moduleId/lessons` | public |  | `title`: string<br>`contentHtml?`: string = ""<br>`objectives?`: string[]<br>`kind?`: "LESSON" \| "ACTIVITY" \| "ASSESSMENT" \| "SUMMARY" \| "REFERENCE" = "LESSON"<br>`estimatedMinutes?`: integer \| null<br>`status?`: "DRAFT" \| "PUBLISHED" = "PUBLISHED"<br>`prerequisiteLessonId?`: string \| null |
-| GET | `/api//lessons/:lessonId` | public |  |  |
-| PATCH | `/api//lessons/:lessonId` | public |  | `title?`: string<br>`contentHtml?`: string<br>`objectives?`: string[]<br>`kind?`: "LESSON" \| "ACTIVITY" \| "ASSESSMENT" \| "SUMMARY" \| "REFERENCE"<br>`estimatedMinutes?`: integer \| null<br>`status?`: "DRAFT" \| "PUBLISHED"<br>`prerequisiteLessonId?`: string \| null |
-| DELETE | `/api//lessons/:lessonId` | public |  |  |
-| POST | `/api//lessons/:lessonId/complete` | student |  |  |
-| DELETE | `/api//lessons/:lessonId/complete` | student |  |  |
-| PATCH | `/api//resources/:resourceId` | public |  | `title?`: string<br>`description?`: string \| null<br>`url?`: string<br>`moduleId?`: string \| null<br>`lessonId?`: string \| null<br>`allowDownload?`: boolean<br>`isPublished?`: boolean |
-| DELETE | `/api//resources/:resourceId` | public |  |  |
-| POST | `/api//bookmarks` | public |  | `lessonId?`: string<br>`resourceId?`: string |
-| DELETE | `/api//bookmarks` | public |  | `lessonId?`: string<br>`resourceId?`: string |
-| GET | `/api//bookmarks` | public |  |  |
+| GET | `/api/modules/:moduleId` | signed in |  |  |
+| PATCH | `/api/modules/:moduleId` | signed in |  | `title?`: string<br>`description?`: string \| null<br>`objectives?`: string[]<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: any \| null<br>`availableUntil?`: any \| null<br>`prerequisiteModuleId?`: string \| null |
+| DELETE | `/api/modules/:moduleId` | signed in |  |  |
+| PUT | `/api/modules/:moduleId/lessons/order` | signed in |  | `ids`: string[] |
+| POST | `/api/modules/:moduleId/copy` | signed in |  | `targetClassId?`: string |
+| POST | `/api/modules/:moduleId/lessons` | signed in |  | `title`: string<br>`contentHtml?`: string = ""<br>`objectives?`: string[]<br>`kind?`: "LESSON" \| "ACTIVITY" \| "ASSESSMENT" \| "SUMMARY" \| "REFERENCE" = "LESSON"<br>`estimatedMinutes?`: integer \| null<br>`status?`: "DRAFT" \| "PUBLISHED" = "PUBLISHED"<br>`prerequisiteLessonId?`: string \| null |
+| GET | `/api/lessons/:lessonId` | signed in |  |  |
+| PATCH | `/api/lessons/:lessonId` | signed in |  | `title?`: string<br>`contentHtml?`: string<br>`objectives?`: string[]<br>`kind?`: "LESSON" \| "ACTIVITY" \| "ASSESSMENT" \| "SUMMARY" \| "REFERENCE"<br>`estimatedMinutes?`: integer \| null<br>`status?`: "DRAFT" \| "PUBLISHED"<br>`prerequisiteLessonId?`: string \| null |
+| DELETE | `/api/lessons/:lessonId` | signed in |  |  |
+| POST | `/api/lessons/:lessonId/complete` | student |  |  |
+| DELETE | `/api/lessons/:lessonId/complete` | student |  |  |
+| PATCH | `/api/resources/:resourceId` | signed in |  | `title?`: string<br>`description?`: string \| null<br>`url?`: string<br>`moduleId?`: string \| null<br>`lessonId?`: string \| null<br>`allowDownload?`: boolean<br>`isPublished?`: boolean |
+| DELETE | `/api/resources/:resourceId` | signed in |  |  |
+| POST | `/api/bookmarks` | signed in |  | `lessonId?`: string<br>`resourceId?`: string |
+| DELETE | `/api/bookmarks` | signed in |  | `lessonId?`: string<br>`resourceId?`: string |
+| GET | `/api/bookmarks` | signed in |  |  |

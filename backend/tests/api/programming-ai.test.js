@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { actor, classroom, prepare, prisma, setSetting, clearSetting } from '../helpers/index.js';
+import { resetJudgeBackoff } from '../../src/modules/quizzes/routes.js';
 import { setAiTransport } from '../../src/services/ai.js';
 import { compareOutput, scoreResults, setCodeRunnerTransport } from '../../src/services/codeRunner.js';
 import { htmlToBlocks } from '../../src/lib/docblocks.js';
@@ -134,6 +135,119 @@ describe('programming problems', () => {
     expect(patched.body.data.testCases).toHaveLength(3);
     expect((await teacher.delete(`/api/programming/problems/${shared}`)).status).toBe(204);
     expect((await students[0].get(`/api/programming/problems/${shared}`)).status).toBe(404);
+  });
+});
+
+describe('programs inside a quiz', () => {
+  /** A published quiz with one 10-point programming question. The problem is not shared with the class. */
+  async function codingQuiz({ teacher, cls }) {
+    const problemId = (await teacher.post('/api/programming/problems', problemInput())).body.data.id;
+    const quiz = (await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'Coding quiz', resultVisibility: 'IMMEDIATE', answerVisibility: 'RESPONSES' })).body.data;
+    expect((await teacher.post(`/api/quizzes/${quiz.id}/questions`, { question: { type: 'PROGRAMMING', points: 10, text: '<p>Solve it.</p>', programmingProblemId: problemId } })).status).toBe(201);
+    expect((await teacher.patch(`/api/quizzes/${quiz.id}`, { status: 'PUBLISHED' })).status).toBe(200);
+    return { quiz, problemId };
+  }
+  async function start(student, quizId) {
+    const started = await student.post(`/api/quizzes/${quizId}/attempts`);
+    expect(started.status).toBe(201);
+    return (await student.get(`/api/attempts/${started.body.data.attemptId}`)).body.data;
+  }
+  const save = (student, attempt, code) => student.put(`/api/attempts/${attempt.id}/answers/0`, { response: { language: 'PYTHON', code } });
+  const handIn = async (student, attempt) => (await student.post(`/api/attempts/${attempt.id}/submit`)).body.data;
+
+  it('scores a program the student had checked during the attempt, keeping the best result', async () => {
+    setCodeRunnerTransport(fakeJudge);
+    resetJudgeBackoff();
+    const room = await classroom(2);
+    const [student, classmate] = room.students;
+    const { quiz, problemId } = await codingQuiz(room);
+    const attempt = await start(student, quiz.id);
+    const answerId = attempt.questions[0].answerId;
+    expect(answerId).toBeTruthy();
+
+    // The problem is reachable through the student's own attempt only.
+    expect((await student.get(`/api/programming/problems/${problemId}`)).status).toBe(200);
+    expect((await classmate.get(`/api/programming/problems/${problemId}`)).status).toBe(404);
+    expect((await classmate.post(`/api/programming/problems/${problemId}/submit`, { language: 'PYTHON', code: 'print(int(input()) * 2)', studentAnswerId: answerId })).status).toBe(404);
+
+    const checked = await student.post(`/api/programming/problems/${problemId}/submit`, { language: 'PYTHON', code: 'print(int(input()) * 2)', studentAnswerId: answerId });
+    expect(checked.body.data).toMatchObject({ status: 'COMPLETED', scorePercent: 100 });
+    // A later, worse version does not lower the score: the best checked result counts.
+    await student.post(`/api/programming/problems/${problemId}/submit`, { language: 'PYTHON', code: 'print(int(input()) * 3)', studentAnswerId: answerId });
+
+    const result = await handIn(student, attempt);
+    expect(result).toMatchObject({ status: 'SUBMITTED', awaitingGrading: false, totalScore: 10, percent: 100 });
+    // Exactly the saved program had been checked already, so handing in did not run the judge again.
+    expect(await prisma.programmingSubmission.count({ where: { studentAnswerId: answerId } })).toBe(2);
+    // Once the attempt is closed, the judge no longer accepts work for it.
+    expect((await student.post(`/api/programming/problems/${problemId}/submit`, { language: 'PYTHON', code: 'print(int(input()) * 2)', studentAnswerId: answerId })).body.error.code).toBe('ATTEMPT_CLOSED');
+  });
+
+  it('checks a saved program that was never checked when the quiz is handed in', async () => {
+    setCodeRunnerTransport(fakeJudge);
+    resetJudgeBackoff();
+    const room = await classroom(2);
+    const { quiz } = await codingQuiz(room);
+
+    const full = await start(room.students[0], quiz.id);
+    expect((await save(room.students[0], full, 'print(int(input()) * 2)')).status).toBe(200);
+    expect(await handIn(room.students[0], full)).toMatchObject({ awaitingGrading: false, totalScore: 10 });
+    const recorded = await prisma.programmingSubmission.findMany({ where: { studentAnswerId: full.questions[0].answerId } });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ status: 'COMPLETED', passedCount: 3, totalCount: 3, studentId: room.students[0].user.id });
+
+    // Partial credit follows the test weights: only the visible test (weight 1 of 4) passes here.
+    setCodeRunnerTransport(async ({ stdin }) => ({ stdout: stdin === '2' ? '4\n' : 'wrong\n', stderr: '', exitCode: 0 }));
+    const partial = await start(room.students[1], quiz.id);
+    await save(room.students[1], partial, 'print(4)');
+    expect(await handIn(room.students[1], partial)).toMatchObject({ awaitingGrading: false, totalScore: 2.5, percent: 25 });
+  });
+
+  it('leaves the program for the teacher when it does not compile, the judge is down or none is set up', async () => {
+    const room = await classroom(3);
+    const { quiz } = await codingQuiz(room);
+
+    // Does not compile: nothing to score automatically.
+    setCodeRunnerTransport(fakeJudge);
+    resetJudgeBackoff();
+    const broken = await start(room.students[0], quiz.id);
+    await save(room.students[0], broken, 'syntax error');
+    expect(await handIn(room.students[0], broken)).toMatchObject({ status: 'SUBMITTED', awaitingGrading: true, totalScore: null });
+
+    // The judge fails: handing in still succeeds.
+    let calls = 0;
+    setCodeRunnerTransport(async () => {
+      calls += 1;
+      throw new Error('connect ECONNREFUSED');
+    });
+    const down = await start(room.students[1], quiz.id);
+    await save(room.students[1], down, 'print(int(input()) * 2)');
+    const handedIn = await room.students[1].post(`/api/attempts/${down.id}/submit`);
+    expect(handedIn.status).toBe(200);
+    expect(handedIn.body.data).toMatchObject({ status: 'SUBMITTED', awaitingGrading: true });
+    expect(calls).toBe(1);
+    expect(await prisma.programmingSubmission.count({ where: { studentAnswerId: down.questions[0].answerId } })).toBe(0);
+
+    // No judge at all.
+    setCodeRunnerTransport(null);
+    resetJudgeBackoff();
+    const none = await start(room.students[2], quiz.id);
+    await save(room.students[2], none, 'print(int(input()) * 2)');
+    expect(await handIn(room.students[2], none)).toMatchObject({ awaitingGrading: true });
+
+    // The teacher marks it by hand and the score is complete.
+    const graded = await room.teacher.put(`/api/attempts/${none.id}/answers/0/grade`, { score: 8 });
+    expect(graded.status).toBe(200);
+    expect((await room.students[2].get(`/api/attempts/${none.id}`)).body.data).toMatchObject({ awaitingGrading: false, totalScore: 8 });
+  });
+
+  it('gives no credit and asks for no grading when nothing was written', async () => {
+    setCodeRunnerTransport(fakeJudge);
+    resetJudgeBackoff();
+    const room = await classroom(1);
+    const { quiz } = await codingQuiz(room);
+    const empty = await start(room.students[0], quiz.id);
+    expect(await handIn(room.students[0], empty)).toMatchObject({ awaitingGrading: false, totalScore: 0 });
   });
 });
 

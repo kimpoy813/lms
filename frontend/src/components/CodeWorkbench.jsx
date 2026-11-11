@@ -139,7 +139,7 @@ export function ProgrammingAnswer({ problemId, studentAnswerId, value, onChange,
     <div className="space-y-4">
       {p.statementHtml && <ProblemStatement problem={p} />}
       <CodeWorkbench problem={p} value={value} onChange={onChange} studentAnswerId={studentAnswerId} canSubmit readOnly={disabled} minHeight={300} />
-      <p className="text-xs text-faint">Your code is saved with your answer as you type.{p.runner?.configured !== false && ' “Submit for checking” runs all tests, including hidden ones; your best checked result counts.'}</p>
+      <p className="text-xs text-faint">Your code is saved with your answer as you type.{p.runner?.configured !== false && ' “Submit for checking” runs all tests, including hidden ones, and your best checked result counts. A program you have not checked is checked once when you hand in the quiz.'}</p>
     </div>
   );
 }
@@ -163,7 +163,7 @@ export function ProblemStatement({ problem }) {
               </li>
             ))}
           </ul>
-          {problem.hiddenTestCount > 0 && <p className="mt-2 flex items-center gap-1.5 text-xs text-faint"><EyeOff className="size-3.5" aria-hidden="true" />{plural(problem.hiddenTestCount, 'hidden test')} also check your program when you submit.</p>}
+          {problem.hiddenTestCount > 0 && <p className="mt-2 flex items-center gap-1.5 text-xs text-faint"><EyeOff className="size-3.5" aria-hidden="true" />{plural(problem.hiddenTestCount, 'hidden test')} also check your program when it is submitted for checking.</p>}
         </div>
       )}
     </div>

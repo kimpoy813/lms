@@ -25,14 +25,24 @@ const fileOf = new Map();
 for (const m of routesSource.matchAll(/import\s*\{([^}]+)\}\s*from\s*'(\.\/modules\/[^']+)'/g)) {
   for (const name of m[1].split(',').map((s) => s.trim()).filter(Boolean)) fileOf.set(name, m[2]);
 }
-// apiRouter.use('/path', [guards…,] someRouter)
+// apiRouter.use('/path', [guards…,] someRouter)   → a mounted router
+// apiRouter.use(PREFIXES, requireAuth)            → a guard in front of every path under those prefixes
 const mounts = [];
-for (const m of routesSource.matchAll(/apiRouter\.use\(\s*('([^']*)'|[A-Z_]+)\s*,\s*([^)]*)\)/g)) {
-  const args = m[3].split(',').map((s) => s.trim());
+const prefixGuards = [];
+for (const m of routesSource.matchAll(/apiRouter\.use\(\s*('([^']*)'|([A-Z_]+))\s*,\s*([^)]*)\)/g)) {
+  const args = m[4].split(',').map((s) => s.trim());
   const ident = args.at(-1);
-  if (!fileOf.has(ident)) continue;
-  mounts.push({ mount: m[2] ?? '', ident, guards: args.slice(0, -1) });
+  if (fileOf.has(ident)) {
+    // A router mounted at the API root has the mount path '/'.
+    mounts.push({ mount: (m[2] ?? '').replace(/\/+$/, ''), ident, guards: args.slice(0, -1) });
+  } else if (args.includes('requireAuth')) {
+    let prefixes = m[2] !== undefined ? [m[2]] : [];
+    if (m[3] && fileOf.has(m[3])) prefixes = (await import(pathToFileURL(path.join(src, fileOf.get(m[3]))).href))[m[3]] ?? [];
+    for (const prefix of prefixes) prefixGuards.push(prefix.replace(/\/+$/, ''));
+  }
 }
+/** True when routes.js puts requireAuth in front of this path (given without the /api prefix). */
+const guardedByPrefix = (route) => prefixGuards.some((prefix) => route === prefix || route.startsWith(`${prefix}/`));
 
 const TITLES = {
   auth: 'Authentication and account', files: 'Files', catalog: 'Academic catalogue', enrollments: 'Enrolment', classes: 'Classes', admin: 'Administration',
@@ -101,9 +111,10 @@ function describe(router, mount, section, inherited) {
     const handles = layer.route.stack.map((l) => l.handle);
     const own = guardInfo(handles);
     const schemas = handles.find((h) => h.schemas)?.schemas ?? {};
-    const fullPath = `/api${mount}${layer.route.path === '/' ? '' : layer.route.path}`;
+    const route = `${mount}${layer.route.path === '/' ? '' : layer.route.path}`.replace(/\/{2,}/g, '/');
+    const fullPath = `/api${route}`;
     const roles = own.roles ?? base.roles;
-    const access = !(base.auth || own.auth || roles) ? 'public' : roles ? roles.map((r) => r.toLowerCase()).join(', ') : 'signed in';
+    const access = !(base.auth || own.auth || roles || guardedByPrefix(route)) ? 'public' : roles ? roles.map((r) => r.toLowerCase()).join(', ') : 'signed in';
     for (const method of Object.keys(layer.route.methods)) {
       if (!sections.has(section)) sections.set(section, []);
       sections.get(section).push({ method: method.toUpperCase(), path: fullPath, access: `${access}${own.permission ? `<br>permission \`${own.permission}\`` : ''}${own.limiter ? '<br>rate limited' : ''}`, query: fields(schemas.query), body: fields(schemas.body) });

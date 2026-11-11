@@ -14,6 +14,7 @@ import { isPublished, publishedWhere, quizResultsVisible, resolvePublication } f
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
+import { LANGUAGES, codeRunnerConfigured, judge } from '../../services/codeRunner.js';
 import { enrolledStudentIds, notify } from '../../services/notifications.js';
 import { registerJob } from '../../services/scheduler.js';
 import { getTimeZone } from '../../services/settings.js';
@@ -493,6 +494,63 @@ export async function finalizeAttempt(tx, attemptId, { auto = false, now = new D
   return { ...updated, quiz: attempt.quiz };
 }
 
+// After the judge failed, do not keep every closing attempt waiting for it.
+const JUDGE_RETRY_AFTER_MS = 60_000;
+let judgeUnreachableUntil = 0;
+
+/**
+ * A student may hand in a quiz without pressing "Submit for checking" on a program. Before an
+ * attempt is closed, a saved program that was never checked is sent to the judge, so that it is
+ * scored like any other checked program. When no judge is set up or it cannot be reached, the
+ * answer is simply left for the teacher to mark — handing in never fails because of the judge.
+ *
+ * Runs outside the closing transaction: the judge is a slow external service.
+ * @returns {Promise<number>} how many programs were checked
+ */
+export async function checkUncheckedPrograms(attemptId, now = Date.now()) {
+  if (!codeRunnerConfigured() || now < judgeUnreachableUntil) return 0;
+  const answers = await prisma.studentAnswer.findMany({
+    where: { attemptId, attempt: { status: 'IN_PROGRESS' }, snapshot: { path: ['type'], equals: 'PROGRAMMING' } },
+    select: { id: true, snapshot: true, response: true, attempt: { select: { studentId: true } } },
+  });
+  let checked = 0;
+  for (const answer of answers) {
+    const { language, code } = answer.response ?? {};
+    const problemId = answer.snapshot?.programmingProblemId;
+    if (!problemId || typeof code !== 'string' || !code.trim() || !Object.hasOwn(LANGUAGES, language)) continue;
+    try {
+      const last = await prisma.programmingSubmission.findFirst({ where: { studentAnswerId: answer.id }, orderBy: { createdAt: 'desc' }, select: { language: true, code: true } });
+      if (last && last.code === code && last.language === language) continue; // exactly this program was checked already
+      const problem = await prisma.programmingProblem.findUnique({ where: { id: problemId }, include: { testCases: { orderBy: { position: 'asc' } } } });
+      if (!problem || !problem.allowedLanguages.includes(language)) continue;
+      const result = await judge(problem, problem.testCases, { language, code });
+      await prisma.programmingSubmission.create({
+        data: {
+          problemId: problem.id, studentId: answer.attempt.studentId, studentAnswerId: answer.id, language, code,
+          status: result.status, results: result.results, passedCount: result.passedCount, totalCount: result.totalCount, scorePercent: result.scorePercent, errorMessage: result.errorMessage,
+        },
+      });
+      checked += 1;
+    } catch (err) {
+      judgeUnreachableUntil = Date.now() + JUDGE_RETRY_AFTER_MS;
+      logger.warn({ err, attemptId, answerId: answer.id }, 'the code judge could not check a program while a quiz attempt was closing; it is left for manual grading');
+      break;
+    }
+  }
+  return checked;
+}
+
+/** For tests: forget that the judge was unreachable. */
+export function resetJudgeBackoff() {
+  judgeUnreachableUntil = 0;
+}
+
+/** Close an attempt from outside a transaction: check pending programs, then score and total. */
+async function closeAttempt(attemptId, options) {
+  await checkUncheckedPrograms(attemptId);
+  return prisma.$transaction((tx) => finalizeAttempt(tx, attemptId, options));
+}
+
 const isOverdue = (attempt, now) => Boolean(attempt.deadlineAt) && now.getTime() > attempt.deadlineAt.getTime() + GRACE_MS;
 
 /** Submit attempts whose time ran out while the student was away. Run by the scheduler. */
@@ -501,7 +559,7 @@ export async function autoSubmitOverdue(now = new Date()) {
   let count = 0;
   for (const { id } of due) {
     try {
-      await prisma.$transaction((tx) => finalizeAttempt(tx, id, { auto: true, now }));
+      await closeAttempt(id, { auto: true, now });
       count += 1;
     } catch (err) {
       logger.error({ err, attemptId: id }, 'failed to auto-submit a quiz attempt');
@@ -541,6 +599,10 @@ quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ param
   if (!access.isStudent) throw forbidden('Only students enrolled in this class can do that.');
   if (!isPublished(quiz)) throw notFound('Quiz');
   assertClassWritable(access.cls);
+
+  // An earlier attempt whose time ran out is closed inside the transaction below; its programs are checked first.
+  const stale = await prisma.quizAttempt.findFirst({ where: { quizId: quiz.id, studentId: req.user.id, status: 'IN_PROGRESS' }, select: { id: true, deadlineAt: true } });
+  if (stale && isOverdue(stale, new Date())) await checkUncheckedPrograms(stale.id);
 
   const result = await prisma.$transaction(async (tx) => {
     // One attempt at a time per student: a double click cannot start two.
@@ -663,7 +725,7 @@ attemptsRouter.get('/:attemptId', validate({ params: attemptParams }), async (re
   let { attempt, access } = await loadAttempt(req);
   const now = new Date();
   if (attempt.status === 'IN_PROGRESS' && isOverdue(attempt, now)) {
-    await prisma.$transaction((tx) => finalizeAttempt(tx, attempt.id, { auto: true, now }));
+    await closeAttempt(attempt.id, { auto: true, now });
     ({ attempt, access } = await loadAttempt(req));
   }
   ok(res, access.canManage ? await teacherAttemptView(attempt) : await studentAttemptView(attempt, now));
@@ -679,7 +741,7 @@ attemptsRouter.put('/:attemptId/answers/:position', requireRole('STUDENT'), vali
   const now = new Date();
   if (attempt.status !== 'IN_PROGRESS') throw new AppError(409, 'ATTEMPT_CLOSED', 'This attempt has already been submitted.');
   if (isOverdue(attempt, now)) {
-    await prisma.$transaction((tx) => finalizeAttempt(tx, attempt.id, { auto: true, now }));
+    await closeAttempt(attempt.id, { auto: true, now });
     throw new AppError(409, 'TIME_UP', 'Time is up. Your answers were submitted automatically.');
   }
   const answer = attempt.answers.find((a) => a.position === req.valid.params.position);
@@ -710,7 +772,7 @@ attemptsRouter.post('/:attemptId/submit', requireRole('STUDENT'), validate({ par
   assertClassWritable(access.cls);
   const now = new Date();
   // Submitting twice (double click, retry after a timeout) simply returns the result.
-  if (attempt.status === 'IN_PROGRESS') await prisma.$transaction((tx) => finalizeAttempt(tx, attempt.id, { auto: isOverdue(attempt, now), now }));
+  if (attempt.status === 'IN_PROGRESS') await closeAttempt(attempt.id, { auto: isOverdue(attempt, now), now });
   const fresh = await prisma.quizAttempt.findUnique({ where: { id: attempt.id }, include: attemptInclude });
   ok(res, await studentAttemptView(fresh, new Date()));
 });
