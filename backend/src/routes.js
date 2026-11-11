@@ -14,6 +14,7 @@ import { classesRouter } from './modules/classes/routes.js';
 import { CONTENT_PREFIXES, classContentRouter, contentRouter } from './modules/content/routes.js';
 import { classPeopleRouter, enrollmentsRouter } from './modules/enrollments/routes.js';
 import { filesRouter } from './modules/files/routes.js';
+import { classGradebookRouter, gradesRouter } from './modules/gradebook/routes.js';
 import { notificationsRouter } from './modules/notifications/routes.js';
 
 // Background jobs register themselves when imported.
@@ -29,11 +30,13 @@ apiRouter.use('/catalog', catalogRouter);
 apiRouter.use('/enrollments', enrollmentsRouter);
 apiRouter.use('/classes/:classId/people', classPeopleRouter);
 apiRouter.use('/classes/:classId/attendance', classAttendanceRouter);
+apiRouter.use('/classes/:classId/gradebook', classGradebookRouter);
 apiRouter.use('/classes/:classId', classContentRouter);
 apiRouter.use('/classes', classesRouter);
 apiRouter.use('/attendance', attendanceRouter);
 apiRouter.use('/announcements', announcementsRouter);
 apiRouter.use('/notifications', notificationsRouter);
+apiRouter.use('/grades', gradesRouter);
 apiRouter.use(CONTENT_PREFIXES, requireAuth);
 apiRouter.use('/', contentRouter);
 apiRouter.use('/admin/users', requireAuth, adminUsersRouter);

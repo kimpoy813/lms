@@ -152,8 +152,27 @@ export async function clearSetting(key) {
 
 /** Id of the first grade category of a class whose kind matches. */
 export async function categoryId(classId, kind = 'ASSIGNMENT') {
-  const category = await prisma.gradeCategory.findFirst({ where: { kind, period: { classId } }, orderBy: { position: 'asc' } });
+  const category = await prisma.gradeCategory.findFirst({ where: { kind, period: { classId } }, orderBy: [{ period: { position: 'asc' } }, { position: 'asc' }] });
   return category.id;
+}
+
+/** The institution's default grading scale (a 1.00–5.00 scale), created on first use. */
+export async function defaultScale() {
+  const existing = await prisma.gradingScale.findFirst({ where: { isDefault: true }, include: { entries: true } });
+  if (existing) return existing;
+  const bands = [[97, '1.00', 'Excellent'], [94, '1.25', 'Very Good'], [91, '1.50', 'Very Good'], [88, '1.75', 'Good'], [85, '2.00', 'Good'], [82, '2.25', 'Satisfactory'], [79, '2.50', 'Satisfactory'], [76, '2.75', 'Fair'], [75, '3.00', 'Passed']];
+  try {
+    return await prisma.gradingScale.create({
+      data: {
+        name: 'Test 1.00–5.00', isDefault: true,
+        entries: { create: [...bands.map(([minPercent, label, remark]) => ({ minPercent, label, remark, isPassing: true })), { minPercent: 0, label: '5.00', remark: 'Failed', isPassing: false }] },
+      },
+      include: { entries: true },
+    });
+  } catch {
+    // Another test file created it at the same moment.
+    return prisma.gradingScale.findFirst({ where: { isDefault: true }, include: { entries: true } });
+  }
 }
 
 export const minutesFromNow = (m) => new Date(Date.now() + m * 60_000);

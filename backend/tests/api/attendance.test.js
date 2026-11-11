@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { actor, classroom, clearSetting, createClass, enroll, minutesFromNow, prepare, prisma, setSetting } from '../helpers/index.js';
+import { actor, classroom, clearSetting, createClass, minutesFromNow, prepare, prisma, setSetting } from '../helpers/index.js';
 import { autoCloseAttendance } from '../../src/jobs/attendance.js';
 import { applyLocationRetention } from '../../src/jobs/maintenance.js';
 import { checkQrToken, currentQrToken, extractQrToken } from '../../src/modules/attendance/service.js';

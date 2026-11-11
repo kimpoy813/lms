@@ -38,3 +38,18 @@ export function resolvePublication({ status, publishAt }, existing, now = new Da
   if (status === 'ARCHIVED') return { status: 'ARCHIVED', publishAt: null };
   return { status: 'DRAFT', publishAt: null, publishedAt: null };
 }
+
+/**
+ * May students see their quiz score now?
+ *   IMMEDIATE   → as soon as the attempt is scored
+ *   AFTER_CLOSE → once the quiz's availability window has ended
+ *   MANUAL      → after the teacher's "publish results" action
+ *   NEVER       → only through a published grading period
+ */
+export function quizResultsVisible(quiz, now = new Date()) {
+  if (!quiz) return false;
+  if (quiz.resultVisibility === 'IMMEDIATE') return true;
+  if (quiz.resultVisibility === 'AFTER_CLOSE') return Boolean(quiz.availableUntil) && quiz.availableUntil <= now;
+  if (quiz.resultVisibility === 'MANUAL') return Boolean(quiz.resultsPublishedAt);
+  return false;
+}

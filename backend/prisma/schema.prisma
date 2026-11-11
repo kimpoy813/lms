@@ -660,6 +660,8 @@ model Class {
   gradingScaleId             String?
   /// 0 = no transmutation. A base of 50 maps a raw 0–100% onto 50–100 (a common Philippine practice).
   transmutationBase          Int         @default(0)
+  /// Decimal places the percentage is rounded to before the grading scale is applied (0, 1 or 2).
+  gradeRounding              Int         @default(2)
   treatMissingAsZero         Boolean     @default(true)
   /// Credit an attendance LATE receives when attendance is graded (0–1).
   attendanceLateCredit       Float       @default(0.5)

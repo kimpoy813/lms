@@ -368,6 +368,7 @@ CREATE TABLE "Class" (
     "archivedAt" TIMESTAMPTZ(3),
     "gradingScaleId" TEXT,
     "transmutationBase" INTEGER NOT NULL DEFAULT 0,
+    "gradeRounding" INTEGER NOT NULL DEFAULT 2,
     "treatMissingAsZero" BOOLEAN NOT NULL DEFAULT true,
     "attendanceLateCredit" DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     "gradesFinalizedAt" TIMESTAMPTZ(3),
