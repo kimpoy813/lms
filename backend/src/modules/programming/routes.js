@@ -33,7 +33,8 @@ const problemBody = z.object({
   statementHtml: zHtml.default(''),
   classId: zId.nullable().optional(),
   allowedLanguages: z.array(zLanguage).min(1).max(languageIds.length).default(['PYTHON']),
-  starterCode: z.record(zLanguage, z.string().max(20_000)).default({}),
+  // partialRecord: starter code is optional per language (z.record with an enum key would demand every language).
+  starterCode: z.partialRecord(zLanguage, z.string().max(20_000)).default({}),
   timeLimitMs: z.number().int().min(500).max(15_000).default(3000),
   memoryLimitKb: z.number().int().min(16_384).max(524_288).default(131_072),
   partialCredit: z.boolean().default(true),

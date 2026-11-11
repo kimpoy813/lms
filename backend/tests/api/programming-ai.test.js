@@ -124,6 +124,11 @@ describe('programming problems', () => {
     expect((await otherTeacher.post('/api/programming/problems', problemInput({ classId: cls.id }))).status).toBe(404);
     expect((await otherTeacher.patch(`/api/programming/problems/${shared}`, { title: 'Hijacked' })).status).toBe(404);
     expect((await teacher.post('/api/programming/problems', problemInput({ testCases: [{ input: '', expectedOutput: 'x', weight: 0 }] }))).status).toBe(422);
+    // Starter code is optional per language, but only for languages the problem allows.
+    const withStarter = await teacher.post('/api/programming/problems', problemInput({ allowedLanguages: ['PYTHON', 'CPP'], starterCode: { PYTHON: 'n = int(input())\n' } }));
+    expect(withStarter.status).toBe(201);
+    expect(withStarter.body.data.starterCode).toEqual({ PYTHON: 'n = int(input())\n' });
+    expect((await teacher.post('/api/programming/problems', problemInput({ starterCode: { JAVA: 'class Main {}' } }))).status).toBe(422);
     const patched = await teacher.patch(`/api/programming/problems/${shared}`, { title: 'Double it (v2)' });
     expect(patched.body.data).toMatchObject({ title: 'Double it (v2)', allowedLanguages: ['PYTHON'] });
     expect(patched.body.data.testCases).toHaveLength(3);
@@ -300,6 +305,9 @@ describe('AI-assisted authoring', () => {
     const rubric = (await teacher.post('/api/ai/rubric', { task: 'Grade an essay', points: 100 })).body.data.rubric;
     expect(rubric.criteria).toHaveLength(1); // the criterion without a title is dropped
     expect(rubric.criteria[0].levels[0].points).toBe(60); // a level cannot be worth more than its criterion
+    expect(rubric.criteria[0].levels[0].title).toBe('Excellent');
+    // The draft has exactly the shape the rubric API accepts.
+    expect((await teacher.post('/api/rubrics', rubric)).status).toBe(201);
     const assignment = (await teacher.post('/api/ai/assignment', { topic: 'Leaves', points: 100 })).body.data;
     expect(assignment).toMatchObject({ title: 'Leaf journal', instructionsHtml: '<p>Keep a journal.</p>', needsReview: true });
     expect(assignment.rubric.criteria[0].title).toBe('Effort');

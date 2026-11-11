@@ -426,7 +426,7 @@ aiRouter.post(
       user: [
         `Draft an assignment about: ${b.topic}. It is worth ${b.points} points.`,
         b.details ? `Details from the teacher: ${b.details}` : null,
-        `Answer with one JSON object: { "title": string, "instructionsHtml": string (use <p>, <ul>, <ol>, <li>, <strong>)${b.withRubric ? ', "rubric": { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "label": string, "points": number, "description": string }] }] } — criteria points must add up to the assignment points' : ''} }`,
+        `Answer with one JSON object: { "title": string, "instructionsHtml": string (use <p>, <ul>, <ol>, <li>, <strong>)${b.withRubric ? ', "rubric": { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } — criteria points must add up to the assignment points' : ''} }`,
       ].filter(Boolean).join('\n'),
     });
     await recordUsage(req.user.id, 'ASSIGNMENT', out);
@@ -436,13 +436,16 @@ aiRouter.post(
   },
 );
 
+/** Bring an AI rubric into exactly the shape POST /api/rubrics accepts, so a draft can be saved as is. */
 function cleanRubric(raw) {
   if (!raw || !Array.isArray(raw.criteria)) return null;
   const criteria = raw.criteria.slice(0, 12).map((c) => {
     const maxPoints = Math.max(0, Math.min(1000, Number(c?.maxPoints) || 0));
     return {
-      title: plainText(String(c?.title ?? ''), 150), description: c?.description ? plainText(String(c.description), 500) : null, maxPoints,
-      levels: (Array.isArray(c?.levels) ? c.levels : []).slice(0, 6).map((l) => ({ label: plainText(String(l?.label ?? ''), 60), points: Math.max(0, Math.min(maxPoints, Number(l?.points) || 0)), description: l?.description ? plainText(String(l.description), 400) : '' })).filter((l) => l.label),
+      title: plainText(String(c?.title ?? ''), 120), description: c?.description ? plainText(String(c.description), 1000) : '', maxPoints,
+      levels: (Array.isArray(c?.levels) ? c.levels : []).slice(0, 8)
+        .map((l) => ({ title: plainText(String(l?.title ?? l?.label ?? ''), 60), points: Math.max(0, Math.min(maxPoints, Number(l?.points) || 0)), description: l?.description ? plainText(String(l.description), 500) : '' }))
+        .filter((l) => l.title),
     };
   }).filter((c) => c.title && c.maxPoints > 0);
   return criteria.length > 0 ? { title: plainText(String(raw.title ?? 'Rubric'), 200) || 'Rubric', criteria } : null;
@@ -453,7 +456,7 @@ aiRouter.post('/rubric', aiLimiter, validate({ body: z.object({ task: z.string()
   await guard(req);
   const out = await chatJson({
     system: SYSTEM,
-    user: `Draft a grading rubric with ${b.criteriaCount} criteria for this task: ${b.task}\nThe criteria points must add up to ${b.points}.\nAnswer with one JSON object: { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "label": string, "points": number, "description": string }] }] } with 4 levels per criterion from best to weakest.`,
+    user: `Draft a grading rubric with ${b.criteriaCount} criteria for this task: ${b.task}\nThe criteria points must add up to ${b.points}.\nAnswer with one JSON object: { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } with 4 levels per criterion from best to weakest.`,
   });
   await recordUsage(req.user.id, 'RUBRIC', out);
   const rubric = cleanRubric(out.data);
