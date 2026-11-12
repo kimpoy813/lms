@@ -160,4 +160,10 @@ if (!migrate) {
   run('Role permissions, default grading scale, first administrator', ['prisma/seed.js'], { cwd: backend, env });
 }
 
+// TEMPORARY, for this branch only: see scripts/judge-probe.mjs.
+if (process.env.EDUSPHERE_JUDGE_PROBE === '1' && target !== 'production') {
+  console.log('\n▸ Exploring Vercel Sandbox for running programs (temporary)');
+  spawnSync(process.execPath, ['scripts/judge-probe.mjs'], { cwd: root, stdio: 'inherit', timeout: 25 * 60_000 });
+}
+
 console.log('\n✓ Build finished.');
