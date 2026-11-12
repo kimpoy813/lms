@@ -19,7 +19,7 @@ vi.hoisted(() => {
 const { actor, anonymous, classroom, minutesFromNow, prepare, prisma } = await import('../helpers/index.js');
 const { env } = await import('../../src/config/env.js');
 const { runInBackground, setBackgroundRunner } = await import('../../src/lib/background.js');
-const { closeIdleConnectionsBeforeFreeze, keepAliveUntil, restoreRequestUrl } = await import('../../src/lib/vercel.js');
+const { closeIdleConnectionsBeforeFreeze, createFunctionHandler, keepAliveUntil, restoreRequestUrl, startupReportToken } = await import('../../src/lib/vercel.js');
 const { pgOptionsFromUrl } = await import('../../src/db/connection.js');
 const { default: pg } = await import('pg');
 const { checkDueJobs, jobNames, resetDueCheck, runDueJobs } = await import('../../src/services/scheduler.js');
@@ -271,14 +271,78 @@ describe('the Vercel entry point', () => {
     // … or the original one with the parameter added.
     expect(restored('/api/auth/session?optional=1&__path=api/auth/session')).toBe('/api/auth/session?optional=1');
     expect(restored('/api/classes')).toBe('/api/classes');
+    // … or the function's own address spelled out.
+    expect(restored('/api/index?__path=api/classes&page=2')).toBe('/api/classes?page=2');
+    expect(restored('/api/index.js?__path=readyz')).toBe('/readyz');
     // Sent by hand it changes nothing: other paths ignore it, and it cannot carry a query string.
     expect(restored('/api/files/abc?__path=api/admin/users')).toBe('/api/files/abc');
     expect(restored('/api?__path=api/files/abc%3Fkind%3Dimage')).toBe('/api/files/abc%3Fkind=image');
   });
 
-  it('exports the Express application itself and answers under both URL forms', async () => {
+  it('says that the application could not start, and tells the reason only to the operator', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const failure = Object.assign(new Error('Invalid environment configuration:\n  • SMTP_PORT: expected a number'), { code: 'E_CONFIG' });
+      const handler = createFunctionHandler({ load: () => Promise.reject(failure), reportSecret: 'the-cron-secret', loadedWith: 'require()' });
+
+      // Every request gets an answer the web app can show, and nothing about the cause.
+      const visitor = await request(handler).get('/api?__path=api/auth/session');
+      expect(visitor.status).toBe(503);
+      expect(visitor.headers['cache-control']).toBe('no-store');
+      expect(visitor.body).toEqual({ error: { code: 'STARTUP_FAILED', message: 'The application could not start. The reason is in the function log.' } });
+      expect(logged).toHaveBeenCalledWith('EduSphere could not start:', failure);
+
+      // A guess, and the secret itself, unlock nothing.
+      for (const guess of ['x', 'the-cron-secret']) {
+        const refused = await request(handler).post(`/healthz?startup-report=${guess}`).send({ any: 'thing' });
+        expect(refused.status).toBe(503);
+        expect(JSON.stringify(refused.body)).not.toContain('SMTP_PORT');
+      }
+
+      const report = await request(handler).get(`/api?__path=healthz&startup-report=${startupReportToken('the-cron-secret')}`);
+      expect(report.status).toBe(200);
+      expect(report.body.data).toMatchObject({ started: false, loadedWith: 'require()', node: process.version, platformHelpers: false });
+      expect(report.body.data.reason).toMatchObject({ name: 'Error', code: 'E_CONFIG', message: failure.message });
+      expect(report.body.data.url).toContain('/api?__path=healthz');
+
+      // Without a secret there is no report to ask for.
+      const closed = createFunctionHandler({ load: () => Promise.reject(failure) });
+      expect((await request(closed).get(`/healthz?startup-report=${startupReportToken('the-cron-secret')}`)).status).toBe(503);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it('hands requests to the application once it has loaded, and reports a good start', async () => {
+    let loads = 0;
+    const handler = createFunctionHandler({
+      load: async () => {
+        loads += 1;
+        return (req, res) => res.end(`app saw ${req.method} ${req.url}`);
+      },
+      reportSecret: 'the-cron-secret',
+      loadedWith: 'import()',
+    });
+    expect((await request(handler).get('/api/classes?page=2')).text).toBe('app saw GET /api/classes?page=2');
+    // A wrong token is simply a request for the application.
+    expect((await request(handler).get('/healthz?startup-report=wrong')).text).toBe('app saw GET /healthz?startup-report=wrong');
+    const report = await request(handler).get(`/healthz?startup-report=${startupReportToken('the-cron-secret')}`);
+    expect(report.body.data).toMatchObject({ started: true, loadedWith: 'import()', platformHelpers: false });
+    expect(report.body.data.reason).toBeUndefined();
+    expect(loads).toBe(1);
+
+    // Vercel leaves the request untouched only for an export that can listen like a server.
+    const server = handler.listen(0, '127.0.0.1');
+    try {
+      await new Promise((resolve) => server.once('listening', resolve));
+      expect(await (await fetch(`http://127.0.0.1:${server.address().port}/readyz`)).text()).toBe('app saw GET /readyz');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('loads the application behind the function entry and answers under both URL forms', async () => {
     const { default: handler } = await import('../../../api/index.js');
-    // Vercel leaves the request untouched only for an export that has listen().
     expect(typeof handler.listen).toBe('function');
     try {
       expect((await request(handler).get('/api?__path=healthz')).body).toEqual({ status: 'ok' });

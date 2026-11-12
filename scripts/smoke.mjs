@@ -12,6 +12,13 @@
 // If the account still has its temporary password, set SMOKE_NEW_PASSWORD and the check changes
 // it the way the first sign-in would. Everything it creates it removes again, except the entries
 // its own actions leave in the audit log.
+//
+// On Vercel, with the site's CRON_SECRET in the environment, it also asks the function how it
+// started, and — when the API could not start — why:
+//
+//   CRON_SECRET=… npm run smoke -- https://your-site.example
+import { STARTUP_REPORT_PARAM, startupReportToken } from '../backend/src/lib/vercel.js';
+
 const base = (process.argv[2] ?? 'http://localhost:3900').replace(/\/+$/, '');
 const email = process.env.SMOKE_EMAIL;
 const password = process.env.SMOKE_PASSWORD;
@@ -77,7 +84,19 @@ check('the service worker is served as a script', worker.status === 200 && (work
 
 // ── The API is one function behind /api, /healthz and /readyz ────────────────────────────────
 const health = await call('GET', '/healthz');
-check('the API answers', health.json?.status === 'ok', `status ${health.status}`);
+check('the API answers', health.json?.status === 'ok', `status ${health.status}${health.json?.error?.code ? ` ${health.json.error.code}` : ''}`);
+if (process.env.CRON_SECRET) {
+  const report = (await call('GET', `/healthz?${STARTUP_REPORT_PARAM}=${startupReportToken(process.env.CRON_SECRET)}`)).json?.data;
+  if (report && typeof report.started === 'boolean') {
+    const how = `loaded with ${report.loadedWith} on Node.js ${report.node}${report.region ? ` in ${report.region}` : ''}; the function is given the URL ${report.url?.startsWith('/api?') ? 'the rewrite points to' : 'the browser asked for'}`;
+    check('the function leaves request bodies to the application', report.platformHelpers === false, 'Vercel added its request helpers: set NODEJS_HELPERS=0 in the project and deploy again', how);
+    if (!report.started) console.log(`\n       The API could not start:\n${[report.reason?.message, ...(report.reason?.stack ?? []).slice(1, 6)].join('\n').replace(/^/gm, '         ')}\n`);
+  } else {
+    console.log('       (no start-up report: the site is not a function, or CRON_SECRET is not the one it was deployed with)');
+  }
+} else if (health.json?.error?.code === 'STARTUP_FAILED') {
+  console.log('       (the reason is in the function log; with CRON_SECRET set, this check prints it)');
+}
 const ready = await call('GET', '/readyz');
 check('the API reaches the database and finds its tables', ready.json?.status === 'ready', `status ${ready.status}: ${ready.text.slice(0, 120)}`, ready.json?.status === 'ready' ? `round trip ${ready.json.databaseMs} ms` : '');
 const config = await call('GET', '/api/auth/config');
@@ -94,6 +113,10 @@ const cron = await call('GET', '/api/internal/cron');
 check('the scheduled call is closed to strangers or harmless', cron.status === 401 || (cron.status === 200 && Array.isArray(cron.json?.data?.ran)), `status ${cron.status}`);
 const forged = await call('POST', '/api/auth/login', { body: { email: 'nobody@example.org', password: 'x' }, headers: { origin: 'https://evil.example' } });
 check('requests from another site are refused', forged.status === 403, `status ${forged.status}`);
+// Answered 401 only if the JSON body reached the application whole: a body that was lost or
+// already read on the way is answered 422 or worse.
+const stranger = await call('POST', '/api/auth/login', { body: { email: 'nobody@example.org', password: 'not-the-password' } });
+check('a posted form arrives intact (a wrong password is told so)', stranger.status === 401 && stranger.json?.error?.code === 'INVALID_CREDENTIALS', `status ${stranger.status} ${stranger.json?.error?.code ?? ''}`);
 
 // ── Signed in ────────────────────────────────────────────────────────────────────────────────
 if (!email || !password) {

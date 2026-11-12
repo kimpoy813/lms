@@ -2,7 +2,7 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 308 tests in 16 files, about a minute | Nothing: starts its own PostgreSQL |
+| API and unit tests | `npm run test:backend` | 310 tests in 16 files, about a minute | Nothing: starts its own PostgreSQL |
 | Web-app unit tests | `npm run test:frontend` | 22 tests in 4 files, a few seconds | Nothing |
 | Both of the above | `npm test` | | |
 | Browser tests | `npm run test:e2e` | 27 tests, about two minutes | A Chromium browser and the demo data |
@@ -113,8 +113,11 @@ npm run smoke -- http://localhost:3900
 `e2e/vercel/serve.mjs` is a stand-in for Vercel's network. It applies the route table Vercel
 generated from `vercel.json` (headers, rewrites, the fallback to the app page), serves the static
 files, and runs the function from a copy that contains only the files Vercel would ship, on a
-read-only disk, refusing request bodies over 4.5 MB. With `NODE_ENV=development` and a database
-that holds the demo data, the browser tests run against it:
+read-only disk, refusing request bodies over 4.5 MB. It loads the function with `require()`,
+which fails when anything the entry point imports statically uses a top-level `await`, and it
+reads request bodies ahead of a function that does not look like a server, as Vercel's request
+helpers do. With `NODE_ENV=development` and a database that holds the demo data, the browser
+tests run against it:
 
 ```bash
 E2E_BASE_URL=http://localhost:3900 E2E_NO_SERVER=1 npm run test:e2e
@@ -123,8 +126,10 @@ E2E_BASE_URL=http://localhost:3900 E2E_NO_SERVER=1 npm run test:e2e
 Vercel does not say whether a function reached through a rewrite sees the original address or
 the rewritten one; `EMULATE_URL=original` and `EMULATE_URL=rewritten` (the default) cover both.
 
-What the stand-in cannot show: Vercel's own launcher, an instance being frozen between requests,
-several instances at once, and Neon. Those need a real deployment.
+What the stand-in cannot show: the rest of Vercel's own launcher, an instance being frozen
+between requests, several instances at once, and Neon. Those need a real deployment; there,
+`CRON_SECRET=… npm run smoke -- https://<your-site>` also reports how Vercel loaded the function,
+which address it passed on and whether it left request bodies alone.
 
 ## What is not tested
 

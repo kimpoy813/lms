@@ -51,6 +51,38 @@ const publicUrl = process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRO
 if (publicUrl) console.log(`\n▸ Public address of the site: ${publicUrl}`);
 else console.warn('\n! The public address of the site is unknown. Set APP_URL in the project settings, or links in e-mails and QR codes will be wrong.');
 
+// How far the database is from the functions. A function pays for that distance on every query,
+// and one page of the app asks for several. Only the region is read from the database's address
+// (Neon puts it in the host name); the address itself is not printed.
+const NEAREST_VERCEL_REGION = {
+  'us-east-1': 'iad1',
+  'us-east-2': 'cle1',
+  'us-west-2': 'pdx1',
+  'eu-central-1': 'fra1',
+  'eu-west-2': 'lhr1',
+  'ap-southeast-1': 'sin1',
+  'ap-southeast-2': 'syd1',
+  'sa-east-1': 'gru1',
+};
+let databaseHost = '';
+try {
+  databaseHost = new URL(firstSet('DATABASE_URL', 'POSTGRES_URL') ?? '').hostname;
+} catch {
+  // No address, or not a URL: the application says so when it starts.
+}
+const databaseRegion = /\.([a-z]{2}-[a-z]+-\d)\.aws\.neon\.tech$/.exec(databaseHost)?.[1];
+const nearestRegion = NEAREST_VERCEL_REGION[databaseRegion];
+if (nearestRegion) {
+  const functionRegion = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8')).regions?.[0];
+  if (functionRegion === nearestRegion) {
+    console.log(`\n▸ Database in ${databaseRegion}, functions in ${functionRegion}: next to each other.`);
+  } else if (functionRegion) {
+    console.warn(`\n! The database is in ${databaseRegion} and vercel.json runs the functions in ${functionRegion}: every query travels between the two. The Vercel region next to the database is ${nearestRegion}.`);
+  } else if (nearestRegion !== 'iad1') {
+    console.warn(`\n! The database is in ${databaseRegion}. Functions run in iad1 (Washington, D.C.) unless told otherwise, and every query then travels between the two. Add "regions": ["${nearestRegion}"] to vercel.json.`);
+  }
+}
+
 const target = process.env.VERCEL_ENV ?? 'local';
 const override = process.env.MIGRATE_ON_BUILD?.trim().toLowerCase();
 const migrate = override ? override === 'true' || override === '1' : target === 'production';

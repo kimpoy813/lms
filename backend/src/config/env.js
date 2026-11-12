@@ -127,13 +127,22 @@ const schema = z.object({
   CODE_RUNNER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 });
 
+/**
+ * The configuration cannot be used. A server says why and stops. A function that exits answers
+ * nothing and leaves its visitor with the platform's error page, so there the reason is thrown
+ * instead, and the function's entry point (api/index.js) reports it.
+ */
+function refuse(message) {
+  if (onVercel) throw new Error(message);
+  console.error(message);
+  process.exit(1);
+}
+
 // A variable that is present but empty ("PORT=" in an .env file) means "not set".
 const parsed = schema.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== '')));
 if (!parsed.success) {
   const lines = parsed.error.issues.map((i) => `  • ${i.path.join('.') || '(root)'}: ${i.message}`);
-  console.error(`Invalid environment configuration:\n${lines.join('\n')}`);
-  console.error('See backend/.env.example for the full list of variables.');
-  process.exit(1);
+  refuse(`Invalid environment configuration:\n${lines.join('\n')}\nSee backend/.env.example for the full list of variables.`);
 }
 
 const raw = parsed.data;
@@ -162,8 +171,7 @@ function parseTrustProxy(value) {
 }
 
 if (isProduction && raw.COOKIE_SAMESITE === 'none' && raw.COOKIE_SECURE === 'false') {
-  console.error('COOKIE_SAMESITE=none requires COOKIE_SECURE=true.');
-  process.exit(1);
+  refuse('COOKIE_SAMESITE=none requires COOKIE_SECURE=true.');
 }
 
 export const env = Object.freeze({
