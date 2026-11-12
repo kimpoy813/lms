@@ -1,7 +1,15 @@
 // Helpers for running as a Vercel Function (see /api/index.js and /vercel.json).
+//
+// This file imports nothing from the project, on purpose: the function's entry point loads it
+// before the application, and must be able to do so whatever state the application is in.
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import http from 'node:http';
 
 /** Name of the query parameter in which vercel.json hands the original path to the function. */
 export const FORWARDED_PATH_PARAM = '__path';
+
+/** The function's own address, in every spelling the platform could pass on. None is a route of the API. */
+const FUNCTION_PATHS = new Set(['/api', '/api/', '/api/index', '/api/index.js']);
 
 /**
  * vercel.json sends several paths to the one function at /api:
@@ -24,7 +32,7 @@ export function restoreRequestUrl(req) {
   const forwarded = url.searchParams.get(FORWARDED_PATH_PARAM);
   if (forwarded === null) return;
   url.searchParams.delete(FORWARDED_PATH_PARAM);
-  if (url.pathname === '/api' || url.pathname === '/api/') {
+  if (FUNCTION_PATHS.has(url.pathname)) {
     // Build the path from segments so that nothing in the parameter can smuggle in a query string.
     url.pathname = `/${forwarded.replace(/^\/+/, '')}`;
   }
@@ -78,4 +86,96 @@ export function closeIdleConnectionsBeforeFreeze(pool) {
     timer = setTimeout(settle, wait);
     keepAliveUntil(closed);
   });
+}
+
+/** Query parameter that asks the function for its start-up report. */
+export const STARTUP_REPORT_PARAM = 'startup-report';
+
+/**
+ * The value that unlocks the start-up report. It is derived from a secret the operator already
+ * has (CRON_SECRET), so that the secret itself never travels in a URL.
+ * @param {string} secret
+ */
+export function startupReportToken(secret) {
+  return createHmac('sha256', secret).update('edusphere start-up report').digest('base64url');
+}
+
+function asksForReport(req, token) {
+  let given;
+  try {
+    given = new URL(req.url ?? '/', 'http://internal').searchParams.get(STARTUP_REPORT_PARAM);
+  } catch {
+    return false;
+  }
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function answer(res, status, body) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(body));
+}
+
+/**
+ * The request handler that is handed to the platform.
+ *
+ * `load` brings in the application and returns its request handler. It is started at once, but
+ * nothing here depends on it succeeding. When the application cannot start (a setting it rejects,
+ * a file missing from the bundle, a module the platform cannot load), the instance would
+ * otherwise die and the platform would show its own error page, with the reason only in a log.
+ * Here every request is then answered with 503 STARTUP_FAILED and the reason is written to the
+ * function log.
+ *
+ * Visitors are not told the reason. Whoever knows `reportSecret` can ask for it, and for a few
+ * facts about how the platform runs the function, with
+ * `?startup-report=<startupReportToken(reportSecret)>` on any URL the function serves
+ * (`npm run smoke` does, given CRON_SECRET).
+ *
+ * @param {object} options
+ * @param {() => Promise<(req: http.IncomingMessage, res: http.ServerResponse) => unknown>} options.load
+ * @param {string} [options.reportSecret]
+ * @param {string} [options.loadedWith] how the platform loaded the entry point, for the report
+ */
+export function createFunctionHandler({ load, reportSecret, loadedWith }) {
+  const token = reportSecret ? startupReportToken(reportSecret) : null;
+  const starting = Promise.resolve()
+    .then(load)
+    .then(
+      (app) => ({ app }),
+      (error) => {
+        console.error('EduSphere could not start:', error);
+        return { error };
+      },
+    );
+
+  async function handler(req, res) {
+    const { app, error } = await starting;
+    if (token && asksForReport(req, token)) {
+      return answer(res, 200, {
+        data: {
+          started: !error,
+          ...(error
+            ? { reason: { name: error?.name, code: error?.code, message: String(error?.message ?? error).slice(0, 2000), stack: String(error?.stack ?? '').split('\n').slice(0, 8) } }
+            : {}),
+          loadedWith,
+          node: process.version,
+          region: process.env.VERCEL_REGION,
+          // The URL as the platform passed it on, and whether it added request helpers of its own.
+          url: req.url,
+          platformHelpers: typeof res.json === 'function',
+        },
+      });
+    }
+    if (app) return app(req, res);
+    return answer(res, 503, { error: { code: 'STARTUP_FAILED', message: 'The application could not start. The reason is in the function log.' } });
+  }
+
+  // Vercel adds helpers of its own to each request (they read the body before the application
+  // can) unless what it is given can also listen like a server, as an Express application can.
+  handler.listen = (...args) => http.createServer(handler).listen(...args);
+  return handler;
 }

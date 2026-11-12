@@ -51,6 +51,39 @@ const publicUrl = process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRO
 if (publicUrl) console.log(`\n▸ Public address of the site: ${publicUrl}`);
 else console.warn('\n! The public address of the site is unknown. Set APP_URL in the project settings, or links in e-mails and QR codes will be wrong.');
 
+// Which database the functions will use (the host only) and how far it is from them. A function
+// pays for that distance on every query, and one page of the app asks for several.
+const NEAREST_VERCEL_REGION = {
+  'us-east-1': 'iad1',
+  'us-east-2': 'cle1',
+  'us-west-2': 'pdx1',
+  'eu-central-1': 'fra1',
+  'eu-west-2': 'lhr1',
+  'ap-southeast-1': 'sin1',
+  'ap-southeast-2': 'syd1',
+  'sa-east-1': 'gru1',
+};
+const runtimeDatabaseUrl = firstSet('DATABASE_URL', 'POSTGRES_URL');
+if (runtimeDatabaseUrl) {
+  let host = '';
+  try {
+    host = new URL(runtimeDatabaseUrl).hostname;
+  } catch {
+    // The application will say what is wrong with the URL when it starts.
+  }
+  if (host) console.log(`\n▸ Database: ${host}`);
+  const databaseRegion = /\.([a-z]{2}-[a-z]+-\d)\.aws\.neon\.tech$/.exec(host)?.[1];
+  const nearest = NEAREST_VERCEL_REGION[databaseRegion];
+  if (nearest) {
+    const configured = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8')).regions?.[0];
+    if (configured && configured !== nearest) {
+      console.warn(`! The database is in ${databaseRegion} and vercel.json runs the functions in ${configured}: every query travels between the two. The Vercel region next to the database is ${nearest}.`);
+    } else if (!configured && nearest !== 'iad1') {
+      console.warn(`! The database is in ${databaseRegion}. Functions run in iad1 (Washington, D.C.) unless told otherwise, and every query then travels between the two. Add "regions": ["${nearest}"] to vercel.json.`);
+    }
+  }
+}
+
 const target = process.env.VERCEL_ENV ?? 'local';
 const override = process.env.MIGRATE_ON_BUILD?.trim().toLowerCase();
 const migrate = override ? override === 'true' || override === '1' : target === 'production';

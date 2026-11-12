@@ -8,10 +8,10 @@
 //
 // What it reproduces: the route table Vercel generated from vercel.json (headers, rewrites, the
 // single-page fallback), static files, the function running from only the files that were traced
-// into it, from a read-only folder, and the 4.5 MB limit on request bodies.
-// What it cannot reproduce: Vercel's own launcher, instances being frozen between requests (the
-// function simply keeps running here, so waitUntil always "works"), and several instances at
-// once. It is a test tool, not a way to host the application.
+// into it, from a read-only folder, loaded with require(), and the 4.5 MB limit on request bodies.
+// What it cannot reproduce: the rest of Vercel's own launcher, instances being frozen between
+// requests (the function simply keeps running here, so waitUntil always "works"), and several
+// instances at once. It is a test tool, not a way to host the application.
 //
 // Options (environment variables):
 //   PORT, HOST          where to listen (default 127.0.0.1:3900)
@@ -83,18 +83,40 @@ async function startFunction(fn) {
     fs.mkdirSync(path.dirname(path.join(task, inFunction)), { recursive: true });
     fs.copyFileSync(path.join(project, inProject), path.join(task, inFunction));
   }
-  const runner = path.join(os.tmpdir(), `vercel-runner-${process.pid}.mjs`);
+  const runner = path.join(os.tmpdir(), `vercel-runner-${process.pid}.cjs`);
   fs.writeFileSync(
     runner,
-    `import http from 'node:http';
-import { pathToFileURL } from 'node:url';
+    `const http = require('node:http');
+const { pathToFileURL } = require('node:url');
 // Vercel publishes the request in progress under this symbol; code uses it to keep an instance
 // awake until work that outlives the response has finished (waitUntil).
 globalThis[Symbol.for('@vercel/request-context')] = { get: () => ({ waitUntil: (promise) => { Promise.resolve(promise).catch(() => {}); } }) };
-const mod = await import(pathToFileURL(process.argv[2]).href);
-const listener = mod.default ?? mod;
-if (typeof listener !== 'function') throw new Error('the function has no default export that handles requests');
-http.createServer(listener).listen(Number(process.argv[3]), '127.0.0.1', () => process.send?.('ready'));
+(async () => {
+  // The entry point is loaded with require(): a top-level await anywhere in what the file imports
+  // statically then stops the function before its first request (see api/index.js). import() is
+  // only the fallback for a Node.js that cannot require() ES modules at all.
+  let listener;
+  try {
+    listener = require(process.argv[2]);
+  } catch (err) {
+    if (err.code !== 'ERR_REQUIRE_ESM') throw err;
+    listener = await import(pathToFileURL(process.argv[2]).href);
+  }
+  for (let i = 0; i < 5 && listener.default; i += 1) listener = listener.default;
+  if (typeof listener !== 'function') throw new Error('the function has no default export that handles requests');
+  // Vercel adds request helpers unless told not to, or unless the export can listen like a
+  // server. They read the body before the function does; only that effect is reproduced here.
+  const helpers = process.argv[4] === 'helpers' && typeof listener.listen !== 'function';
+  http
+    .createServer(async (req, res) => {
+      if (helpers && req.headers['content-type'] !== undefined) for await (const chunk of req) void chunk;
+      listener(req, res);
+    })
+    .listen(Number(process.argv[3]), '127.0.0.1', () => process.send?.('ready'));
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
 `,
   );
   // /var/task is read-only on Vercel; only the temporary folder can be written.
@@ -102,7 +124,7 @@ http.createServer(listener).listen(Number(process.argv[3]), '127.0.0.1', () => p
   for (const entry of fs.readdirSync(task, { recursive: true })) fs.chmodSync(path.join(task, entry), fs.statSync(path.join(task, entry)).isDirectory() ? 0o555 : 0o444);
 
   const functionPort = await freePort();
-  const child = spawn(process.execPath, [runner, path.join(task, meta.handler), String(functionPort)], {
+  const child = spawn(process.execPath, [runner, path.join(task, meta.handler), String(functionPort), meta.shouldAddHelpers ? 'helpers' : 'no-helpers'], {
     cwd: task,
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     env: { ...functionEnv, VERCEL: '1', VERCEL_ENV: process.env.VERCEL_ENV ?? 'production', VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL ?? `localhost:${port}` },
@@ -131,7 +153,7 @@ http.createServer(listener).listen(Number(process.argv[3]), '127.0.0.1', () => p
     console.error(`[vercel-local] the function stopped (code ${code})`);
     process.exit(1);
   });
-  return { ...fn, port: functionPort, maxDuration: meta.maxDuration, runtime: meta.runtime, files: fs.readdirSync(task, { recursive: true }).length, cleanup };
+  return { ...fn, port: functionPort, maxDuration: meta.maxDuration, runtime: meta.runtime, files: fs.readdirSync(task, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile()).length, cleanup };
 }
 
 const functions = [];
