@@ -176,11 +176,14 @@ describe('when Vercel says no', () => {
     expect((await tryWith(apiError(401, 'unauthorized', 'bad token'))).err.kind).toBe('identity');
   });
 
-  it('anything else is a failure, with the image left alone when it is in place', async () => {
-    const { err, fake } = await tryWith(apiError(500, 'internal', 'boom'));
-    expect(err).toMatchObject({ kind: 'failed', detail: 'HTTP 500 internal: boom' });
-    // It looked at the image (stopped: nothing to do) and did not start another one.
-    expect(fake.names()).toEqual(['fork', 'get']);
+  it('anything else is a failure, and the image is left alone', async () => {
+    for (const refusal of [apiError(500, 'internal', 'boom'), apiError(400, 'bad_request', 'Invalid request: `region` is not available'), new Error('fetch failed')]) {
+      const { err, fake } = await tryWith(refusal);
+      expect(err.kind).toBe('failed');
+      expect(fake.names()).toEqual(['fork']);
+      expect(fake.bases.has(NAME)).toBe(true);
+    }
+    expect((await tryWith(apiError(500, 'internal', 'boom'))).err.detail).toBe('HTTP 500 internal: boom');
   });
 
   it('describes errors in one line', () => {
@@ -235,28 +238,75 @@ describe('the prepared image', () => {
     expect(fake.names()).toEqual(['get', 'runCommand']);
   });
 
-  it('is removed when the installation failed, and not tried again straight away', async () => {
+  const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000);
+  /** A machine made from an image whose installation never finished does not carry the tag. */
+  const incomplete = (job) => ({ ...okReport(job), image: null });
+
+  it('is stopped as it is when the installation failed, as the record of that attempt', async () => {
     const fake = account({ image: 'preparing', installation: 'failed' });
     const { judge, warnings } = judgeFor(fake);
     const step = await judge.advanceImage();
     expect(step.state).toBe('failed');
     expect(step.detail).toMatch(/exit 100.*Unable to locate package/);
-    expect(fake.calls.at(-1)).toEqual(['delete', NAME, { deleteOrphanSnapshots: true }]);
+    expect(fake.names()).toEqual(['get', 'runCommand', 'stop']);
     expect(warnings[0][0]).toMatch(/preparing the machine image .* failed/);
-    expect(await judge.advanceImage()).toMatchObject({ state: 'waiting' });
-    expect(fake.names().filter((n) => n === 'create')).toEqual([]);
+    // Nobody prepares another one straight away: not a look at it, and not a request that finds it unusable.
+    expect(await judge.advanceImage()).toEqual({ state: 'stopped' });
+    const again = await judge.advanceImage({ replaceStopped: true });
+    expect(again.state).toBe('failed');
+    expect(again.detail).toMatch(/prepared 1 minutes ago cannot be used\. It is replaced by the next deployment, or by itself after \d{4}-/);
+    expect(fake.names().filter((n) => n === 'create' || n === 'delete')).toEqual([]);
   });
 
-  it('is replaced when a machine made from it turns out to be incomplete', async () => {
-    const fake = account({ report: (job) => ({ ...okReport(job), image: null }) });
+  it('is not replaced by a request while it is young, however often it is found incomplete', async () => {
+    const fake = account({ report: incomplete });
+    const { judge, settle } = judgeFor(fake);
+    const err = await unavailable(judge.runBatch(program));
+    expect(err).toMatchObject({ kind: 'failed', image: true });
+    expect(err.detail).toMatch(/cannot be used.*marked null, expected/);
+    await settle();
+    expect(fake.names().filter((n) => n === 'create' || (n === 'delete'))).toEqual(['delete']); // the job's own machine only
+    expect(fake.calls.find((c) => c[0] === 'delete')[1]).toBe('job-1');
+    // For a moment the same answer is given without starting a machine or asking Vercel.
+    const before = fake.calls.length;
+    expect(await unavailable(judge.runBatch(program))).toBe(err);
+    expect(fake.calls.length).toBe(before);
+  });
+
+  it('is replaced by a request once it is six hours old', async () => {
+    const fake = account({ report: incomplete });
+    fake.bases.get(NAME).createdAt = hoursAgo(7);
     const { judge, settle } = judgeFor(fake);
     const err = await unavailable(judge.runBatch(program));
     expect(err.kind).toBe('preparing');
-    expect(err.detail).toMatch(/marked null/);
     await settle();
     // The half-made image went, with its snapshot, and a new one is on its way.
     expect(fake.calls.find((c) => c[0] === 'delete' && c[1] === NAME)).toEqual(['delete', NAME, { deleteOrphanSnapshots: true }]);
-    expect(fake.names()).toContain('create');
+    expect(fake.names().filter((n) => n === 'create')).toHaveLength(1);
+    expect(fake.bases.get(NAME).status).toBe('running');
+  });
+
+  it('is prepared again when Vercel removed its snapshot after a month without use', async () => {
+    const fake = account({ forkError: apiError(404, 'snapshot_not_found', 'The snapshot of this sandbox has expired') });
+    fake.bases.get(NAME).createdAt = hoursAgo(24 * 45);
+    const { judge, settle } = judgeFor(fake);
+    const err = await unavailable(judge.runBatch(program));
+    expect(err.kind).toBe('preparing');
+    expect(err.detail).toBe('HTTP 404 snapshot_not_found: The snapshot of this sandbox has expired');
+    await settle();
+    expect(fake.names()).toEqual(['fork', 'get', 'delete', 'create', 'writeFiles', 'runCommand']);
+  });
+
+  it('tells the next try to go ahead when it became ready in the meantime', async () => {
+    // Somebody else is preparing it; by the time this request looks, the installation is done.
+    const fake = account({ image: 'preparing', forkError: apiError(404, 'not_found', 'no snapshot yet') });
+    const { judge } = judgeFor(fake);
+    const err = await unavailable(judge.runBatch(program));
+    expect(err.kind).toBe('busy');
+    expect(fake.names()).toEqual(['fork', 'get', 'runCommand', 'stop']);
+    // No waiting period after that: the image is usable now.
+    fake.state.forkError = null;
+    expect((await judge.runBatch(program)).runs).toHaveLength(2);
   });
 
   it('yields to another process that started preparing it in the same moment', async () => {
@@ -281,12 +331,47 @@ describe('the prepared image', () => {
     expect(fake.names().filter((n) => n === 'create')).toHaveLength(1);
   });
 
-  it('waiting reports a language that does not work, and an installation that failed', async () => {
+  const selfTestReport = (job, machine) => ({ ...okReport(job), image: machine.madeFrom.installation === 'failed' || machine.madeFrom.broken ? null : IMAGE_TAG, selfTest: { languages: { PYTHON: { ok: true } }, versions: {} } });
+
+  it('waiting reports a language that does not work', async () => {
     const half = account({ report: (job) => ({ ...okReport(job), selfTest: { languages: { PYTHON: { ok: true }, JAVA: { ok: false, detail: 'not installed: javac, java' } }, versions: {} } }) });
     expect(await judgeFor(half).judge.ensureImage({ pollMs: 1 })).toMatchObject({ ok: false, state: 'incomplete', prepared: false });
+  });
 
-    const failing = account({ image: 'preparing', installation: 'failed' });
-    expect(await judgeFor(failing).judge.ensureImage({ pollMs: 1 })).toMatchObject({ ok: false, state: 'failed', detail: expect.stringMatching(/exit 100/) });
+  it('a deployment replaces an unusable image at once, however young, and proves the new one', async () => {
+    const fake = account({ report: selfTestReport });
+    fake.bases.get(NAME).broken = true; // stopped half-way an hour ago, say
+    const { judge, settle } = judgeFor(fake);
+    const progress = [];
+    const result = await judge.ensureImage({ pollMs: 1, onProgress: (line) => progress.push(line) });
+    await settle();
+    expect(result).toMatchObject({ ok: true, state: 'ready', prepared: true });
+    expect(progress).toEqual(['stopped', 'the image cannot be used; preparing it again', 'ready']);
+    expect(fake.names().filter((n) => n === 'create')).toHaveLength(1);
+    expect(fake.calls.find((c) => c[0] === 'delete' && c[1] === NAME)).toEqual(['delete', NAME, { deleteOrphanSnapshots: true }]);
+  });
+
+  it('a deployment tries a failed installation once more, and gives up when that fails as well', async () => {
+    const fake = account({ image: 'missing', report: selfTestReport });
+    fake.state.installations = ['failed', 'failed', 'done'];
+    const { judge } = judgeFor(fake);
+    const progress = [];
+    const result = await judge.ensureImage({ pollMs: 1, onProgress: (line) => progress.push(line) });
+    expect(result.ok).toBe(false);
+    expect(result.state).toBe('failed');
+    expect(result.detail).toMatch(/still not usable after preparing it again.*exit 100/);
+    // Two attempts, not three: the third installation would have worked, but was never started.
+    expect(fake.names().filter((n) => n === 'create')).toHaveLength(2);
+    expect(progress.filter((line) => line.startsWith('failed'))).toHaveLength(2);
+  });
+
+  it('a deployment does not prepare another image when the check fails for a reason outside it', async () => {
+    const fake = account({ forkError: apiError(402, 'payment_required', 'Sandbox creation is paused') });
+    const { judge } = judgeFor(fake);
+    const result = await judge.ensureImage({ pollMs: 1 });
+    expect(result).toMatchObject({ ok: false, state: 'failed', prepared: false });
+    expect(result.detail).toMatch(/allowance.*HTTP 402/);
+    expect(fake.names()).toEqual(['get', 'fork']);
   });
 
   it('removes the images of other recipes, and only those', async () => {

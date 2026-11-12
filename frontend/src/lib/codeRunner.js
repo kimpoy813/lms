@@ -36,3 +36,13 @@ export function runnerProblem(err, { inQuiz = false } = {}) {
   if (err?.code === 'CODE_RUNNER_UNAVAILABLE') return `Automatic checking is not available on this server right now. ${inQuiz ? `${saved}, and your teacher will mark it.` : 'Please try again later.'}`;
   return err?.fields?.language ?? err?.message ?? 'The program could not be run.';
 }
+
+/**
+ * For the teacher who sets the time limit of a problem. Said only when it can matter: a program that is slow on every test may not
+ * get through all of them, because the checker has a limit for a whole program too.
+ */
+export function totalTimeHint(totalMs, tests, limitMs) {
+  if (!totalMs || !(tests > 0) || !(limitMs > 0) || tests * limitMs <= totalMs) return undefined;
+  const reachable = Math.max(1, Math.floor(totalMs / limitMs));
+  return `The checker gives one program ${Math.round(totalMs / 1000)} seconds for all its tests together. A program that needs the full ${limitMs / 1000} s every time gets through about ${reachable} of these ${tests} tests; the rest then count as too slow.`;
+}

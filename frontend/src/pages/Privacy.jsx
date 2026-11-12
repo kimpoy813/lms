@@ -30,6 +30,7 @@ const SECTIONS = [
     'Your teachers see your work, scores and attendance in their own classes only.',
     'School administrators can see records as needed to manage accounts and classes; what they do is logged.',
     'If a teacher uses the AI drafting tool, the text they provide (for example a topic or a reference document) is sent to the AI service the school configured. Student records are never sent to it.',
+    'When a program you wrote is run or checked, the program and the test inputs are sent to a separate computer that exists only for that run, at the service the school uses for it. Your name and your other records are not sent with it. That computer has no access to the internet and is deleted afterwards.',
   ]],
   ['How long we keep it', [
     'Academic records are kept for as long as the school is required to keep them. Classes are archived, not deleted, at the end of a term.',

@@ -12,7 +12,7 @@ import { env } from '../config/env.js';
 import { runInBackground } from '../lib/background.js';
 import { AppError, unavailable } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
-import { JudgeUnavailable, createSandboxJudge, describeError } from './judge/vercelSandbox.js';
+import { JOB_DEADLINE_MS, JudgeUnavailable, createSandboxJudge, describeError, identitySource } from './judge/vercelSandbox.js';
 
 export const LANGUAGES = {
   PYTHON: { label: 'Python 3', piston: 'python', file: 'main.py' },
@@ -88,6 +88,9 @@ export function codeRunnerStatus() {
     configured: codeRunnerConfigured(),
     provider: codeRunnerConfigured() ? (transport ? 'test' : env.codeRunner.provider) : 'none',
     languages: Object.entries(LANGUAGES).map(([id, l]) => ({ id, label: l.label })),
+    // A judge that checks a whole program in one go has a limit for all its tests together
+    // (compiling included). Tests it does not reach count as too slow.
+    totalTimeLimitMs: usesSandbox() ? JOB_DEADLINE_MS : null,
     message: codeRunnerConfigured() ? null : 'Automatic code checking is not set up on this server.',
   };
 }
@@ -160,13 +163,15 @@ export async function runCode({ language, code, stdin = '', timeLimitMs = 3000, 
 export async function checkCodeRunner() {
   if (!codeRunnerConfigured()) return { ok: false, provider: 'none', detail: 'No code runner is set up (CODE_RUNNER_PROVIDER).' };
   if (usesSandbox()) {
+    const access = env.codeRunner.vercelAccess;
+    const about = { provider: 'vercel-sandbox', region: env.codeRunner.region, identity: identitySource(access ? { accessToken: access.token, teamId: access.teamId, projectId: access.projectId } : {}) };
     try {
       const check = await vercelSandboxJudge().selfTest();
       health.lastSuccessAt = new Date().toISOString();
-      return { ok: check.ok, provider: 'vercel-sandbox', languages: check.languages, versions: check.versions, limits: check.isolation?.limits, timings: check.timings };
+      return { ok: check.ok, ...about, languages: check.languages, versions: check.versions, limits: check.isolation?.limits, timings: check.timings };
     } catch (err) {
       const error = unavailableError(err);
-      return { ok: false, provider: 'vercel-sandbox', code: error.code, detail: describeError(err) };
+      return { ok: false, ...about, code: error.code, detail: describeError(err) };
     }
   }
   // Another judge: one program that doubles a number.

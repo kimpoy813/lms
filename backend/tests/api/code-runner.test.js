@@ -12,13 +12,15 @@ vi.hoisted(() => {
   process.env.VERCEL_TOKEN = 'vcp_test_token';
   process.env.VERCEL_TEAM_ID = 'team_test';
   process.env.VERCEL_PROJECT_ID = 'prj_test';
+  process.env.CRON_SECRET = 'secret-of-the-operator';
 });
 
-const { actor, classroom, prepare, prisma } = await import('../helpers/index.js');
+const { actor, anonymous, classroom, prepare, prisma } = await import('../helpers/index.js');
 const { apiError, fakeSandboxAccount, okReport } = await import('../helpers/fakeSandbox.js');
 const { env } = await import('../../src/config/env.js');
 const { resetJudgeBackoff } = await import('../../src/modules/quizzes/routes.js');
 const { resetCodeRunner } = await import('../../src/services/codeRunner.js');
+const { operatorToken } = await import('../../src/lib/tokens.js');
 const { IMAGE_TAG, imageName, setSandboxSdk } = await import('../../src/services/judge/vercelSandbox.js');
 
 const NAME = imageName('sin1');
@@ -203,7 +205,7 @@ describe('the administrator’s check', () => {
     const admin = await actor('ADMIN');
     const checked = await admin.post('/api/admin/code-runner/check', {});
     expect(checked.status).toBe(200);
-    expect(checked.body.data).toMatchObject({ ok: true, provider: 'vercel-sandbox', limits: 'cgroup', versions: { PYTHON: 'Python 3.14.4' } });
+    expect(checked.body.data).toMatchObject({ ok: true, provider: 'vercel-sandbox', region: 'sin1', identity: 'access token', limits: 'cgroup', versions: { PYTHON: 'Python 3.14.4' } });
     expect(Object.keys(checked.body.data.languages)).toEqual(['PYTHON', 'JAVASCRIPT', 'C', 'CPP', 'JAVA']);
     expect(checked.body.data.timings.totalMs).toEqual(expect.any(Number));
     expect(fake.machines[0].job).toMatchObject({ selfTest: true });
@@ -224,6 +226,28 @@ describe('the administrator’s check', () => {
     const { teacher, student } = await room();
     expect((await teacher.post('/api/admin/code-runner/check', {})).status).toBe(403);
     expect((await student.post('/api/admin/code-runner/check', {})).status).toBe(403);
+    expect(fake.calls).toEqual([]);
+  });
+});
+
+describe('the operator’s check, without signing in', () => {
+  const address = (token) => `/api/internal/code-runner-check${token === undefined ? '' : `?token=${encodeURIComponent(token)}`}`;
+
+  it('answers whoever holds the value derived from the operator’s secret', async () => {
+    const answer = await anonymous().get(address(operatorToken('secret-of-the-operator', 'code runner check')));
+    expect(answer.status).toBe(200);
+    expect(answer.body.data).toMatchObject({ ok: true, provider: 'vercel-sandbox', region: 'sin1', identity: 'access token', limits: 'cgroup' });
+    expect(Object.keys(answer.body.data.languages)).toHaveLength(5);
+    expect(forks()).toBe(1);
+  });
+
+  it('does not exist for anybody else, and starts nothing', async () => {
+    for (const token of [undefined, '', 'secret-of-the-operator', operatorToken('another secret', 'code runner check'), operatorToken('secret-of-the-operator', 'start-up report')]) {
+      const answer = await anonymous().get(address(token));
+      expect(answer.status, String(token)).toBe(404);
+    }
+    const signedIn = await actor('ADMIN');
+    expect((await signedIn.get(address())).status).toBe(404);
     expect(fake.calls).toEqual([]);
   });
 });

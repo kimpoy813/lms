@@ -63,7 +63,7 @@ administrator, who must change the password at first sign-in.
 | Grades | Grading periods and weighted categories, grading scales, transmutation, overrides with reasons, history, appeals, publishing, exports. See [docs/GRADING.md](docs/GRADING.md) |
 | Communication | Announcements, direct messages, class discussions, notifications (in-app, real time; e-mail optional), calendar, consultation booking |
 | Insight | Dashboards per role, class analytics, at-risk indicators |
-| Coding exercises | Problems with visible and hidden tests, checked by an external judge (optional) |
+| Coding exercises | Problems with visible and hidden tests in Python, Java, C, C++ and JavaScript. Programs are run and checked outside EduSphere: in throw-away machines on Vercel, or by a judge server you run (optional) |
 | AI-assisted authoring | Drafts of modules, questions, rubrics and assignments that a teacher reviews before anything reaches a class (optional) |
 | Administration | A set-up guide for a new school, users (import from CSV), enrolment, settings, per-role permissions, audit log |
 
@@ -75,7 +75,7 @@ feature says that it is not set up.
 | Service | Configure | Without it |
 |---|---|---|
 | AI authoring | `AI_PROVIDER=openai-compatible`, `AI_API_KEY`, `AI_MODEL` (any OpenAI-compatible chat-completions API) | The AI studio explains that AI is not set up; no drafts are generated |
-| Code judge | `CODE_RUNNER_PROVIDER=piston`, `CODE_RUNNER_URL` (a sandboxed [Piston](https://github.com/engineer-man/piston) instance) | Students can write code but not run it; programs in quizzes are marked by the teacher |
+| Code judge | On Vercel: `CODE_RUNNER_PROVIDER=vercel-sandbox`, nothing else ([how it works](docs/DEPLOYMENT.md#checking-students-programs)). Or `CODE_RUNNER_PROVIDER=piston` with `CODE_RUNNER_URL` (a sandboxed [Piston](https://github.com/engineer-man/piston) instance) | Students can write code but not run it; programs in quizzes are marked by the teacher |
 | E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | No e-mail is sent, and the site says so instead of promising one: “Forgot password” tells people to ask the school, administrators issue temporary passwords, addresses are not verified, and the settings that need e-mail cannot be switched on. In development, messages are kept in a mailbox readable at `GET /api/dev/mailbox` from the same computer |
 | Map tiles | `MAP_TILE_URL` (defaults to OpenStreetMap) | The classroom picker shows a plain grid; coordinates can be typed or taken from the device |
 
@@ -144,9 +144,15 @@ vercel.json  Build, routing and security headers on Vercel
 
 Read this before relying on EduSphere for real classes.
 
-- **Checked only against local stand-ins.** AI authoring and the code judge were developed and
+- **Checked only against local stand-ins.** AI authoring and the Piston judge were developed and
   tested against fake services, never against a real AI provider or a real Piston instance.
   E-mail was never sent through a real SMTP server.
+- **The Vercel Sandbox judge was run for real, but not by a class.** From a Vercel build it
+  prepared its machine image and passed `scripts/judge-image.mjs --full` on a real account (all
+  five languages, and the programs a judge has to withstand; see [docs/TESTING.md](docs/TESTING.md#the-code-runner-against-a-real-account)).
+  What that does not show: forty students pressing "Run" in the same minute against the limits
+  of Vercel's free plan (ten machines at a time, twenty new ones a minute, some 3,000 to 5,000
+  programs a month). `npm run smoke` checks the code runner of your own site.
 - **Not checked at all.** Scanning a QR code with a real camera (the scan link and typing the
   code were tested), map tiles, Windows and macOS, PostgreSQL versions other than 18.
 - **One API instance on a server.** Rate limits and real-time delivery live in the memory of one

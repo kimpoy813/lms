@@ -187,7 +187,9 @@ for target in ["/judge/build/main.py", "/judge/build/planted", "/judge/planted"]
 try:
     if subprocess.run(["sudo", "-n", "true"], stdin=subprocess.DEVNULL, capture_output=True, timeout=5).returncode == 0: found.append("SUDO")
 except Exception: pass
-print(os.getuid() != 0, len(os.getgroups()), sorted(os.environ), found, sys.stdin.readline().strip())
+# Set-user-id programs (sudo, su, mount) cannot give rights back once this flag is set.
+locked = [line.split()[1] for line in open("/proc/self/status") if line.startswith("NoNewPrivs")]
+print(os.getuid() != 0, len(os.getgroups()), locked, sorted(os.environ), found, sys.stdin.readline().strip())
 `;
 
 describe.skipIf(!isolated)('with root: the program has no rights and the kernel holds it', () => {
@@ -199,8 +201,8 @@ describe.skipIf(!isolated)('with root: the program has no rights and the kernel 
       expect(report.isolation.user).toBe(true);
       if (limits === 'rlimit') expect(report.isolation.limits).toBe('rlimit');
       expect(report.runs.map((r) => r.stdout.trim())).toEqual([
-        "True 0 ['HOME', 'LANG', 'LC_ALL', 'NO_COLOR', 'PATH', 'PWD', 'PYTHONDONTWRITEBYTECODE', 'PYTHONIOENCODING', 'TMPDIR'] [] first",
-        "True 0 ['HOME', 'LANG', 'LC_ALL', 'NO_COLOR', 'PATH', 'PWD', 'PYTHONDONTWRITEBYTECODE', 'PYTHONIOENCODING', 'TMPDIR'] [] second",
+        "True 0 ['1'] ['HOME', 'LANG', 'LC_ALL', 'NO_COLOR', 'PATH', 'PWD', 'PYTHONDONTWRITEBYTECODE', 'PYTHONIOENCODING', 'TMPDIR'] [] first",
+        "True 0 ['1'] ['HOME', 'LANG', 'LC_ALL', 'NO_COLOR', 'PATH', 'PWD', 'PYTHONDONTWRITEBYTECODE', 'PYTHONIOENCODING', 'TMPDIR'] [] second",
       ]);
       // The job (it lists every input) is root's alone; the report is readable and identical on both ways out.
       expect(stat('job.json')).toBe('root 600');

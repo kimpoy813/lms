@@ -17,6 +17,7 @@
 // started, and — when the API could not start — why:
 //
 //   CRON_SECRET=… npm run smoke -- https://your-site.example
+import { operatorToken } from '../backend/src/lib/tokens.js';
 import { STARTUP_REPORT_PARAM, startupReportToken } from '../backend/src/lib/vercel.js';
 
 const base = (process.argv[2] ?? 'http://localhost:3900').replace(/\/+$/, '');
@@ -96,6 +97,19 @@ if (process.env.CRON_SECRET) {
   }
 } else if (health.json?.error?.code === 'STARTUP_FAILED') {
   console.log('       (the reason is in the function log; with CRON_SECRET set, this check prints it)');
+}
+if (process.env.CRON_SECRET) {
+  // Starts one machine when the site checks programs with Vercel Sandbox.
+  const checkPath = `/api/internal/code-runner-check?token=${operatorToken(process.env.CRON_SECRET, 'code runner check')}`;
+  const runner = (await call('GET', checkPath)).json?.data;
+  if (!runner) console.log('       (no answer about the code runner: CRON_SECRET is not the one the site was deployed with)');
+  else if (runner.provider === 'none') console.log('       (no code runner is set up: programs are not run, teachers mark them by hand)');
+  else {
+    const languages = Object.entries(runner.languages ?? {});
+    const broken = languages.filter(([, l]) => !l.ok).map(([id, l]) => `${id}: ${l.detail}`);
+    check(`programs are checked (${runner.provider})`, runner.ok === true, runner.detail ?? broken.join('; '), runner.ok ? `${languages.length} language${languages.length === 1 ? '' : 's'} in ${((runner.timings?.totalMs ?? 0) / 1000).toFixed(1)} s${runner.identity ? `, started with ${runner.identity}` : ''}${runner.limits === 'rlimit' ? ', memory limits approximate' : ''}` : '');
+    console.log(`       (to repeat this check in a browser: ${base}${checkPath})`);
+  }
 }
 const ready = await call('GET', '/readyz');
 check('the API reaches the database and finds its tables', ready.json?.status === 'ready', `status ${ready.status}: ${ready.text.slice(0, 120)}`, ready.json?.status === 'ready' ? `round trip ${ready.json.databaseMs} ms` : '');

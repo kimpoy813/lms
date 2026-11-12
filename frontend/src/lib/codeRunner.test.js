@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { askAgainWhileBusy, runnerProblem } from './codeRunner.js';
+import { askAgainWhileBusy, runnerProblem, totalTimeHint } from './codeRunner.js';
 
 const busy = (retryAfterSeconds) => Object.assign(new Error('busy'), { code: 'CODE_RUNNER_BUSY', details: retryAfterSeconds === undefined ? undefined : { retryAfterSeconds } });
 
@@ -60,5 +60,20 @@ describe('runnerProblem', () => {
   it('shows the message for a field, then the server’s own message', () => {
     expect(runnerProblem({ code: 'VALIDATION_ERROR', fields: { language: 'This problem accepts: Python 3.' }, message: 'Please correct the highlighted fields.' })).toBe('This problem accepts: Python 3.');
     expect(runnerProblem({ code: 'ATTEMPT_CLOSED', message: 'This attempt has ended.' })).toBe('This attempt has ended.');
+  });
+});
+
+describe('totalTimeHint', () => {
+  it('says nothing while every test can use its full time', () => {
+    expect(totalTimeHint(50_000, 10, 3000)).toBeUndefined();
+    expect(totalTimeHint(50_000, 25, 2000)).toBeUndefined();
+    expect(totalTimeHint(null, 25, 15_000)).toBeUndefined();
+    expect(totalTimeHint(50_000, 0, 3000)).toBeUndefined();
+  });
+
+  it('tells how many tests a slow program gets through', () => {
+    expect(totalTimeHint(50_000, 25, 3000)).toBe('The checker gives one program 50 seconds for all its tests together. A program that needs the full 3 s every time gets through about 16 of these 25 tests; the rest then count as too slow.');
+    expect(totalTimeHint(50_000, 5, 15_000)).toMatch(/full 15 s every time gets through about 3 of these 5 tests/);
+    expect(totalTimeHint(50_000, 2, 60_000)).toMatch(/about 1 of these 2 tests/);
   });
 });

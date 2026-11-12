@@ -19,18 +19,20 @@ export const okReport = (job) => ({
 /**
  * @param {string} name the name of the prepared image the judge under test looks for
  * @param {{ report?: (job: object) => object, image?: 'ready'|'preparing'|'missing', forkError?: Error|null, output?: string|null, installation?: 'done'|'running'|'failed' }} [options]
- *   Everything in `state` can be changed while the test runs.
+ *   Everything in `state` can be changed while the test runs. A report may depend on the machine:
+ *   `report(job, machine)`, where `machine.madeFrom` is the image it was forked from.
  */
 export function fakeSandboxAccount(name, { report = okReport, image = 'ready', forkError = null, output = null, installation = 'done' } = {}) {
   const NAME = name;
   const calls = [];
   const bases = new Map();
   const machines = [];
-  const state = { report, forkError, output, installation, reportFile: null, stopGate: null };
+  // installations: what the installation of each newly prepared image does, in order; after that, `installation`.
+  const state = { report, forkError, output, installation, installations: [], reportFile: null, stopGate: null };
 
   class Machine {
     constructor(name, isBase, status = 'running') {
-      Object.assign(this, { name, isBase, status, files: {}, createdAt: new Date() });
+      Object.assign(this, { name, isBase, status, files: {}, createdAt: new Date(), installation: null });
     }
     async writeFiles(files) {
       calls.push(['writeFiles', this.name, files.map((f) => f.path)]);
@@ -41,12 +43,12 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
       if (params.detached) return { cmdId: 'cmd_1' };
       if (this.isBase) {
         // "How far is the installation?"
-        const text = { done: `${IMAGE_TAG}\n---\n\n---\nsync`, running: '\n---\n\n---\nSetting up gcc', failed: '\n---\nexit 100\n---\nE: Unable to locate package default-jdk-headless' }[state.installation];
+        const text = { done: `${IMAGE_TAG}\n---\n\n---\nsync`, running: '\n---\n\n---\nSetting up gcc', failed: '\n---\nexit 100\n---\nE: Unable to locate package default-jdk-headless' }[this.installation ?? state.installation];
         return { exitCode: 0, stdout: async () => text, stderr: async () => '' };
       }
       const job = JSON.parse(this.files['/tmp/judge-job/job.json']);
       this.job = job;
-      const text = state.output ?? `${REPORT_PREFIX}${JSON.stringify(state.report(job))}\n`;
+      const text = state.output ?? `${REPORT_PREFIX}${JSON.stringify(state.report(job, this))}\n`;
       return { exitCode: 0, stdout: async () => text, stderr: async () => 'runner stderr' };
     }
     async readFileToBuffer({ path }) {
@@ -77,6 +79,7 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
       calls.push(['create', params]);
       if (bases.has(params.name)) throw apiError(409, 'conflict', 'already exists');
       const base = new Machine(params.name, true);
+      base.installation = state.installations.shift() ?? null;
       bases.set(params.name, base);
       return base;
     },
@@ -86,6 +89,7 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
       const source = bases.get(params.sourceSandbox);
       if (!source) throw apiError(404, 'not_found', 'Sandbox not found');
       const machine = new Machine(`job-${machines.length + 1}`, false);
+      machine.madeFrom = source;
       machines.push(machine);
       return machine;
     },

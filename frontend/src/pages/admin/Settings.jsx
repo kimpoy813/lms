@@ -176,6 +176,7 @@ function CodeRunnerCheck({ provider }) {
               </ul>
             )}
             {result.detail && <p className="mt-2 break-words text-soft">{result.detail}</p>}
+            {result.identity && <p className="mt-2 text-faint">Machines are started with: {result.identity}.</p>}
             {result.limits === 'rlimit' && <p className="mt-2 text-faint">Memory limits are approximate on this machine (kernel control groups are not available).</p>}
           </div>
         )}

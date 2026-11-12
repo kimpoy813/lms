@@ -65,8 +65,10 @@ const COMMAND_GRACE_MS = 10_000;
 /** A machine that was not stopped for whatever reason ends itself after this long. */
 const MACHINE_LIFETIME_MS = 3 * 60_000;
 const PREPARE_LIFETIME_MS = 10 * 60_000;
-/** After a preparation failed, wait this long before the same process tries again. */
-const PREPARE_RETRY_MS = 15 * 60_000;
+/** An image that cannot be used is replaced by a request only when it is at least this old (see advanceImage). */
+const REPLACE_AFTER_MS = 6 * 60 * 60_000;
+/** For this long jobs are turned away with the same answer when the image was found unusable. */
+const HOLD_MS = 20_000;
 
 /**
  * Why a program could not be checked.
@@ -133,6 +135,14 @@ export function sandboxCredentials({ accessToken, teamId, projectId } = {}) {
   return { token, teamId: claims.owner_id, projectId: claims.project_id };
 }
 
+/** For the administrator's check: which of the identities above this process would use right now. */
+export function identitySource({ accessToken, teamId, projectId } = {}) {
+  if (accessToken && teamId && projectId) return 'access token';
+  if (typeof globalThis[REQUEST_CONTEXT]?.get?.()?.headers?.['x-vercel-oidc-token'] === 'string') return 'the project’s identity, handed to this request by Vercel';
+  if (process.env.VERCEL_OIDC_TOKEN) return 'the project’s identity, from the environment';
+  return 'none';
+}
+
 let sdkOverride = null;
 /** Tests replace Vercel's SDK with a fake. Pass null to restore it. */
 export function setSandboxSdk(fake) {
@@ -194,9 +204,10 @@ export function toRun(run, { memoryLimitKb }) {
 export function createSandboxJudge({ region, credentials = () => sandboxCredentials(), log = { info() {}, warn() {} }, background = (task) => task().catch(() => {}) }) {
   if (!region) throw new Error('createSandboxJudge needs the region the machines run in');
   const name = imageName(region);
-  let notBefore = 0; // image preparation is not tried again before this time (this process only)
-  let notReadyUntil = 0; // jobs are turned away until this time, because the image is being prepared
-  let advancing = null;
+  // While the image cannot be used, jobs are turned away with the same answer for a moment,
+  // instead of each of them starting a machine or asking Vercel about the image (this process only).
+  let hold = { until: 0, error: null };
+  let looking = null;
 
   const identity = () => {
     const creds = credentials();
@@ -221,29 +232,36 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
     return base;
   }
 
-  async function removeBase(base) {
-    await base.delete({ deleteOrphanSnapshots: true });
-  }
-
   /**
    * Look at the image and take the next step, if there is one to take.
-   * @param {{ replaceStopped?: boolean }} [options] replaceStopped: the stopped image turned out to be incomplete
-   * @returns {Promise<{ state: 'ready'|'stopped'|'preparing'|'finalizing'|'waiting'|'failed', detail?: string, sizeBytes?: number }>}
+   *
+   * An image that exists but cannot be used (its installation failed, or its snapshot is gone) is
+   * replaced — but not in a hurry: preparing costs a machine and a minute of processor time, and
+   * what broke one image may break the next. So a request only replaces an image that is at least
+   * six hours old; a deployment (`force`) replaces it at once. A snapshot that expired belongs to
+   * an image that is weeks old, so that case is repaired straight away.
+   *
+   * @param {{ replaceStopped?: boolean, force?: boolean }} [options] replaceStopped: the stopped image turned out to be unusable
+   * @returns {Promise<{ state: 'ready'|'stopped'|'preparing'|'finalizing'|'failed', detail?: string, sizeBytes?: number }>}
    *   'stopped' means "prepared, as far as can be told from outside": only a job shows whether it is complete.
    */
-  async function advanceImage({ replaceStopped = false } = {}) {
+  async function advanceImage({ replaceStopped = false, force = false } = {}) {
     const creds = identity();
     const { Sandbox } = await loadSdk();
     let base = await findBase(Sandbox, creds);
     const status = base?.status ?? null;
 
     if (base && (status === 'failed' || status === 'aborted' || (status === 'stopped' && replaceStopped))) {
-      if (Date.now() < notBefore) return { state: 'waiting', detail: 'The last preparation failed; the next one is not tried yet.' };
-      await removeBase(base);
+      const age = Date.now() - new Date(base.createdAt ?? 0).getTime();
+      if (!force && age < REPLACE_AFTER_MS) {
+        const at = new Date(new Date(base.createdAt).getTime() + REPLACE_AFTER_MS).toISOString();
+        return { state: 'failed', detail: `The machine image that was prepared ${Math.max(1, Math.round(age / 60_000))} minutes ago cannot be used. It is replaced by the next deployment, or by itself after ${at}.` };
+      }
+      await base.delete({ deleteOrphanSnapshots: true });
+      log.warn({ image: name }, 'the machine image for running programs could not be used and is being replaced');
       base = null;
     }
     if (!base) {
-      if (Date.now() < notBefore) return { state: 'waiting', detail: 'The last preparation failed; the next one is not tried yet.' };
       try {
         await startBase(Sandbox, creds);
       } catch (err) {
@@ -271,8 +289,9 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
       return { state: 'ready', sizeBytes: stopped?.snapshot?.sizeBytes };
     }
     if (failed) {
-      notBefore = Date.now() + PREPARE_RETRY_MS;
-      await removeBase(base).catch(() => {});
+      // Stopped as it is, without the tag: it stays as the record of a failed attempt, and the
+      // rule above decides when the next one is made.
+      await base.stop().catch(() => {});
       const detail = `The installation ended with ${failed}: ${tail.split('\n').slice(-4).join(' | ')}`.slice(0, 500);
       log.warn({ image: name, detail }, 'preparing the machine image for running programs failed');
       return { state: 'failed', detail };
@@ -280,24 +299,39 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
     return { state: 'preparing', detail: tail.split('\n').pop()?.slice(0, 160) || 'installing' };
   }
 
-  /** At most one look at the image at a time in this process; failures are logged, not thrown. */
-  function advanceInBackground(options) {
-    advancing ??= Promise.resolve()
+  /** At most one look at the image at a time in this process. Never throws. */
+  function lookAfterImage(options) {
+    looking ??= Promise.resolve()
       .then(() => advanceImage(options))
       .catch((err) => {
         log.warn({ image: name, detail: describeError(err) }, 'could not look after the machine image for running programs');
+        return { state: 'failed', detail: describeError(err) };
       })
       .finally(() => {
-        advancing = null;
+        looking = null;
       });
-    background(() => advancing, 'looking after the judge machine image');
+    // It may still be at it when the answer is out (a slow delete, a slow start).
+    const pending = looking;
+    background(() => pending, 'looking after the judge machine image');
+    return pending;
   }
 
-  const preparing = (detail) => new JudgeUnavailable('preparing', 'The machine that runs programs is being prepared. This takes a few minutes.', detail);
+  /** No machine could be made from the image, or the one that came up is not complete: what to tell the caller. */
+  async function imageNotUsable(reason) {
+    const step = await lookAfterImage({ replaceStopped: true });
+    let error;
+    if (step.state === 'preparing' || step.state === 'finalizing') error = new JudgeUnavailable('preparing', 'The machine that runs programs is being prepared. This takes a few minutes.', reason);
+    // It became usable while we looked: the next try will find it.
+    else if (step.state === 'ready' || step.state === 'stopped') error = new JudgeUnavailable('busy', 'The machine that runs programs was not ready a moment ago.', reason);
+    else error = new JudgeUnavailable('failed', 'The machine image for running programs cannot be used.', [step.detail, reason].filter(Boolean).join(' — '));
+    error.image = true; // the cause is the image, not Vercel, the plan or the program
+    hold = { until: Date.now() + (error.kind === 'busy' ? 0 : HOLD_MS), error };
+    return error;
+  }
 
   /** Start a machine for one job, run the runner in it, and return its report. */
   async function runRunner(job) {
-    if (Date.now() < notReadyUntil) throw preparing('The image was not ready a moment ago.');
+    if (Date.now() < hold.until) throw hold.error;
     const creds = identity();
     const { Sandbox } = await loadSdk();
     const started = Date.now();
@@ -306,14 +340,12 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
       machine = await Sandbox.fork({ sourceSandbox: name, region, resources: { vcpus: 1 }, timeout: MACHINE_LIFETIME_MS, persistent: false, networkPolicy: 'deny-all', signal: AbortSignal.timeout(START_TIMEOUT_MS), ...creds });
     } catch (err) {
       const unavailable = classifyError(err, 'The machine for the program');
-      if (unavailable.kind !== 'failed') throw unavailable;
-      // No machine could be made from the image. Is the image missing, or still being set up?
-      // Then have it prepared and say so; anything else is a failure and is reported as one.
-      const base = await findBase(Sandbox, creds).catch(() => undefined);
-      if (base === undefined || base?.status === 'stopped') throw unavailable;
-      notReadyUntil = Date.now() + 20_000;
-      advanceInBackground();
-      throw preparing(unavailable.detail);
+      // "Not there" is ours to repair: the image was never prepared, or Vercel removed its
+      // snapshot after a month without use. Anything else (Vercel's side, the network, a request
+      // it did not like) is reported as it is, and the image is left alone.
+      const gone = httpStatus(err) === 404 || httpStatus(err) === 410 || /snapshot|not[_ ]found|expired/i.test(`${apiCode(err)} ${err?.json?.error?.message ?? ''}`);
+      if (unavailable.kind !== 'failed' || !gone) throw unavailable;
+      throw await imageNotUsable(unavailable.detail);
     }
     const startMs = Date.now() - started;
     try {
@@ -338,13 +370,9 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
       if (!report) throw new JudgeUnavailable('failed', 'The code checker did not finish its work.', `The runner ended with exit code ${command.exitCode} and no report. ${String(await command.stderr().catch(() => '')).slice(-300)}`);
       if (report.error) throw new JudgeUnavailable('failed', 'The code checker could not do its work.', String(report.error).slice(0, 400));
       if (report.version !== RUNNER_VERSION) throw new JudgeUnavailable('failed', 'The code checker could not do its work.', `Runner version ${report.version}, expected ${RUNNER_VERSION}.`);
-      if (report.image !== IMAGE_TAG) {
-        // The machine came up, but not from a complete image: its preparation is still running,
-        // or it stopped half-way. Have it finished or replaced.
-        notReadyUntil = Date.now() + 20_000;
-        advanceInBackground({ replaceStopped: true });
-        throw preparing(`The image is marked ${JSON.stringify(report.image)}, expected ${IMAGE_TAG}.`);
-      }
+      // The machine came up, but not from a complete image: its preparation is still running, or
+      // it ended half-way.
+      if (report.image !== IMAGE_TAG) throw await imageNotUsable(`A machine made from the image is marked ${JSON.stringify(report.image)}, expected ${IMAGE_TAG}.`);
       return { report, timings: { startMs, uploadMs, runMs: Date.now() - run, totalMs: Date.now() - started } };
     } catch (err) {
       throw classifyError(err);
@@ -380,7 +408,7 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
   }
 
   /**
-   * Make sure the image exists and works, waiting for it. For the build step and for tests of a
+   * Make sure the image exists and works, waiting for it. For the build step and for checks of a
    * real account; a request never waits for this.
    * @returns {Promise<{ ok: boolean, state: string, detail?: string, check?: object, sizeBytes?: number, prepared: boolean }>}
    */
@@ -388,37 +416,44 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
     const deadline = Date.now() + deadlineMs;
     let prepared = false;
     let sizeBytes;
-    let replaced = 0;
+    let replaced = false;
     let last = '';
-    let replaceStopped = false;
-    while (Date.now() < deadline) {
-      const step = await advanceImage({ replaceStopped });
-      replaceStopped = false;
-      const line = `${step.state}${step.detail ? `: ${step.detail}` : ''}`;
+    const say = (line) => {
       if (line !== last) onProgress(line);
       last = line;
-      if (step.state === 'failed' || step.state === 'waiting') return { ok: false, state: step.state, detail: step.detail, prepared };
+    };
+    while (Date.now() < deadline) {
+      const step = await advanceImage();
+      say(`${step.state}${step.detail ? `: ${step.detail}` : ''}`);
       if (step.state === 'preparing' || step.state === 'finalizing') {
         prepared = true;
         await sleep(pollMs);
         continue;
       }
       if (step.sizeBytes) sizeBytes = step.sizeBytes;
-      // 'ready' or 'stopped': the proof is a job.
-      notReadyUntil = 0;
-      try {
-        const check = await selfTest();
-        return { ok: check.ok, state: check.ok ? 'ready' : 'incomplete', detail: check.ok ? undefined : 'Not every language passed its check.', check, sizeBytes, prepared };
-      } catch (err) {
-        const unavailable = classifyError(err);
-        if (unavailable.kind !== 'preparing') return { ok: false, state: 'failed', detail: describeError(unavailable), prepared };
-        // Stopped, but not from a complete installation. Replace it, once.
-        await advancing;
-        if (replaced >= 1) return { ok: false, state: 'failed', detail: `The image is still incomplete after preparing it again. ${unavailable.detail ?? ''}`, prepared };
-        replaced += 1;
-        replaceStopped = true;
-        onProgress('the stopped image is incomplete; preparing it again');
+      let reason = step.detail;
+      if (step.state !== 'failed') {
+        // 'ready' or 'stopped': the proof is a job.
+        hold = { until: 0, error: null };
+        try {
+          const check = await selfTest();
+          return { ok: check.ok, state: check.ok ? 'ready' : 'incomplete', detail: check.ok ? undefined : 'Not every language passed its check.', check, sizeBytes, prepared };
+        } catch (err) {
+          const unavailable = classifyError(err);
+          await looking;
+          if (unavailable.kind === 'preparing') continue; // it was replaced while we tried
+          // A check that failed for a reason outside the image (no permission, the plan's
+          // allowance, Vercel itself) is not repaired by preparing another image.
+          if (!unavailable.image) return { ok: false, state: 'failed', detail: describeError(unavailable), prepared };
+          reason = describeError(unavailable);
+        }
       }
+      // The image is there and cannot be used. A deployment replaces it at once, but only once.
+      if (replaced) return { ok: false, state: 'failed', detail: `The image is still not usable after preparing it again. ${reason ?? ''}`.trim(), prepared };
+      replaced = true;
+      say('the image cannot be used; preparing it again');
+      await advanceImage({ replaceStopped: true, force: true });
+      prepared = true;
     }
     return { ok: false, state: 'timeout', detail: 'Preparing the image took longer than allowed. It goes on by itself; the first programs are checked once it is done.', prepared };
   }

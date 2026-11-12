@@ -6,6 +6,15 @@ export const randomToken = (bytes = 32) => randomBytes(bytes).toString('base64ur
 /** SHA-256 hex digest. Tokens are stored hashed so a database leak does not expose live tokens. */
 export const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
+/**
+ * A value that unlocks one thing for whoever operates the site, derived from a secret they
+ * already have. The secret itself never has to travel in a URL, and a value that leaks opens
+ * nothing but its own purpose.
+ */
+export function operatorToken(secret, purpose) {
+  return createHmac('sha256', String(secret)).update(`edusphere ${purpose}`).digest('base64url');
+}
+
 /** Constant-time string comparison. */
 export function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;

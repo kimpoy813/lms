@@ -139,7 +139,7 @@ const lines = [
   '',
   `${total} endpoints under \`/api\`. Health checks live outside it: \`GET /healthz\` (process is up) and \`GET /readyz\` (the database answers and has its tables).`,
   '',
-  'One more endpoint is for the host, not for the web app: `GET /api/internal/cron` runs the background jobs where no timer does (see DEPLOYMENT.md). With `CRON_SECRET` set it requires `Authorization: Bearer <secret>`.',
+  'Two more endpoints are for the host, not for the web app. `GET /api/internal/cron` runs the background jobs where no timer does (see DEPLOYMENT.md); with `CRON_SECRET` set it requires `Authorization: Bearer <secret>`. `GET /api/internal/code-runner-check?token=…` runs a small program in every language and reports the result, as `POST /api/admin/code-runner/check` does for an administrator; the token is derived from `CRON_SECRET` (`npm run smoke` prints the address), and without it the endpoint answers 404.',
   '',
   '## Conventions',
   '',
