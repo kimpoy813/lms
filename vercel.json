@@ -3,6 +3,7 @@
   "framework": null,
   "buildCommand": "node scripts/vercel-build.mjs",
   "outputDirectory": "frontend/dist",
+  "regions": ["sin1"],
   "functions": {
     "api/index.js": {
       "maxDuration": 120,

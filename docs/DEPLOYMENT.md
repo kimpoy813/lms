@@ -153,6 +153,7 @@ setup, so the Vercel project needs no build settings.
    | `SEED_ADMIN_EMAIL` | E-mail address of the first administrator |
    | `SEED_ADMIN_PASSWORD` | A temporary password of at least 10 characters. It must be changed at the first sign-in |
    | `CRON_SECRET` | A long random text. Vercel sends it with the daily call, which then runs every job; without it the call only runs what is due |
+   | `NODEJS_HELPERS` | `0`, for *Production* and *Preview*. Tells Vercel to hand requests to the application as they are, instead of reading their bodies first |
    | `APP_URL` | Only with a custom domain: its full address, for example `https://lms.example.edu` |
 
    The optional services ([below](#optional-services)) are configured the same way.
@@ -165,6 +166,20 @@ setup, so the Vercel project needs no build settings.
    password, then delete `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from the project.
 
 `npm run smoke -- https://<your-site>` checks more from your own computer ([above](#health-checks)).
+
+### If the API does not answer
+
+- **`503 STARTUP_FAILED`** on every API address: the application could not start, usually
+  because of a setting it rejects. The reason is in the function's log (Vercel → the project →
+  *Logs*; the free plan keeps it for an hour). Without opening Vercel,
+  `CRON_SECRET=<the project's value> npm run smoke -- https://<your-site>` prints it too.
+- **Vercel's own page, `FUNCTION_INVOCATION_FAILED`**: the function ended before it could
+  answer at all. Look at the same log.
+- **`503 DATABASE_UNAVAILABLE` or `DATABASE_OUT_OF_DATE`**: the database cannot be reached, or
+  has not been migrated by a production build yet.
+- **Sign-in answers "Please correct the highlighted fields" although both fields are filled
+  in**: Vercel read the request before the application could. Check that the variable
+  `NODEJS_HELPERS=0` is set for the project, and deploy again. The smoke check tests this.
 
 ### Preview deployments
 
@@ -202,9 +217,13 @@ the same database works with both.
 
 ### Good to know
 
-- **Region.** Functions run in Washington, D.C. (`iad1`) unless `regions` is set in `vercel.json`.
-  Keep the database in the same region: `/readyz` reports the round trip, which should be a few
-  milliseconds. A database on another continent makes every page slow.
+- **Region.** `regions` in `vercel.json` says where the function runs. It is set to Singapore
+  (`sin1`) because the database of this deployment is there (Neon `ap-southeast-1`); without
+  it, Vercel runs functions in Washington, D.C. (`iad1`). **Change it to the Vercel region next
+  to your database.** The free plan allows one region. The function pays for the distance on
+  every query, and one page asks for several: across an ocean that is about a quarter of a
+  second each. The build says where the two are when the database is a Neon one, and `/readyz`
+  reports the round trip, which should be a few milliseconds.
 - **Node.js version.** `engines` in `package.json` stops at the newest version this was tested
   with (26), so that Vercel does not move the site to a new major version by itself.
 - **Database connections.** Each function instance keeps at most 5 (`DATABASE_POOL_MAX`) and
@@ -277,11 +296,13 @@ Back up before applying migrations.
 - **Uploads on local disk or in the database.** Object storage (S3 and the like) is not included;
   it would be a third back-end in `backend/src/services/storage.js`, and the way to lift the
   size limits on Vercel.
-- **Vercel was checked against a stand-in.** The output of Vercel's own build tool was served
+- **The tests check Vercel against a stand-in.** The output of Vercel's own build tool is served
   locally the way Vercel routes it (the function with only its traced files on a read-only disk,
-  Node.js 26, the request size limit), with a local PostgreSQL in place of Neon. Vercel freezing
-  an instance between requests, several instances at once and a Neon database under real use
-  were not exercised; after a first deployment, `npm run smoke` shows what works there.
+  loaded with `require()`, Node.js 26, the request size limit), with a local PostgreSQL in
+  place of Neon. The first real deployment still failed on something the stand-in did not
+  reproduce at the time, so treat it as a filter, not as proof. Vercel freezing an instance
+  between requests, several instances at once and a Neon database under real use are not
+  exercised by any test; `npm run smoke` against the live address shows what works there.
 - **No load testing** was done. The largest data set used was the demo school (three classes,
   ten students).
 - **Database client.** The project uses Prisma's JavaScript engines (`PRISMA_SCHEMA_ENGINE=js`,

@@ -51,8 +51,9 @@ const publicUrl = process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRO
 if (publicUrl) console.log(`\n▸ Public address of the site: ${publicUrl}`);
 else console.warn('\n! The public address of the site is unknown. Set APP_URL in the project settings, or links in e-mails and QR codes will be wrong.');
 
-// Which database the functions will use (the host only) and how far it is from them. A function
-// pays for that distance on every query, and one page of the app asks for several.
+// How far the database is from the functions. A function pays for that distance on every query,
+// and one page of the app asks for several. Only the region is read from the database's address
+// (Neon puts it in the host name); the address itself is not printed.
 const NEAREST_VERCEL_REGION = {
   'us-east-1': 'iad1',
   'us-east-2': 'cle1',
@@ -63,24 +64,22 @@ const NEAREST_VERCEL_REGION = {
   'ap-southeast-2': 'syd1',
   'sa-east-1': 'gru1',
 };
-const runtimeDatabaseUrl = firstSet('DATABASE_URL', 'POSTGRES_URL');
-if (runtimeDatabaseUrl) {
-  let host = '';
-  try {
-    host = new URL(runtimeDatabaseUrl).hostname;
-  } catch {
-    // The application will say what is wrong with the URL when it starts.
-  }
-  if (host) console.log(`\n▸ Database: ${host}`);
-  const databaseRegion = /\.([a-z]{2}-[a-z]+-\d)\.aws\.neon\.tech$/.exec(host)?.[1];
-  const nearest = NEAREST_VERCEL_REGION[databaseRegion];
-  if (nearest) {
-    const configured = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8')).regions?.[0];
-    if (configured && configured !== nearest) {
-      console.warn(`! The database is in ${databaseRegion} and vercel.json runs the functions in ${configured}: every query travels between the two. The Vercel region next to the database is ${nearest}.`);
-    } else if (!configured && nearest !== 'iad1') {
-      console.warn(`! The database is in ${databaseRegion}. Functions run in iad1 (Washington, D.C.) unless told otherwise, and every query then travels between the two. Add "regions": ["${nearest}"] to vercel.json.`);
-    }
+let databaseHost = '';
+try {
+  databaseHost = new URL(firstSet('DATABASE_URL', 'POSTGRES_URL') ?? '').hostname;
+} catch {
+  // No address, or not a URL: the application says so when it starts.
+}
+const databaseRegion = /\.([a-z]{2}-[a-z]+-\d)\.aws\.neon\.tech$/.exec(databaseHost)?.[1];
+const nearestRegion = NEAREST_VERCEL_REGION[databaseRegion];
+if (nearestRegion) {
+  const functionRegion = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8')).regions?.[0];
+  if (functionRegion === nearestRegion) {
+    console.log(`\n▸ Database in ${databaseRegion}, functions in ${functionRegion}: next to each other.`);
+  } else if (functionRegion) {
+    console.warn(`\n! The database is in ${databaseRegion} and vercel.json runs the functions in ${functionRegion}: every query travels between the two. The Vercel region next to the database is ${nearestRegion}.`);
+  } else if (nearestRegion !== 'iad1') {
+    console.warn(`\n! The database is in ${databaseRegion}. Functions run in iad1 (Washington, D.C.) unless told otherwise, and every query then travels between the two. Add "regions": ["${nearestRegion}"] to vercel.json.`);
   }
 }
 
