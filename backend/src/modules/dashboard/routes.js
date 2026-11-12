@@ -7,8 +7,8 @@ import { excerpt } from '../../lib/sanitize.js';
 import { addDays, dateKey, startOfDay, weekdayOf } from '../../lib/time.js';
 import { publishedWhere, quizResultsVisible } from '../../lib/visibility.js';
 import { requireAuth } from '../../middleware/auth.js';
-import { mailConfigured } from '../../services/mail.js';
-import { getSetting, getTimeZone } from '../../services/settings.js';
+import { mailAvailable, mailConfigured } from '../../services/mail.js';
+import { getSetting, getTimeZone, SETTING_DEFINITIONS } from '../../services/settings.js';
 import { assessRisk, attendanceTotals, missingWork, rateOf, riskThresholds } from '../analytics/service.js';
 import { classLabel } from '../classes/access.js';
 import { computeClassGrades } from '../gradebook/service.js';
@@ -248,11 +248,14 @@ async function teacherDashboard(user) {
 }
 
 // ── Administrator ────────────────────────────────────────────────────────────
-async function adminDashboard() {
+/** The name the first administrator is created with, until they put their own on the account. */
+const PLACEHOLDER_ADMIN = { firstName: 'System', lastName: 'Administrator' };
+
+async function adminDashboard(user) {
   const now = new Date();
   const tz = await getTimeZone();
   const since = startOfDay(addDays(dateKey(now, tz), -13), tz);
-  const [byRole, byStatus, classes, enrollments, pendingUsers, recentAudit, logins, lockedOut, storage, attendance, semesters] = await Promise.all([
+  const [byRole, byStatus, classes, enrollments, pendingUsers, recentAudit, logins, lockedOut, storage, attendance, semesters, courses, institutionName, registrationOpen] = await Promise.all([
     prisma.user.groupBy({ by: ['role'], where: { anonymizedAt: null }, _count: { _all: true } }),
     prisma.user.groupBy({ by: ['status'], where: { anonymizedAt: null }, _count: { _all: true } }),
     prisma.class.groupBy({ by: ['status'], _count: { _all: true } }),
@@ -264,12 +267,26 @@ async function adminDashboard() {
     prisma.file.aggregate({ where: { deletedAt: null }, _sum: { sizeBytes: true }, _count: { _all: true } }),
     prisma.attendanceRecord.groupBy({ by: ['status'], where: { session: { status: 'CLOSED', startTime: { gte: since } } }, _count: { _all: true } }),
     prisma.semester.findMany({ where: { isCurrent: true }, select: { id: true, name: true, academicYear: { select: { name: true } } }, take: 1 }),
+    prisma.course.count(),
+    getSetting('institution.name'),
+    getSetting('registration.allowStudentSelfSignup'),
   ]);
   const days = Array.from({ length: 14 }, (_, i) => addDays(dateKey(now, tz), i - 13));
   const perDay = new Map(days.map((d) => [d, new Set()]));
   for (const s of logins) perDay.get(dateKey(s.createdAt, tz))?.add(s.userId);
   const count = (rows, key, value) => rows.find((r) => r[key] === value)?._count._all ?? 0;
   const att = Object.fromEntries(attendance.map((a) => [a.status.toLowerCase(), a._count._all]));
+  // What a new installation needs before the first class can meet, in the order it is needed.
+  // Each step is read from the data, so the guide ticks itself off and disappears when all is done.
+  const steps = [
+    { key: 'institution', done: institutionName !== SETTING_DEFINITIONS['institution.name'].default },
+    { key: 'profile', done: !(user.firstName === PLACEHOLDER_ADMIN.firstName && user.lastName === PLACEHOLDER_ADMIN.lastName) },
+    { key: 'semester', done: semesters.length > 0 },
+    { key: 'courses', done: courses > 0 },
+    { key: 'teachers', done: count(byRole, 'role', 'TEACHER') > 0 },
+    { key: 'classes', done: classes.some((c) => c._count._all > 0) },
+    { key: 'students', done: count(byRole, 'role', 'STUDENT') > 0 },
+  ];
   return {
     role: 'ADMIN',
     date: dateKey(now, tz),
@@ -283,20 +300,23 @@ async function adminDashboard() {
     attendance14d: { ...att, rate: rateOf({ present: att.present ?? 0, late: att.late ?? 0, absent: att.absent ?? 0 }) },
     pendingUsers: pendingUsers.map((u) => ({ id: u.id, name: fullName(u), email: u.email, role: u.role, createdAt: u.createdAt })),
     recentAudit: recentAudit.map((a) => ({ id: a.id, action: a.action, summary: a.summary, actor: a.actor ? fullName(a.actor) : 'System', at: a.createdAt })),
+    setup: { steps, complete: steps.every((s) => s.done) },
     system: {
       environment: env.nodeEnv,
       mailConfigured: mailConfigured(),
+      /** False where nothing can be e-mailed: forgotten passwords are then replaced by an administrator. */
+      mailAvailable: mailAvailable(),
       aiConfigured: env.ai.configured,
       codeRunnerConfigured: env.codeRunner.configured,
       storageBytes: storage._sum.sizeBytes ?? 0,
       storedFiles: storage._count._all,
-      registrationOpen: Boolean(await getSetting('registration.allowStudentSelfSignup')),
+      registrationOpen: Boolean(registrationOpen),
     },
   };
 }
 
 dashboardRouter.get('/', async (req, res) => {
-  if (req.user.role === 'ADMIN') ok(res, await adminDashboard());
+  if (req.user.role === 'ADMIN') ok(res, await adminDashboard(req.user));
   else if (req.user.role === 'TEACHER') ok(res, await teacherDashboard(req.user));
   else ok(res, await studentDashboard(req.user));
 });
