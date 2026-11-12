@@ -21,7 +21,7 @@ function describeDevice(ua = '') {
 }
 
 export default function Profile() {
-  const { user, refresh } = useAuth();
+  const { user, refresh, runtime } = useAuth();
   const [v, setV] = useState({
     firstName: user.firstName, lastName: user.lastName, middleName: user.middleName ?? '', phone: user.phone ?? '',
     position: user.teacherProfile?.position ?? '', specialization: user.teacherProfile?.specialization ?? '', consultationHours: user.teacherProfile?.consultationHours ?? '', bio: user.teacherProfile?.bio ?? '',
@@ -68,7 +68,7 @@ export default function Profile() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="flex flex-wrap items-center gap-2 text-xl font-bold text-ink">{user.name}<Badge tone="brand">{ROLE[user.role]}</Badge>{user.isDemo && <Badge tone="warn">Demo account</Badge>}</p>
-              <p className="text-sm text-soft">{user.email}{user.emailVerified ? '' : ' · not verified'}</p>
+              <p className="text-sm text-soft">{user.email}{user.emailVerified || !runtime.email ? '' : ' · not verified'}</p>
               <div className="mt-2 flex flex-wrap gap-x-4 text-[13px] text-faint">
                 {user.studentProfile?.studentNumber && <span>Student no. {user.studentProfile.studentNumber}</span>}
                 {user.teacherProfile?.employeeNumber && <span>Employee no. {user.teacherProfile.employeeNumber}</span>}
@@ -104,7 +104,8 @@ export default function Profile() {
 
         <Card>
           <CardHeader title="Notifications" />
-          <Switch checked={user.emailNotifications} onChange={(on) => save.mutate({ emailNotifications: on }, { onSuccess: () => toast.success(on ? 'E-mail notifications are on.' : 'E-mail notifications are off.') })} label="Also send important notifications by e-mail" description="Announcements, returned grades and attendance requests. You always receive them inside EduSphere." />
+          <Switch checked={user.emailNotifications} onChange={(on) => save.mutate({ emailNotifications: on }, { onSuccess: () => toast.success(on ? 'E-mail notifications are on.' : 'E-mail notifications are off.') })} label="Also send important notifications by e-mail" disabled={!runtime.email && !user.emailNotifications}
+            description={runtime.email ? 'Announcements, returned grades and attendance requests. You always receive them inside EduSphere.' : 'Not available: this site does not send e-mail. You receive every notification inside EduSphere.'} />
         </Card>
 
         <PasswordCard />

@@ -1,7 +1,7 @@
 // Who is signed in. The session lives in an HTTP-only cookie; this context only mirrors what
 // GET /api/auth/session says about it.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, onAuthEvent, setCsrfToken, setUploadLimit } from '../lib/api.js';
+import { api, onAuthEvent, setCsrfToken, setPhotoReduction, setUploadLimit } from '../lib/api.js';
 import { setTimeZone } from '../lib/format.js';
 import { queryClient } from '../lib/query.js';
 import { connectSocket, disconnectSocket } from '../lib/socket.js';
@@ -10,7 +10,8 @@ const AuthContext = createContext(null);
 
 // What the server can do. `realtime: false` means it cannot push updates (it runs as short-lived
 // function invocations), so live screens refresh on a timer instead — see lib/live.js.
-const DEFAULT_RUNTIME = { realtime: true, maxUploadBytes: null };
+// `email: false` means it cannot send e-mail: nothing that would need a message is offered.
+const DEFAULT_RUNTIME = { realtime: true, maxUploadBytes: null, reducePhotosOverBytes: 0, email: true };
 const SIGNED_OUT = { user: null, permissions: [], settings: {}, runtime: DEFAULT_RUNTIME };
 
 export function AuthProvider({ children }) {
@@ -20,6 +21,7 @@ export function AuthProvider({ children }) {
     const runtime = { ...DEFAULT_RUNTIME, ...payload.runtime };
     setCsrfToken(payload.csrfToken);
     setUploadLimit(runtime.maxUploadBytes);
+    setPhotoReduction(runtime.reducePhotosOverBytes);
     setTimeZone(payload.settings?.['institution.timezone']);
     setState({ status: 'in', user: payload.user, permissions: payload.permissions ?? [], settings: payload.settings ?? {}, runtime });
     if (runtime.realtime) connectSocket();

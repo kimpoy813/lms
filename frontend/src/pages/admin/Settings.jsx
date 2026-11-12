@@ -8,6 +8,9 @@ import { api } from '../../lib/api.js';
 import { formatBytes, setTimeZone } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 
+/** Settings that only make sense on a server that can send e-mail. */
+const NEEDS_EMAIL = new Set(['registration.requireEmailVerification', 'email.notificationsEnabled']);
+
 const GROUP_HELP = {
   Institution: 'Shown on sign-in pages, reports and exports.',
   Accounts: 'Who may create an account without an administrator.',
@@ -52,7 +55,12 @@ export default function AdminSettings() {
                     {definitions.map((d) => {
                       const value = d.key in draft ? draft[d.key] : values[d.key];
                       const set = (next) => setDraft((s) => { const copy = { ...s }; if (next === values[d.key]) delete copy[d.key]; else copy[d.key] = next; return copy; });
-                      if (d.type === 'boolean') return <Switch key={d.key} checked={Boolean(value)} onChange={set} label={d.label} description={d.help} />;
+                      if (d.type === 'boolean') {
+                        // Still possible to switch off; switching on is refused by the server as well.
+                        const noEmail = NEEDS_EMAIL.has(d.key) && status.data?.mailAvailable === false;
+                        return <Switch key={d.key} checked={Boolean(value)} onChange={set} label={d.label} disabled={noEmail && !value} error={errors[d.key]}
+                          description={noEmail ? 'Not available: this server cannot send e-mail yet. See “Server” on this page.' : d.help} />;
+                      }
                       return (
                         <Field key={d.key} label={d.label} hint={d.help} error={errors[d.key]} className="max-w-md">
                           {d.type === 'number'
@@ -74,12 +82,13 @@ export default function AdminSettings() {
             <QueryState query={status} loader={<p className="text-sm text-faint">Loading…</p>}>
               {(s) => (
                 <ul className="space-y-3 text-sm">
-                  <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText="Not configured. Password resets are done by an administrator, and nothing is e-mailed." />
+                  <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText={s.mailAvailable === false ? 'Not configured. Nothing is e-mailed: when someone forgets a password, open the account under Users and choose “Reset password”.' : 'Not configured. Messages are kept in the development mailbox instead of being sent.'} />
                   <Service icon={Bot} name="AI drafting" on={s.ai.configured} onText={`Provider: ${s.ai.provider}${s.ai.model ? ` · ${s.ai.model}` : ''}`} offText="Not configured. The AI studio shows a notice and generates nothing." />
                   <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={`Provider: ${s.codeRunner.provider}`} offText="Not configured. Code is not run: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be checked." />
                   <li className="border-t border-line pt-3 text-[13px] text-soft">
                     <p>Environment: <span className="font-medium text-ink">{s.environment}</span></p>
                     <p>Largest upload: <span className="font-medium text-ink">{formatBytes(s.maxUploadBytes)}</span></p>
+                    {s.reducePhotosOverBytes > 0 && <p>Photos over <span className="font-medium text-ink">{formatBytes(s.reducePhotosOverBytes)}</span> are made smaller on the sender’s device before they are sent</p>}
                     {s.storage && (
                       <p>
                         Uploaded files: <span className="font-medium text-ink">{s.storage.driver === 'database' ? 'kept in the database' : 'kept on the server’s disk'}</span>

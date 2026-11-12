@@ -47,12 +47,14 @@ describe('configuration', () => {
     expect(env.databasePoolMax).toBeLessThanOrEqual(5);
     // An instance stays awake until its idle connections are closed, so they are closed quickly.
     expect(env.databasePoolIdleMs).toBe(1_000);
+    // Space in the database is short: photos above one megabyte are made smaller before upload.
+    expect(env.reducePhotosOverBytes).toBe(1 * MB);
   });
 
-  it('tells the web app that it cannot push and how large an upload may be', async () => {
+  it('tells the web app that it cannot push, how large an upload may be and which photos to shrink', async () => {
     const student = await actor('STUDENT');
     const session = await student.get('/api/auth/session');
-    expect(session.body.data.runtime).toEqual({ realtime: false, maxUploadBytes: env.maxUploadBytes });
+    expect(session.body.data.runtime).toEqual({ realtime: false, maxUploadBytes: env.maxUploadBytes, reducePhotosOverBytes: 1 * MB, email: true });
   });
 });
 

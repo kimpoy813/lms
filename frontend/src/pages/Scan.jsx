@@ -27,7 +27,8 @@ export default function Scan() {
   const { isStudent } = useAuth();
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const [method, setMethod] = useState('qr');
+  // Until the student picks a tab, the page opens on the way the open class meeting accepts.
+  const [chosenMethod, setMethod] = useState(null);
   const [code, setCode] = useState('');
   // stage: idle | sending | locating | done | failed
   const [state, setState] = useState({ stage: 'idle' });
@@ -88,6 +89,7 @@ export default function Scan() {
   const reset = () => { setState({ stage: 'idle' }); setCode(''); };
   const open = (active.data ?? []).filter((s) => !s.record);
   const recorded = (active.data ?? []).filter((s) => s.record);
+  const method = chosenMethod ?? (open.length > 0 && open.every((s) => !s.allowQr) ? 'code' : 'qr');
 
   return (
     <div className="mx-auto max-w-xl">

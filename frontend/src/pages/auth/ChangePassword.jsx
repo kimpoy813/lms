@@ -1,6 +1,6 @@
 // Shown when an administrator issued a temporary password: it must be replaced before anything else.
 import { KeyRound } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, Button, Field, Input } from '../../components/ui.jsx';
@@ -14,7 +14,10 @@ export default function ChangePassword() {
   const [values, setValues] = useState({ currentPassword: '', newPassword: '', confirm: '' });
   const [errors, setErrors] = useState({});
   const [busy, setBusy] = useState(false);
-  if (!user.mustChangePassword) return <Navigate to="/profile" replace />;
+  // Someone who has just replaced a temporary password starts on the dashboard. Someone who opens
+  // this page without having to is sent to the profile, where a password is changed at will.
+  const changedHere = useRef(false);
+  if (!user.mustChangePassword) return <Navigate to={changedHere.current ? '/' : '/profile'} replace />;
 
   const set = (name) => (e) => setValues((v) => ({ ...v, [name]: e.target.value }));
   const submit = async (e) => {
@@ -24,9 +27,9 @@ export default function ChangePassword() {
     setErrors({});
     try {
       await api.post('/auth/change-password', { currentPassword: values.currentPassword, newPassword: values.newPassword });
-      await refresh();
+      changedHere.current = true;
       toast.success('Password changed.');
-      navigate('/', { replace: true });
+      await refresh(); // the session no longer demands a change: the line above the form redirects
     } catch (err) {
       setErrors(err.fields ?? { form: err.message });
       setBusy(false);

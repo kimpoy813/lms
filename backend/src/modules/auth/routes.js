@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
-import { AppError, badRequest, fieldErrors, forbidden, unauthorized } from '../../lib/errors.js';
+import { AppError, badRequest, conflict, fieldErrors, forbidden, unauthorized } from '../../lib/errors.js';
 import { created, noContent, ok, zEmail, zId, zName } from '../../lib/http.js';
 import { dummyHash, hashPassword, needsRehash, passwordPolicyError, verifyPassword } from '../../lib/password.js';
 import { randomToken, sha256 } from '../../lib/tokens.js';
@@ -15,7 +15,7 @@ import {
 import { authLimiter, loginLimiter, signInLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
-import { sendMail } from '../../services/mail.js';
+import { mailAvailable, sendMail } from '../../services/mail.js';
 import { permissionsFor } from '../../services/permissions.js';
 import { getPublicSettings, getSettings } from '../../services/settings.js';
 import { disconnectUser } from '../../services/realtime.js';
@@ -54,6 +54,10 @@ async function consumeAuthToken(token, type, tx) {
   return row;
 }
 
+/** E-mail verification is demanded only where a verification message can be delivered. */
+const verificationRequired = (settings) => Boolean(settings['registration.requireEmailVerification']) && mailAvailable();
+const NO_EMAIL = 'This site does not send e-mail. Ask your school’s administrator, who can give you a temporary password.';
+
 export async function sendVerificationEmail(user) {
   const token = await issueAuthToken(user.id, 'EMAIL_VERIFICATION');
   await sendMail({
@@ -86,7 +90,7 @@ async function sessionPayload(user, csrfToken) {
     permissions: await permissionsFor(user.role),
     settings: await getPublicSettings(),
     // What this server can do; the web app adapts (timed refresh without push, upload size check).
-    runtime: { realtime: env.realtime, maxUploadBytes: env.maxUploadBytes },
+    runtime: { realtime: env.realtime, maxUploadBytes: env.maxUploadBytes, reducePhotosOverBytes: env.reducePhotosOverBytes, email: mailAvailable() },
   };
 }
 
@@ -113,6 +117,8 @@ authRouter.get('/config', async (req, res) => {
     institutionName: settings['institution.name'],
     allowStudentSelfSignup: settings['registration.allowStudentSelfSignup'],
     allowTeacherSelfSignup: settings['registration.allowTeacherSelfSignup'],
+    // Without e-mail there are no reset links: the sign-in pages say whom to ask instead.
+    emailEnabled: mailAvailable(),
     // Demo accounts are a development convenience and never exist in production.
     demoAccounts,
   });
@@ -182,7 +188,7 @@ authRouter.post(
     if (user.status === 'PENDING') {
       throw forbidden('Your account is waiting for approval by an administrator.', 'ACCOUNT_PENDING');
     }
-    if (settings['registration.requireEmailVerification'] && !user.emailVerifiedAt && user.role !== 'ADMIN') {
+    if (verificationRequired(settings) && !user.emailVerifiedAt && user.role !== 'ADMIN') {
       throw forbidden('Please verify your e-mail address before signing in.', 'EMAIL_NOT_VERIFIED');
     }
 
@@ -250,7 +256,7 @@ authRouter.post('/register', authLimiter, validate({ body: registerSchema }), as
     if (taken) throw fieldErrors({ studentNumber: 'This student number is already registered.' });
   }
 
-  const needsVerification = settings['registration.requireEmailVerification'];
+  const needsVerification = verificationRequired(settings);
   const user = await prisma.user.create({
     data: {
       email: body.email,
@@ -294,6 +300,7 @@ authRouter.post('/verify-email', authLimiter, validate({ body: z.object({ token:
 });
 
 authRouter.post('/resend-verification', authLimiter, validate({ body: z.object({ email: zEmail }) }), async (req, res) => {
+  if (!mailAvailable()) throw conflict('This site does not send e-mail, and it does not ask for your address to be verified. You can sign in.', 'EMAIL_NOT_AVAILABLE');
   const user = await prisma.user.findUnique({ where: { email: req.valid.body.email } });
   if (user && !user.emailVerifiedAt && !user.anonymizedAt) await sendVerificationEmail(user);
   // Same answer whether or not the address exists.
@@ -302,6 +309,8 @@ authRouter.post('/resend-verification', authLimiter, validate({ body: z.object({
 
 // ── Password reset ────────────────────────────────────────────────────────────
 authRouter.post('/forgot-password', authLimiter, validate({ body: z.object({ email: zEmail }) }), async (req, res) => {
+  // Says nothing about the address: the answer is the same for every one of them.
+  if (!mailAvailable()) throw conflict(NO_EMAIL, 'EMAIL_NOT_AVAILABLE');
   const user = await prisma.user.findUnique({ where: { email: req.valid.body.email } });
   if (user && !user.anonymizedAt && user.status !== 'DEACTIVATED' && !(user.isDemo && !env.demoAccountsEnabled)) {
     const token = await issueAuthToken(user.id, 'PASSWORD_RESET');

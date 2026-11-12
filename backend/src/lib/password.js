@@ -77,6 +77,7 @@ export function passwordPolicyError(password, { email, firstName, lastName } = {
   const personal = [email?.split('@')[0], firstName, lastName]
     .filter((s) => typeof s === 'string' && s.length >= 4)
     .map((s) => s.toLowerCase());
-  if (personal.some((s) => lower.includes(s))) return 'A password should not contain your name or e-mail address.';
+  const found = personal.find((s) => lower.includes(s));
+  if (found) return `A password should not contain your name or e-mail address: leave out “${found}”.`;
   return null;
 }

@@ -63,7 +63,7 @@ function StudentView({ quiz }) {
             {quiz.start.ok ? (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 text-sm text-soft">
-                  {resume ? <p className="font-semibold text-warn">You have an attempt in progress. The timer is still running.</p>
+                  {resume ? <p className="font-semibold text-warn">You have an attempt in progress.{quiz.timeLimitMinutes ? ' The timer is still running.' : ' Your answers so far are saved.'}</p>
                     : <p><span className="font-semibold text-ink">{attemptsLeft === 1 ? 'You have one attempt.' : `You have ${attemptsLeft} attempts left.`}</span>{quiz.timeLimitMinutes ? ` Once you start, you have ${quiz.timeLimitMinutes} minutes and the timer cannot be paused.` : ''}</p>}
                   <p className="mt-0.5 text-[13px] text-faint">Your answers are saved as you go. If your connection drops, reopen this page to continue.</p>
                 </div>

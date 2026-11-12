@@ -7,8 +7,13 @@ import { BrowserRouter } from 'react-router';
 import App from './App.jsx';
 import { AuthProvider } from './auth/AuthContext.jsx';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
-import { Toaster } from './components/toast.jsx';
+import { toast, Toaster } from './components/toast.jsx';
+import { onPhotosReduced } from './lib/api.js';
+import { describeReduction } from './lib/photos.js';
 import { queryClient } from './lib/query.js';
+
+// A person whose photo was made smaller on the way out is told so, with the sizes.
+onPhotosReduced((reduced) => toast.info(describeReduction(reduced), { duration: 7000 }));
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
