@@ -8,7 +8,9 @@
 //
 // What it reproduces: the route table Vercel generated from vercel.json (headers, rewrites, the
 // single-page fallback), static files, the function running from only the files that were traced
-// into it, from a read-only folder, loaded with require(), and the 4.5 MB limit on request bodies.
+// into it, from a read-only folder, the 4.5 MB limit on request bodies, and Vercel's refusal to
+// require() an ES module unless NODE_OPTIONS=--experimental-require-module is set (pass it to
+// this script as it is set in the Vercel project).
 // What it cannot reproduce: the rest of Vercel's own launcher, instances being frozen between
 // requests (the function simply keeps running here, so waitUntil always "works"), and several
 // instances at once. It is a test tool, not a way to host the application.
@@ -16,10 +18,12 @@
 // Options (environment variables):
 //   PORT, HOST          where to listen (default 127.0.0.1:3900)
 //   VERCEL_OUTPUT       path of the build output (default .vercel/output)
-//   EMULATE_URL         "rewritten" (default): the function sees the URL a rewrite points to;
-//                       "original": it sees the URL the browser asked for, with the rewrite's
-//                       query parameters added. Vercel does not document which one applies, so
-//                       the application has to work with both.
+//   EMULATE_URL         "original" (default, and what Vercel does): the function sees the URL the
+//                       browser asked for, with the rewrite's query parameters added;
+//                       "rewritten": it sees the URL the rewrite points to. Vercel does not
+//                       document this, so the application works with both.
+//   NODE_OPTIONS        with --experimental-require-module, the function may require() ES
+//                       modules, as on Vercel when the project sets the same variable.
 //   Everything else is passed on to the function (DATABASE_URL, NODE_ENV, …).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -32,7 +36,8 @@ const output = path.resolve(process.env.VERCEL_OUTPUT ?? path.join('.vercel', 'o
 const project = path.resolve(output, '..', '..');
 const port = Number(process.env.PORT ?? 3900);
 const host = process.env.HOST ?? '127.0.0.1';
-const urlMode = process.env.EMULATE_URL === 'original' ? 'original' : 'rewritten';
+const urlMode = process.env.EMULATE_URL === 'rewritten' ? 'rewritten' : 'original';
+const requireOfEsModules = /(^|\s)--(experimental-)?require-module(\s|$)/.test(process.env.NODE_OPTIONS ?? '');
 const MAX_BODY_BYTES = 4.5 * 1024 * 1024;
 
 if (!fs.existsSync(path.join(output, 'config.json'))) {
@@ -92,9 +97,10 @@ const { pathToFileURL } = require('node:url');
 // awake until work that outlives the response has finished (waitUntil).
 globalThis[Symbol.for('@vercel/request-context')] = { get: () => ({ waitUntil: (promise) => { Promise.resolve(promise).catch(() => {}); } }) };
 (async () => {
-  // The entry point is loaded with require(): a top-level await anywhere in what the file imports
-  // statically then stops the function before its first request (see api/index.js). import() is
-  // only the fallback for a Node.js that cannot require() ES modules at all.
+  // As seen on Vercel: the entry point is loaded with require() where that works for an ES
+  // module, which is only with NODE_OPTIONS=--experimental-require-module, and with import()
+  // otherwise. Under require(), a top-level await anywhere in what the file imports statically
+  // stops the function before its first request (see api/index.js).
   let listener;
   try {
     listener = require(process.argv[2]);
@@ -124,7 +130,9 @@ globalThis[Symbol.for('@vercel/request-context')] = { get: () => ({ waitUntil: (
   for (const entry of fs.readdirSync(task, { recursive: true })) fs.chmodSync(path.join(task, entry), fs.statSync(path.join(task, entry)).isDirectory() ? 0o555 : 0o444);
 
   const functionPort = await freePort();
-  const child = spawn(process.execPath, [runner, path.join(task, meta.handler), String(functionPort), meta.shouldAddHelpers ? 'helpers' : 'no-helpers'], {
+  // Vercel's Node.js runtime refuses to require() an ES module unless NODE_OPTIONS allows it.
+  const nodeFlags = requireOfEsModules ? [] : ['--no-experimental-require-module'];
+  const child = spawn(process.execPath, [...nodeFlags, runner, path.join(task, meta.handler), String(functionPort), meta.shouldAddHelpers ? 'helpers' : 'no-helpers'], {
     cwd: task,
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     env: { ...functionEnv, VERCEL: '1', VERCEL_ENV: process.env.VERCEL_ENV ?? 'production', VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL ?? `localhost:${port}` },
@@ -256,7 +264,7 @@ function handle(req, res) {
 
 const server = http.createServer(handle);
 server.listen(port, host, () => {
-  console.log(`[vercel-local] http://localhost:${port} — ${functions.length} function(s), URL mode "${urlMode}"`);
+  console.log(`[vercel-local] http://localhost:${port} — ${functions.length} function(s), URL mode "${urlMode}", require() of ES modules ${requireOfEsModules ? 'allowed by NODE_OPTIONS' : 'refused (Vercel\'s default)'}`);
   for (const fn of functions) console.log(`[vercel-local]   ${fn.route}  ${fn.runtime}, ${fn.files} files, read-only`);
 });
 

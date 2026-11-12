@@ -1,6 +1,7 @@
 // Hosting details that are easy to break without noticing: how a database URL turns into
 // connection options, and whether vercel.json still matches what the application does.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
@@ -8,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { pgFieldsFromUrl, pgOptionsFromUrl } from '../../src/db/connection.js';
 import { isDatabaseUnavailable, isSchemaOutOfDate } from '../../src/middleware/errors.js';
+import { allowsRequireOfEsModules, findRequiredEsModules } from '../../../scripts/required-es-modules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -138,5 +140,64 @@ describe('vercel.json', () => {
     expect(config.crons).toEqual([{ path: '/api/internal/cron', schedule: expect.stringMatching(/^\d+ \d+ \* \* \*$/) }]);
     const res = await request(createApp()).get(config.crons[0].path);
     expect(res.status).not.toBe(404);
+  });
+});
+
+describe('dependencies that load an ES module with require()', () => {
+  // Vercel's Node.js runtime refuses that unless NODE_OPTIONS=--experimental-require-module is
+  // set; a function that needs it does not start. The build step stops on what this finds.
+  function install(dir, files) {
+    for (const [name, content] of Object.entries(files)) {
+      const file = path.join(dir, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, typeof content === 'string' ? content : JSON.stringify(content));
+    }
+  }
+
+  it('finds them among what a package installs for running, and nothing else', () => {
+    const app = fs.mkdtempSync(path.join(os.tmpdir(), 'required-es-modules-'));
+    try {
+      install(app, {
+        'package.json': { name: 'app', type: 'module', dependencies: { old: '*', modern: '*' }, devDependencies: { tool: '*' } },
+        // CommonJS that requires: an ES-module-only package (twice), one with a CommonJS build,
+        // a CommonJS one, and one that is not installed.
+        'node_modules/old/package.json': { name: 'old', dependencies: { modern: '*', both: '*', plain: '*' } },
+        'node_modules/old/index.js': "require('modern'); require('both'); require('plain'); require('missing'); module.exports = require('./lib/more');",
+        'node_modules/old/lib/more.js': 'const again = require("modern"); const part = require("modern/part.js");',
+        'node_modules/old/lib/imports.mjs': "import 'modern';",
+        'node_modules/modern/package.json': { name: 'modern', type: 'module', main: 'index.js' },
+        'node_modules/modern/index.js': 'export const x = 1;',
+        'node_modules/modern/part.js': 'export const y = 2;',
+        'node_modules/both/package.json': { name: 'both', type: 'module', exports: { '.': { import: './index.js', require: './index.cjs' } } },
+        'node_modules/both/index.js': 'export const z = 3;',
+        'node_modules/both/index.cjs': 'exports.z = 3;',
+        'node_modules/plain/package.json': { name: 'plain' },
+        'node_modules/plain/index.js': 'module.exports = 4;',
+        // A development tool doing the same is not part of what runs.
+        'node_modules/tool/package.json': { name: 'tool', dependencies: { modern: '*' } },
+        'node_modules/tool/index.js': "require('modern');",
+      });
+      expect(findRequiredEsModules(app)).toEqual([
+        { package: 'old', file: 'index.js', requires: 'modern' },
+        { package: 'old', file: path.join('lib', 'more.js'), requires: 'modern/part.js' },
+      ]);
+    } finally {
+      fs.rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it('recognises the setting that allows it', () => {
+    expect(allowsRequireOfEsModules('--experimental-require-module')).toBe(true);
+    expect(allowsRequireOfEsModules('--max-old-space-size=2048 --require-module')).toBe(true);
+    expect(allowsRequireOfEsModules('--no-experimental-require-module')).toBe(false);
+    expect(allowsRequireOfEsModules('')).toBe(false);
+  });
+
+  it('is documented for as long as this project needs it', () => {
+    const found = findRequiredEsModules(path.join(root, 'backend'));
+    const guide = fs.readFileSync(path.join(root, 'docs', 'DEPLOYMENT.md'), 'utf8');
+    // When this list becomes empty, NODE_OPTIONS can leave the guide and the Vercel project.
+    if (found.length > 0) expect(guide).toContain('NODE_OPTIONS=--experimental-require-module');
+    for (const entry of found) expect(guide).toContain(entry.package);
   });
 });
