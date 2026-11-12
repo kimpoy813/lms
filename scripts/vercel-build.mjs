@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { allowsRequireOfEsModules, findRequiredEsModules } from './required-es-modules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const backend = path.join(root, 'backend');
@@ -50,6 +51,24 @@ if (!fs.existsSync(path.join(frontend, 'dist', 'index.html'))) fail('The web app
 const publicUrl = process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '');
 if (publicUrl) console.log(`\n▸ Public address of the site: ${publicUrl}`);
 else console.warn('\n! The public address of the site is unknown. Set APP_URL in the project settings, or links in e-mails and QR codes will be wrong.');
+
+// Dependencies that load an ES module with require(). Node.js allows that; Vercel's Node.js
+// runtime only does when NODE_OPTIONS says so, and otherwise the function ends before its first
+// request while this build still counts as a success. Better to stop here, where the previous
+// deployment stays live and the reason can be read.
+const requiredEsModules = findRequiredEsModules(backend);
+if (requiredEsModules.length > 0) {
+  const list = requiredEsModules.map((found) => `${found.package} (${found.file}) requires ${found.requires}`).join('; ');
+  if (allowsRequireOfEsModules()) {
+    console.log(`\n▸ Loaded with require() although they are ES modules, which NODE_OPTIONS allows: ${list}.`);
+  } else if (process.env.VERCEL === '1') {
+    fail(
+      `The API would not start on Vercel: ${list}. That is an ES module, and Vercel's Node.js runtime refuses to require() one ` +
+        'unless the project has the environment variable NODE_OPTIONS=--experimental-require-module. ' +
+        'Add it for Production and Preview (Project → Settings → Environment Variables) and deploy again. See docs/DEPLOYMENT.md, "Vercel and Neon".',
+    );
+  }
+}
 
 // How far the database is from the functions. A function pays for that distance on every query,
 // and one page of the app asks for several. Only the region is read from the database's address

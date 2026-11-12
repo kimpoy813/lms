@@ -4,11 +4,18 @@
 // built web app). Nothing in this file is used when the API runs as an ordinary server
 // (backend/src/server.js). See docs/DEPLOYMENT.md, "Vercel and Neon".
 //
-// The application is not imported at the top of this file. A launcher may load the file with
-// require(), and require() refuses a module whose imports contain a top-level await anywhere;
-// and whatever else stops the application from loading would stop this file with it, leaving the
-// platform's error page and no answer. So only a helper without dependencies is imported here,
-// and the application is brought in by `load` below, where a failure can be caught and reported.
+// The application is not imported at the top of this file, for two reasons seen on Vercel:
+//
+//   - Whatever stops the application from loading would stop this file with it, and the visitor
+//     gets Vercel's error page with no reason. That is how the first deployments failed: Vercel's
+//     Node.js runtime refuses to require() an ES module unless the project sets
+//     NODE_OPTIONS=--experimental-require-module, and a dependency needs that (sanitize-html
+//     requires htmlparser2).
+//   - With that variable set, Vercel loads this file itself with require(), and require() refuses
+//     a module whose imports contain a top-level await anywhere.
+//
+// So only a helper without dependencies is imported here, and the application is brought in by
+// `load` below, where a failure is caught and reported (see createFunctionHandler).
 import { closeIdleConnectionsBeforeFreeze, createFunctionHandler, keepAliveUntil, restoreRequestUrl } from '../backend/src/lib/vercel.js';
 
 // For the start-up report: Node's synchronous loader on the stack means this file came in through require().

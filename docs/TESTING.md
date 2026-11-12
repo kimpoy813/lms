@@ -2,7 +2,7 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 310 tests in 16 files, about a minute | Nothing: starts its own PostgreSQL |
+| API and unit tests | `npm run test:backend` | 313 tests in 16 files, about a minute | Nothing: starts its own PostgreSQL |
 | Web-app unit tests | `npm run test:frontend` | 22 tests in 4 files, a few seconds | Nothing |
 | Both of the above | `npm test` | | |
 | Browser tests | `npm run test:e2e` | 27 tests, about two minutes | A Chromium browser and the demo data |
@@ -105,6 +105,7 @@ Options (environment variables):
 `vercel.json`, the build step and the function entry point can be exercised without deploying:
 
 ```bash
+export NODE_OPTIONS=--experimental-require-module   # as in the Vercel project; see below
 npx vercel build                 # asks to link a project the first time; writes .vercel/output
 DATABASE_URL=… node e2e/vercel/serve.mjs      # http://localhost:3900
 npm run smoke -- http://localhost:3900
@@ -113,18 +114,27 @@ npm run smoke -- http://localhost:3900
 `e2e/vercel/serve.mjs` is a stand-in for Vercel's network. It applies the route table Vercel
 generated from `vercel.json` (headers, rewrites, the fallback to the app page), serves the static
 files, and runs the function from a copy that contains only the files Vercel would ship, on a
-read-only disk, refusing request bodies over 4.5 MB. It loads the function with `require()`,
-which fails when anything the entry point imports statically uses a top-level `await`, and it
-reads request bodies ahead of a function that does not look like a server, as Vercel's request
-helpers do. With `NODE_ENV=development` and a database that holds the demo data, the browser
-tests run against it:
+read-only disk, refusing request bodies over 4.5 MB. Three things it copies from Vercel's
+Node.js runtime, each of which stopped or would have stopped the real site:
+
+- **`require()` of an ES module is refused** unless `NODE_OPTIONS=--experimental-require-module`
+  is set, as it must be in the Vercel project. Without it the function answers
+  `503 STARTUP_FAILED`, and `vercel build` itself stops with the explanation.
+- **With that variable, the entry point is loaded with `require()`**, which fails when anything
+  it imports statically uses a top-level `await`. Without it, with `import()`.
+- **Request bodies are read ahead of a function that does not look like a server**, as Vercel's
+  request helpers do unless `NODEJS_HELPERS=0`.
+
+With `NODE_ENV=development` and a database that holds the demo data, the browser tests run
+against it:
 
 ```bash
 E2E_BASE_URL=http://localhost:3900 E2E_NO_SERVER=1 npm run test:e2e
 ```
 
-Vercel does not say whether a function reached through a rewrite sees the original address or
-the rewritten one; `EMULATE_URL=original` and `EMULATE_URL=rewritten` (the default) cover both.
+A function reached through a rewrite is given the address the browser asked for, with the
+rewrite's query parameters added. Vercel does not document that, so the application also accepts
+the rewritten address: `EMULATE_URL=rewritten` checks that form (`original` is the default).
 
 What the stand-in cannot show: the rest of Vercel's own launcher, an instance being frozen
 between requests, several instances at once, and Neon. Those need a real deployment; there,
