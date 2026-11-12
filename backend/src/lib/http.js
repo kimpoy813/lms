@@ -57,8 +57,18 @@ export const zName = z.string().trim().min(1, 'Required').max(80);
 export const zTitle = z.string().trim().min(1, 'Required').max(200);
 export const zText = (max = 5000) => z.string().trim().max(max);
 export const zHtml = z.string().max(500_000);
-export const zDateTime = z.coerce.date();
-export const zOptionalDateTime = z.union([z.coerce.date(), z.null()]).optional();
+/**
+ * A date and time as the web app sends it: an ISO 8601 string. Deliberately not z.coerce.date():
+ * that also accepts null, false and numbers and makes 1 January 1970 of them, so a form that sent
+ * null for "no date" stored that date instead.
+ */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+export const zDateTime = z
+  .union([z.date(), z.string().trim().regex(ISO_DATE, 'Enter a valid date and time')], { error: 'Enter a valid date and time' })
+  .transform((value) => (value instanceof Date ? value : new Date(value)))
+  .refine((date) => !Number.isNaN(date.getTime()), 'Enter a valid date and time');
+/** The same where "no date" is a valid answer: null clears the date, a missing field leaves it as it is. */
+export const zOptionalDateTime = zDateTime.nullable().optional();
 export const zDateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD');
 export const zTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM');
 export const zBoolQuery = z
