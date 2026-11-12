@@ -135,11 +135,13 @@ setup, so the Vercel project needs no build settings.
 | | On Vercel |
 |---|---|
 | Uploaded files | Kept in the database (table `FileBlob`), because a function has no lasting disk. One file can be at most **4 MB**: Vercel refuses larger requests before the API sees them, so the web app checks the size first and says so. All files together are limited to 300 MB (`STORAGE_QUOTA_MB`); the administrator's **Settings** page shows how full the store is |
+| Photos | A photo from a phone is 3 to 6 MB. JPEG, PNG and WebP pictures above **1 MB** (`REDUCE_PHOTOS_OVER_MB`; `0` = never) are made smaller in the browser before they are sent: at most 2048 pixels on the long side, saved as JPEG — a 4.5 MB photo became 0.6 MB when this was tried. The person is told, and the original is not kept. Pictures more than three times as long as they are wide (a screenshot of a scrolled page) are left alone, as is anything the browser cannot read |
 | Live updates | No WebSockets. The attendance monitor and an open conversation ask again every 5 seconds, the numbers in the page header every minute. The header and dashboard timers stop after ten minutes without keyboard or mouse and catch up when the reader returns; every request counts against the monthly allowance |
 | Background jobs | No timer runs between requests. The first request after a job is due runs it (claimed in the table `JobState`, so two instances never do the same turn), and Vercel calls `/api/internal/cron` once a day. Nothing is decided by this: time limits, check-in windows and publishing times are enforced when a request is handled, whether or not a job has run. What waits for the next visitor or the daily call is the tidying up (marking absentees, closing attempts nobody opened) and the sending of notifications, reminders and their e-mail copies |
 | Rate limits | Counted per function instance, so they are looser than on one server. The lockout after failed sign-ins is kept in the database and works as usual |
 | Security headers for pages | Sent by Vercel from `vercel.json`. A test keeps them identical to what the API sends |
 | Demo accounts | Never: a function always runs in production mode |
+| E-mail | Only with the `SMTP_…` variables ([below](#optional-services)). Without them the site tells people so instead of promising a message: see [Without an e-mail server](#without-an-e-mail-server) |
 
 ### Setting it up
 
@@ -162,9 +164,13 @@ setup, so the Vercel project needs no build settings.
    (`scripts/vercel-build.mjs`) generates the database client, builds the web app, then — for
    production deployments only — creates or updates the tables and makes sure the role
    permissions, the default grading scale and the first administrator exist. If the database
-   step fails, the build fails and the previous deployment stays live.
+   step fails, the build fails and the previous deployment stays live
+   ([If a migration fails](#if-a-migration-fails)).
 5. **Check**: `https://<your-site>/readyz` answers `{"status":"ready"}`. Sign in, choose a new
-   password, then delete `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from the project.
+   password, then delete `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from the project. The new
+   password may not contain the account's name or the first part of its e-mail address; for the
+   first administrator, whose account is called "System Administrator", that rules out the words
+   "system" and "administrator". The message names the word to leave out.
 
 `npm run smoke -- https://<your-site>` checks more from your own computer ([above](#health-checks)).
 
@@ -182,6 +188,31 @@ setup, so the Vercel project needs no build settings.
 - **Sign-in answers "Please correct the highlighted fields" although both fields are filled
   in**: Vercel read the request before the application could. Check that the variable
   `NODEJS_HELPERS=0` is set for the project, and deploy again. The smoke check tests this.
+
+### If a migration fails
+
+A production build changes the tables before the new version goes live. Each migration file is
+sent to PostgreSQL as one query, which the database treats as one transaction: a migration is
+applied **completely or not at all**, so a failed one leaves the tables as they were. The build
+fails, and the site keeps running on the previous deployment.
+
+Prisma then records the migration as failed and refuses to apply anything until that is settled.
+The next build says so in plain words — the migration's name, the database's own error and what
+to do — instead of Prisma's `P3009`:
+
+1. Remove the cause. The error is in the build log; usually it is a mistake in the migration
+   file, fixed with a new commit.
+2. Add the environment variable `MIGRATE_RETRY_FAILED=<name of the migration>` for *Production*
+   and deploy again. The build marks that migration as rolled back, and it runs again.
+3. Remove the variable. Left in place it does nothing — it only acts on a migration that is
+   recorded as failed under exactly that name.
+
+`prisma migrate resolve`, the usual tool for this, needs Prisma's native engine, which the build
+on Vercel does not have. On a server of your own you can use either.
+
+Two rules for writing a migration follow from "one query, one transaction": it must not contain
+statements that PostgreSQL refuses inside a transaction (`CREATE INDEX CONCURRENTLY`, `VACUUM`;
+a test checks this), and a long data change holds its locks until the whole file is done.
 
 ### Preview deployments
 
@@ -246,19 +277,52 @@ Set these when you want the features (see `backend/.env.example` for all variabl
 
 | Feature | Variables | Notes |
 |---|---|---|
-| E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Needed for password-reset links, e-mail verification and e-mail notifications. Without it, administrators issue temporary passwords |
+| E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Needed for password-reset links, e-mail verification and e-mail notifications. See [Without an e-mail server](#without-an-e-mail-server) |
 | AI authoring | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | A daily limit per teacher is set in **Settings** |
 | Code judge | `CODE_RUNNER_PROVIDER=piston`, `CODE_RUNNER_URL`, `CODE_RUNNER_API_KEY` | Run the judge isolated from the database and the API host |
 | Map tiles | `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` | The default is OpenStreetMap's public tile server; check its usage policy or use your own provider |
 
 None of these was exercised against a real service during development.
 
+### Without an e-mail server
+
+A production site without the `SMTP_…` variables sends nothing, and says so rather than promising
+a message that would never arrive:
+
+- **Forgotten password.** The page tells the person to ask the school. An administrator opens the
+  account under **Users**, chooses *Reset password* and passes on the temporary password that is
+  shown once; it must be replaced at the next sign-in.
+- **New accounts.** Created by an administrator (singly or from a CSV file) with a temporary
+  password each, or by students themselves if self-registration is on. "E-mail a set-password
+  link" is not offered.
+- **E-mail verification** is not asked for, and nobody is kept out for an unverified address.
+  The settings *Require e-mail verification before first sign-in* and *Send e-mail
+  notifications to users who opted in* cannot be switched on.
+- **Notifications** reach people inside EduSphere only.
+- **Keep a second administrator account.** An administrator's password can only be reset by
+  another administrator. With a single one and no e-mail, a forgotten password means nobody can
+  get in to reset it; the way back is then through the database. Create the second account on
+  the first day.
+
+Nothing has to be changed when SMTP settings are added later: the pages and settings come back.
+
 ## After the first start
 
-Sign in as the administrator and, under **Settings**, set the institution's name and **time
-zone** (it decides what "today" means for attendance and due dates), the registration rules and
-the attendance limits. Then create the academic catalogue (terms, departments, courses,
-sections) and the accounts, or import accounts from a CSV file.
+Sign in as the administrator. The dashboard shows **Getting your school started**: seven steps
+in the order they depend on each other, each with a button that leads to the right page, each
+ticked by itself once the thing exists.
+
+1. Name the school — and check the **time zone** on the same page: it decides what "today"
+   means for attendance and due dates.
+2. Put your own name on the administrator account.
+3. Add the school year and its semesters, and mark the current one.
+4. Add the courses that are taught. Departments, programmes and sections can follow later.
+5. Create the teachers' accounts, or import them from a CSV file.
+6. Create the first class: a course, a semester and a teacher.
+7. Let the students in: give them the class code, enrol them, or import their accounts.
+
+The guide can be hidden and disappears when all seven are done. The registration rules and the
+attendance limits are under **Settings** too.
 
 ## Backups
 

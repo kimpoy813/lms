@@ -2,10 +2,10 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 313 tests in 16 files, about a minute | Nothing: starts its own PostgreSQL |
-| Web-app unit tests | `npm run test:frontend` | 22 tests in 4 files, a few seconds | Nothing |
+| API and unit tests | `npm run test:backend` | 338 tests in 19 files, about a minute | Nothing: starts its own PostgreSQL |
+| Web-app unit tests | `npm run test:frontend` | 31 tests in 5 files, a few seconds | Nothing |
 | Both of the above | `npm test` | | |
-| Browser tests | `npm run test:e2e` | 27 tests, about two minutes | A Chromium browser and the demo data |
+| Browser tests | `npm run test:e2e` | 33 tests, about three minutes | A Chromium browser and the demo data |
 | Lint | `npm run lint` | | |
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
 
@@ -28,6 +28,9 @@ HTTP requests to the application against a real PostgreSQL database, one file pe
 | `gradebook.test.js` | Structure, computation, overrides, publishing, locking, finalising, appeals |
 | `communication.test.js` | Direct messages, class discussions, calendar, consultations, tasks, search |
 | `dashboard.test.js` | Dashboards and analytics |
+| `forms.test.js` | Requests shaped the way the web app's forms send them, with every optional field present and empty. A date left empty is no date — it was once stored as 1 January 1970, which the other files could not notice because they leave optional fields out |
+| `first-day.test.js` | A new installation: the administrator's set-up guide, and a site without an e-mail server (what it tells people, what it refuses to promise, which settings it will not switch on) |
+| `migrations.test.js` | Migrations through the adapter production uses: a file is applied whole (a semicolon in a comment ends nothing) and completely or not at all; a failed one is found, explained and can be let through again; what the data-only migrations change |
 | `programming-ai.test.js` | Coding problems, programs inside quizzes, AI drafts and their review |
 | `serverless.test.js` | The application as it runs on a function platform: files kept in the database (whole and partial downloads, quota, clean-up), background jobs claimed by requests and by the scheduled call, work that outlives a response, the Vercel entry point |
 
@@ -63,8 +66,10 @@ Run one file with `cd backend && npx vitest run tests/api/quizzes.test.js`.
 ## Web-app unit tests
 
 `frontend/src/lib/*.test.js`: date and number formatting in the institution's time zone, the
-distance helper, CSV parsing, and the idle detection that pauses timed refreshing. Screens are
-covered by the browser tests, not by component tests.
+distance helper, CSV parsing, the idle detection that pauses timed refreshing, and the rules for
+making photos smaller (which files, to what size, what the person is told — the redrawing itself
+needs a browser and is in the browser tests). Screens are covered by the browser tests, not by
+component tests.
 
 ## Browser tests
 
@@ -79,6 +84,7 @@ Playwright drives the real web app with the demo accounts (`e2e/tests/`):
 | `smoke.spec.js` | Every main page and class tab opens for each role without errors or sideways scrolling; the sign-in page on a phone-sized screen |
 | `live.spec.js` | A new message appears in an open conversation and a check-in on the teacher's attendance monitor without reloading — pushed over a socket, or fetched on a timer when the server cannot push |
 | `documents.spec.js` | An uploaded file comes back byte for byte (whole and in part), an oversized one is refused, the gradebook and attendance export as PDF and spreadsheet, a test paper in PDF form is read into questions |
+| `first-day.spec.js` | What a new school meets first: the set-up guide ticks a step when the thing is done; replacing a temporary password leads to the dashboard, and a refused password names the word to leave out; a module and an assignment are created with every date left empty; a meeting that takes only a code opens check-in on the code; "forgot password" on a site without e-mail; a photo as a phone stores it arrives smaller and upright, a long screenshot untouched |
 
 First time:
 
@@ -89,7 +95,14 @@ npm run test:e2e
 
 The suite starts the app with `npm run dev` if it is not already running, and uses the demo
 data. Tests create what they need and remove it again, but they do write to the development
-database; run `npm run db:reset` afterwards if you want a clean demo.
+database — and an account cannot be deleted, only anonymised, so each run leaves one erased
+account in the user list. Run `npm run db:reset` afterwards if you want a clean demo.
+
+Two of the `first-day.spec.js` tests change one answer of the server on its way to the page
+(`emailEnabled`, and the size above which photos are reduced), because a development server keeps
+e-mail in its mailbox and reduces only what it would refuse. What the server itself answers in
+production without e-mail is covered by `first-day.test.js` and was looked at in a production
+build ([below](#the-vercel-build-locally)).
 
 Options (environment variables):
 
@@ -145,7 +158,9 @@ which address it passed on and whether it left request bodies alone.
 
 - A real AI provider, a real code judge, a real SMTP server and real map tiles.
 - Scanning a QR code with a camera. The browser tests check in by code and location.
-- Browsers other than Chromium; real phones.
+- Browsers other than Chromium; real phones. This includes making photos smaller: a picture
+  drawn in Chromium with a phone's orientation note was used, not a file from a camera, and
+  Safari on an iPhone was never tried. A browser that cannot redraw a picture sends it as it is.
 - Windows and macOS.
 - Load and concurrency beyond a few simultaneous requests.
 - Vercel and Neon under real use (see above for what was checked instead).

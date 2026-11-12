@@ -66,7 +66,9 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(
 export const zDateTime = z
   .union([z.date(), z.string().trim().regex(ISO_DATE, 'Enter a valid date and time')], { error: 'Enter a valid date and time' })
   .transform((value) => (value instanceof Date ? value : new Date(value)))
-  .refine((date) => !Number.isNaN(date.getTime()), 'Enter a valid date and time');
+  .refine((date) => !Number.isNaN(date.getTime()), 'Enter a valid date and time')
+  // For the API reference (scripts/generate-api-docs.js): shown as "date-time".
+  .meta({ format: 'date-time' });
 /** The same where "no date" is a valid answer: null clears the date, a missing field leaves it as it is. */
 export const zOptionalDateTime = zDateTime.nullable().optional();
 export const zDateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD');
