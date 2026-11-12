@@ -7,12 +7,16 @@
 // (REDUCE_PHOTOS_OVER_MB; nothing is touched below it), and the person is told when it happened.
 //
 // Only what a browser can both read and write is reduced: JPEG, PNG and WebP. Everything else,
-// and any picture the browser fails to decode, is sent exactly as it is.
+// and any picture the browser fails to decode, is sent exactly as it is. So is a picture more than
+// three times as long as it is wide — a long screenshot or a panorama — because fitting its long
+// side into 2048 pixels would leave the writing on it too small to read.
 
 import { formatBytes } from './format.js';
 
 /** Longest side of a reduced photo, in pixels. */
 export const MAX_EDGE = 2048;
+/** A picture whose long side is more than this many times its short side is left as it is. */
+export const MAX_ASPECT = 3;
 /** [longest side, JPEG quality] — the usual result, then one for the rare photo that is still too heavy. */
 const ATTEMPTS = [[MAX_EDGE, 0.82], [1600, 0.72]];
 const REDUCIBLE = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -26,6 +30,11 @@ export function shouldReduce(file, threshold) {
 export function fitWithin(width, height, maxEdge = MAX_EDGE) {
   const scale = Math.min(1, maxEdge / Math.max(width, height));
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+/** A long screenshot or a panorama: reduced to fit, its short side would keep too few pixels. */
+export function isElongated(width, height) {
+  return Math.max(width, height) > MAX_ASPECT * Math.min(width, height);
 }
 
 /** "IMG_2041.PNG" → "IMG_2041.jpg": a reduced photo is saved as JPEG. */
@@ -91,7 +100,7 @@ export async function reducePhoto(file, { limit = 0 } = {}) {
   try {
     const width = source.naturalWidth ?? source.width;
     const height = source.naturalHeight ?? source.height;
-    if (!width || !height) return file;
+    if (!width || !height || isElongated(width, height)) return file;
     let best = null;
     for (const [edge, quality] of ATTEMPTS) {
       const blob = await toJpeg(draw(source, fitWithin(width, height, edge)), quality);

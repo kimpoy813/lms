@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeReduction, fitWithin, jpegName, MAX_EDGE, reducePhotos, shouldReduce } from './photos.js';
+import { describeReduction, fitWithin, isElongated, jpegName, MAX_EDGE, reducePhotos, shouldReduce } from './photos.js';
 
 const MB = 1024 * 1024;
 const file = (name, type, size) => ({ name, type, size });
@@ -46,6 +46,14 @@ describe('size of a reduced photo', () => {
     expect(fitWithin(3000, 4000)).toEqual({ width: 1536, height: MAX_EDGE });
     expect(fitWithin(8000, 6000, 1600)).toEqual({ width: 1600, height: 1200 });
     expect(fitWithin(4096, 1)).toEqual({ width: MAX_EDGE, height: 1 });
+  });
+
+  it('leaves a long screenshot or a panorama alone: its writing would become too small to read', () => {
+    expect(isElongated(4000, 3000)).toBe(false); // a camera photo
+    expect(isElongated(1170, 2532)).toBe(false); // a phone screenshot
+    expect(isElongated(3000, 1000)).toBe(false); // exactly three to one
+    expect(isElongated(1170, 9200)).toBe(true); // a screenshot of a scrolled page
+    expect(isElongated(12000, 2400)).toBe(true); // a panorama
   });
 
   it('never enlarges a picture', () => {

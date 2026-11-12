@@ -74,6 +74,7 @@ test('someone who replaces a temporary password starts on the dashboard', async 
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Nueva');
     expect(new URL(page.url()).pathname).toBe('/');
   } finally {
+    // Accounts are never deleted, only anonymised: each run leaves one erased account behind.
     await admin.post(`/admin/users/${created.user.id}/anonymize`, { confirm: 'ANONYMIZE', reason: 'End-to-end test run' }).catch(() => {});
     await admin.dispose();
   }
@@ -150,21 +151,22 @@ test('where the site cannot send e-mail, “forgot password” says whom to ask'
 });
 
 /**
- * A photo as a phone stores it: 3200 × 2400 pixels lying on its side, with a note in the file
- * (EXIF orientation 6) that it is to be shown upright. The left edge of the stored picture —
- * the top, once shown upright — is red.
+ * A picture drawn in the browser, as a JPEG. It is grainy, as a camera sensor makes it: that is
+ * what makes a real photo weigh several megabytes. Its left edge is red.
+ *
+ * With `orientation: 6` the file carries the note a phone writes when it was held upright
+ * (EXIF): "show this turned a quarter clockwise". The red edge is then the top of the picture.
  */
-async function phonePhoto(page) {
-  const base64 = await page.evaluate(async () => {
+async function drawnPhoto(page, { width, height, orientation }) {
+  const base64 = await page.evaluate(async (size) => {
     const canvas = document.createElement('canvas');
-    canvas.width = 3200;
-    canvas.height = 2400;
+    canvas.width = size.width;
+    canvas.height = size.height;
     const context = canvas.getContext('2d');
     context.fillStyle = '#f4f1e8';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = '#d00000';
     context.fillRect(0, 0, 200, canvas.height);
-    // Grain, as a camera sensor produces it: it is what makes a real photo several megabytes.
     const image = context.getImageData(200, 0, canvas.width - 200, canvas.height);
     for (let i = 0; i < image.data.length; i += 4) {
       const noise = (Math.random() - 0.5) * 60;
@@ -178,13 +180,14 @@ async function phonePhoto(page) {
     let text = '';
     for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     return btoa(text);
-  });
+  }, { width, height });
   const jpeg = Buffer.from(base64, 'base64');
-  // APP1 "Exif" segment holding a single tag: Orientation (0x0112) = 6, "turn a quarter clockwise".
+  if (!orientation) return jpeg;
+  // An APP1 "Exif" segment holding a single tag: Orientation (0x0112).
   const exif = Buffer.from([
     0xff, 0xe1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
     0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08,
-    0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+    0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00,
   ]);
   return Buffer.concat([jpeg.subarray(0, 2), exif, jpeg.subarray(2)]);
@@ -196,30 +199,39 @@ test('a photo from a phone is made smaller before it is sent, and stays upright'
   // The server names the size above which photos are reduced: one megabyte where space is short,
   // the upload limit elsewhere. It is set to one megabyte here so that the test needs no 25 MB photo.
   await adjust(page, /\/api\/auth\/(login|session)/, (session) => { if (session.runtime) session.runtime.reducePhotosOverBytes = MB; });
-  let fileId;
+  const fileIds = [];
   try {
     await signIn(page, 'teacher');
     await page.goto(`/classes/${cls.id}/assignments`);
-    const photo = await phonePhoto(page);
-    expect(photo.length).toBeGreaterThan(1.5 * MB);
-
     await page.getByRole('button', { name: 'New assignment' }).first().click();
     const dialog = page.getByRole('dialog');
-    const chooser = page.waitForEvent('filechooser');
-    await dialog.getByRole('button', { name: 'Attach files' }).click();
-    await (await chooser).setFiles({ name: 'IMG_2041.jpg', mimeType: 'image/jpeg', buffer: photo });
+    /** Chooses one file in the dialog and resolves to what the server stored. */
+    const attach = async (name, buffer) => {
+      const chooser = page.waitForEvent('filechooser');
+      const upload = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/files');
+      await dialog.getByRole('button', { name: 'Attach files' }).click();
+      await (await chooser).setFiles({ name, mimeType: 'image/jpeg', buffer });
+      const [stored] = (await (await upload).json()).data;
+      fileIds.push(stored.id);
+      return stored;
+    };
+
+    // 3200 × 2400 pixels lying on its side, to be shown upright: what a phone's camera saves.
+    const photo = await drawnPhoto(page, { width: 3200, height: 2400, orientation: 6 });
+    expect(photo.length).toBeGreaterThan(1.5 * MB);
+    const stored = await attach('IMG_2041.jpg', photo);
 
     // The person is told what happened to their file.
-    await expect(page.getByRole('status').filter({ hasText: /“IMG_2041\.jpg” was made smaller before sending: [\d.]+ MB → [\d.]+ (KB|MB)\./ })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('status').filter({ hasText: /“IMG_2041\.jpg” was made smaller before sending: [\d.]+ MB → [\d.]+ (KB|MB)\./ })).toBeVisible();
     const link = dialog.getByRole('link', { name: 'IMG_2041.jpg', exact: true });
     await expect(link).toBeVisible();
     const href = await link.getAttribute('href');
-    fileId = href.split('/')[3];
+    expect(href).toContain(stored.id);
 
     // What the server keeps is a JPEG well under the original size…
-    const stored = await page.request.get(href);
-    expect(stored.headers()['content-type']).toBe('image/jpeg');
-    const bytes = await stored.body();
+    const kept = await page.request.get(href);
+    expect(kept.headers()['content-type']).toBe('image/jpeg');
+    const bytes = await kept.body();
     expect(bytes.length).toBeLessThan(photo.length / 2);
     expect(bytes.length).toBeLessThan(1.2 * MB);
     // …2048 pixels on the long side, and upright: the red edge is at the top.
@@ -239,8 +251,17 @@ test('a photo from a phone is made smaller before it is sent, and stays upright'
     const isRed = ([r, g, b]) => r > 150 && g < 80 && b < 80;
     expect(isRed(seen.top), `top pixel ${seen.top}`).toBe(true);
     expect(isRed(seen.bottom), `bottom pixel ${seen.bottom}`).toBe(false);
+
+    // A screenshot of a scrolled page is four times as long as it is wide. Fitted into 2048 pixels
+    // its writing could no longer be read, so it is sent exactly as it is.
+    const screenshot = await drawnPhoto(page, { width: 1000, height: 4000 });
+    expect(screenshot.length).toBeGreaterThan(MB);
+    const untouched = await attach('scrolled-page.jpg', screenshot);
+    expect(untouched.sizeBytes).toBe(screenshot.length);
+    await expect(dialog.getByRole('link', { name: 'scrolled-page.jpg', exact: true })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'scrolled-page.jpg' })).toHaveCount(0);
   } finally {
-    if (fileId) await teacher.raw('DELETE', `/files/${fileId}`).catch(() => {});
+    for (const id of fileIds) await teacher.raw('DELETE', `/files/${id}`).catch(() => {});
     await teacher.dispose();
   }
 });
