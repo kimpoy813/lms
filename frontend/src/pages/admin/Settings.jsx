@@ -160,7 +160,7 @@ function CodeRunnerCheck({ provider }) {
             <p className={`flex items-center gap-1.5 font-medium ${result.ok ? 'text-ok' : 'text-bad'}`}>
               {result.ok ? <CheckCircle2 className="size-4" aria-hidden="true" /> : <XCircle className="size-4" aria-hidden="true" />}
               {result.ok ? 'Programs are being checked.' : 'Programs cannot be checked right now.'}
-              {result.timings?.totalMs ? <span className="font-normal text-faint">{(result.timings.totalMs / 1000).toFixed(1)} s</span> : null}
+              {result.timings?.totalMs ? <span className="ml-auto whitespace-nowrap font-normal text-faint">{(result.timings.totalMs / 1000).toFixed(1)} s</span> : null}
             </p>
             {languages.length > 0 && (
               <ul className="mt-2 space-y-1">
