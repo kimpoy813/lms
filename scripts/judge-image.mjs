@@ -47,7 +47,7 @@ const judge = createSandboxJudge({
 });
 
 // One program per language that behaves as its input tells it to. Every line is one test.
-const PYTHON = `import os, socket, subprocess, sys, time
+const PYTHON = `import os, subprocess, sys, time
 what = sys.stdin.readline().strip()
 if what == "double":
     print(int(sys.stdin.readline()) * 2)
@@ -82,12 +82,14 @@ elif what == "snoop":
         r = subprocess.run(["sudo", "-n", "id", "-u"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
         if r.returncode == 0: found.append("SUDO " + r.stdout.strip())
     except Exception: pass
-    try:
-        socket.create_connection(("1.1.1.1", 443), timeout=3).close(); found.append("NETWORK")
-    except Exception: pass
-    try:
-        socket.getaddrinfo("example.com", 443); found.append("DNS")
-    except Exception: pass
+    # Each attempt in a process of its own with little time: a blocked network does not answer at all.
+    def works(code):
+        try:
+            return subprocess.run([sys.executable, "-c", code], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.5).returncode == 0
+        except Exception:
+            return False
+    if works('import socket; socket.create_connection(("1.1.1.1", 443), timeout=1).close()'): found.append("NETWORK")
+    if works('import socket; socket.getaddrinfo("example.com", 443)'): found.append("DNS")
     try:
         os.kill(1, 9); found.append("KILLED 1")
     except Exception: pass
@@ -112,7 +114,13 @@ using namespace std;
 int main() {
   string what; cin >> what;
   if (what == "double") { long long n; cin >> n; cout << n * 2 << "\\n"; }
-  if (what == "memory") { vector<char> block(600u * 1024 * 1024, 1); cout << block.size() << "\\n"; }
+  if (what == "memory") {
+    // Through a volatile pointer, so that the compiler cannot decide the memory is not needed.
+    size_t n = 600u * 1024 * 1024; volatile char *block = new char[n]; unsigned long sum = 0;
+    for (size_t i = 0; i < n; i += 4096) block[i] = 1;
+    for (size_t i = 0; i < n; i += 4096) sum += block[i];
+    cout << sum << "\\n";
+  }
   if (what == "sort") { vector<int> v(2000000); iota(v.begin(), v.end(), 0); reverse(v.begin(), v.end()); sort(v.begin(), v.end()); cout << v[12345] << "\\n"; }
 }
 `;
@@ -139,7 +147,7 @@ if (what === 'loop') while (true) {}
 
 /** [language, source, limits, [[input, check(run) → problem or null, label]]] */
 const SUITE = [
-  ['PYTHON', PYTHON, { timeLimitMs: 2000, memoryLimitKb: 65536 }, [
+  ['PYTHON', PYTHON, { timeLimitMs: 5000, memoryLimitKb: 65536 }, [
     ['double\n21\n', (r) => (r.exitCode === 0 && r.stdout.trim() === '42' ? null : 'wrong output'), 'runs'],
     ['loop\n', (r) => (r.timedOut ? null : 'not stopped'), 'endless loop is stopped at the time limit'],
     ['memory\n', (r) => (r.exitCode !== 0 && !r.timedOut && !/^\d+$/.test(r.stdout.trim()) ? null : 'memory was handed out'), '400 MB with a 64 MB limit is refused'],
@@ -158,7 +166,7 @@ const SUITE = [
   ['CPP', CPP, { timeLimitMs: 3000, memoryLimitKb: 131072 }, [
     ['double 21', (r) => (r.exitCode === 0 && r.stdout.trim() === '42' ? null : 'wrong output'), 'runs'],
     ['sort', (r) => (r.exitCode === 0 && r.stdout.trim() === '12345' ? null : 'wrong output'), 'sorts two million numbers in time'],
-    ['memory', (r) => (r.exitCode !== 0 && r.stdout.trim() === '' ? null : 'memory was handed out'), '600 MB with a 128 MB limit is refused'],
+    ['memory', (r) => (r.exitCode !== 0 && !/^\d+$/.test(r.stdout.trim()) ? null : 'memory was handed out'), '600 MB with a 128 MB limit is refused'],
   ]],
   ['JAVA', JAVA, { timeLimitMs: 4000, memoryLimitKb: 65536 }, [
     ['double 21', (r) => (r.exitCode === 0 && r.stdout.trim() === '42' ? null : `wrong output: ${r.stderr.slice(0, 120)}`), 'runs (class not called Main)'],

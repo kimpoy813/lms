@@ -75,6 +75,12 @@ export function vercelSandboxJudge() {
 
 const usesSandbox = () => !transport && env.codeRunner.provider === 'vercel-sandbox';
 
+/** For tests: forget what the judge remembers between requests (an image that was not ready, the last failure). */
+export function resetCodeRunner() {
+  sandboxJudge = null;
+  Object.assign(health, { lastSuccessAt: null, lastFailureAt: null, lastFailure: null });
+}
+
 export const codeRunnerConfigured = () => Boolean(transport) || env.codeRunner.configured;
 
 export function codeRunnerStatus() {

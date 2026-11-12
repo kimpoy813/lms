@@ -2,6 +2,7 @@
 // result release, analysis and export.
 import { Router } from 'express';
 import { z } from 'zod';
+import { env } from '../../config/env.js';
 import { Prisma, lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
 import { exportFormat, sendTable } from '../../lib/exporter.js';
@@ -498,6 +499,21 @@ export async function finalizeAttempt(tx, attemptId, { auto = false, now = new D
 const JUDGE_RETRY_AFTER_MS = 60_000;
 let judgeUnreachableUntil = 0;
 
+// A judge that says "busy" has too many programs at once, which is what the minute a quiz closes
+// looks like. That passes within seconds, so a closing attempt waits a little and asks again
+// before it leaves the program to the teacher.
+const BUSY_WAITS_MS = env.isTest ? [5, 5] : [2500, 5000];
+async function judgePatiently(problem, testCases, program) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await judge(problem, testCases, program);
+    } catch (err) {
+      if (err.code !== 'CODE_RUNNER_BUSY' || attempt >= BUSY_WAITS_MS.length) throw err;
+      await new Promise((resolve) => setTimeout(resolve, BUSY_WAITS_MS[attempt]));
+    }
+  }
+}
+
 /**
  * A student may hand in a quiz without pressing "Submit for checking" on a program. Before an
  * attempt is closed, a saved program that was never checked is sent to the judge, so that it is
@@ -523,7 +539,7 @@ export async function checkUncheckedPrograms(attemptId, now = Date.now()) {
       if (last && last.code === code && last.language === language) continue; // exactly this program was checked already
       const problem = await prisma.programmingProblem.findUnique({ where: { id: problemId }, include: { testCases: { orderBy: { position: 'asc' } } } });
       if (!problem || !problem.allowedLanguages.includes(language)) continue;
-      const result = await judge(problem, problem.testCases, { language, code });
+      const result = await judgePatiently(problem, problem.testCases, { language, code });
       await prisma.programmingSubmission.create({
         data: {
           problemId: problem.id, studentId: answer.attempt.studentId, studentAnswerId: answer.id, language, code,
@@ -532,7 +548,9 @@ export async function checkUncheckedPrograms(attemptId, now = Date.now()) {
       });
       checked += 1;
     } catch (err) {
-      judgeUnreachableUntil = Date.now() + JUDGE_RETRY_AFTER_MS;
+      // Still busy after waiting: the next closing attempt may try again soon. Anything else keeps
+      // the judge out of the way for a minute.
+      judgeUnreachableUntil = Date.now() + (err.code === 'CODE_RUNNER_BUSY' ? 5000 : JUDGE_RETRY_AFTER_MS);
       logger.warn({ err, attemptId, answerId: answer.id }, 'the code judge could not check a program while a quiz attempt was closing; it is left for manual grading');
       break;
     }

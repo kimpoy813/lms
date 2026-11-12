@@ -3,8 +3,9 @@
 // answer and the teacher checks it.
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, CircleSlash, Clock, EyeOff, Play, RotateCcw, Send, Terminal, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
+import { askAgainWhileBusy, runnerProblem } from '../lib/codeRunner.js';
 import { formatPercent, plural } from '../lib/format.js';
 import LazyCodeEditor from './LazyCodeEditor.jsx';
 import RichText from './RichText.jsx';
@@ -73,6 +74,12 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [waiting, setWaiting] = useState(null);
+  const shown = useRef(true);
+  useEffect(() => {
+    shown.current = true;
+    return () => { shown.current = false; };
+  }, []);
   const configured = problem.runner?.configured !== false;
   // Inside a quiz the code is part of the saved answer; in practice nothing is kept unless it is checked.
   const inQuiz = Boolean(studentAnswerId);
@@ -81,16 +88,26 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
   const call = async (kind) => {
     setBusy(kind);
     setError(null);
+    setWaiting(null);
     try {
       const body = { language, code, ...(studentAnswerId ? { studentAnswerId } : {}), ...(kind === 'custom' ? { stdin } : {}) };
-      const data = await api.post(`/programming/problems/${problem.id}/${kind === 'submit' ? 'submit' : 'run'}`, body);
+      // A busy checker is asked again by itself, a few seconds apart.
+      const data = await askAgainWhileBusy(() => api.post(`/programming/problems/${problem.id}/${kind === 'submit' ? 'submit' : 'run'}`, body), {
+        onWait: (attempt, seconds) => setWaiting(`The code checker is busy. Trying again in ${seconds} seconds…`),
+        stillWanted: () => shown.current,
+      });
+      if (!shown.current) return;
       setResult(kind === 'submit' ? { ...data, mode: 'SUBMIT' } : data);
       if (kind === 'submit') onSubmitted?.(data);
     } catch (err) {
+      if (!shown.current) return;
       setResult(null);
-      setError(err.code === 'CODE_RUNNER_UNAVAILABLE' ? `Automatic checking is not available on this server right now. ${inQuiz ? 'Your code is saved with your answer, and your teacher will mark it.' : 'Please try again later.'}` : err.fields?.language ?? err.message);
+      setError(runnerProblem(err, { inQuiz }));
     } finally {
-      setBusy(null);
+      if (shown.current) {
+        setBusy(null);
+        setWaiting(null);
+      }
     }
   };
 
@@ -121,6 +138,7 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
           <div className="mt-2 flex justify-end"><Button size="sm" variant="secondary" icon={Play} loading={busy === 'custom'} disabled={!code.trim() || !configured || Boolean(busy)} onClick={() => call('custom')}>Run</Button></div>
         </div>
       )}
+      {waiting && <p role="status" className="flex items-center gap-1.5 text-[13px] text-soft"><Clock className="size-3.5" aria-hidden="true" />{waiting}</p>}
       {error && <Alert tone="warn" title="Could not run"><CircleSlash className="mr-1 inline size-3.5" aria-hidden="true" />{error}</Alert>}
       <div aria-live="polite"><TestResults result={result} /></div>
     </div>
