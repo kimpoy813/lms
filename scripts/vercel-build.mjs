@@ -10,10 +10,16 @@
 // and production, and a branch must not change the tables the live site is using. Set
 // MIGRATE_ON_BUILD=true on a deployment whose database may be migrated regardless (for example
 // when previews get their own database branch), or MIGRATE_ON_BUILD=false to never migrate here.
+//
+// A migration that failed in an earlier build blocks every later one until it is allowed to run
+// again: MIGRATE_RETRY_FAILED=<name of the migration> does that (see scripts/failed-migrations.mjs).
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pgOptionsFromUrl } from '../backend/src/db/connection.js';
+import { failedMigrations, markForRetry, summariseLogs } from './failed-migrations.mjs';
 import { allowsRequireOfEsModules, findRequiredEsModules } from './required-es-modules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -102,6 +108,39 @@ if (nearestRegion) {
   }
 }
 
+/**
+ * Stops with an explanation when the database records a failed migration — Prisma would only
+ * answer "P3009" — unless MIGRATE_RETRY_FAILED names it, in which case it is allowed to run again.
+ */
+async function settleFailedMigrations(databaseUrl) {
+  // node-postgres belongs to the API; resolve it from there, wherever npm put it.
+  const pg = createRequire(path.join(backend, 'package.json'))('pg');
+  const client = new pg.Client({ ...pgOptionsFromUrl(databaseUrl), connectionTimeoutMillis: 20_000 });
+  try {
+    await client.connect();
+  } catch {
+    return; // Unreachable or misconfigured: the migration step that follows reports it properly.
+  }
+  try {
+    const retry = process.env.MIGRATE_RETRY_FAILED?.trim();
+    for (const failed of await failedMigrations(client)) {
+      if (retry === failed.name) {
+        await markForRetry(client, failed.name);
+        console.log(`\n▸ MIGRATE_RETRY_FAILED: the migration ${failed.name}, which failed earlier, will run again. Remove the variable once this build has succeeded.`);
+        continue;
+      }
+      fail(
+        `The database records the migration ${failed.name} as failed (started ${new Date(failed.startedAt).toISOString()}): ${summariseLogs(failed.logs) || 'no details were kept'}.\n` +
+          '  Nothing newer is applied until that is settled. Each migration runs as one transaction, so a failed one left nothing behind: once its cause is gone it can simply run again.\n' +
+          `  To allow that, add the environment variable MIGRATE_RETRY_FAILED=${failed.name} for Production (Project → Settings → Environment Variables), deploy again, and remove the variable afterwards.\n` +
+          '  The site keeps running on the previous deployment meanwhile. See docs/DEPLOYMENT.md, "If a migration fails".',
+      );
+    }
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 const target = process.env.VERCEL_ENV ?? 'local';
 const override = process.env.MIGRATE_ON_BUILD?.trim().toLowerCase();
 const migrate = override ? override === 'true' || override === '1' : target === 'production';
@@ -114,6 +153,7 @@ if (!migrate) {
   if (!databaseUrl) {
     fail('No database is connected. Add a PostgreSQL database to the Vercel project (it must provide DATABASE_URL) and deploy again.');
   }
+  await settleFailedMigrations(databaseUrl);
   // NODE_ENV is set here on purpose: outside production the seed would load the demo school.
   const env = { ...prismaEnv, DATABASE_URL: databaseUrl, NODE_ENV: 'production' };
   run('Creating or updating the database tables', [prisma, 'migrate', 'deploy'], { cwd: backend, env });

@@ -46,10 +46,39 @@ function patchPgClient() {
   };
 }
 
+/**
+ * Applies a migration file as one query.
+ *
+ * @prisma/adapter-pg 6.19 cuts the file at every semicolon — inside comments and quoted text as
+ * well — and runs the pieces one after the other. A semicolon in a comment is then enough to stop
+ * a migration half-way: what ran before stays, Prisma records the migration as failed, and every
+ * later deployment refuses to migrate until that record is repaired by hand.
+ *
+ * Sent whole, the file is read by PostgreSQL itself and runs as a single transaction: a migration
+ * applies completely or not at all. Prisma's native engine does the same. (As there, a statement
+ * that cannot run inside a transaction — CREATE INDEX CONCURRENTLY, for one — has to be the only
+ * statement of its migration.)
+ */
+function applyScriptsWhole(connection) {
+  connection.executeScript = async function executeScript(script) {
+    try {
+      await this.client.query(script);
+    } catch (error) {
+      this.onError(error);
+    }
+  };
+  return connection;
+}
+
 export function createMigrationAdapter(databaseUrl) {
   patchPgClient();
   // Discrete parameters (not `connectionString`) so the adapter can swap the database name when
   // it needs a temporary shadow database. TLS follows the same rule as the application
   // (src/db/connection.js): `sslmode=require` encrypts and verifies the server certificate.
-  return new PrismaPg({ ...pgFieldsFromUrl(databaseUrl), allowExitOnIdle: true });
+  const factory = new PrismaPg({ ...pgFieldsFromUrl(databaseUrl), allowExitOnIdle: true });
+  for (const method of ['connect', 'connectToShadowDb']) {
+    const original = factory[method].bind(factory);
+    factory[method] = async (...args) => applyScriptsWhole(await original(...args));
+  }
+  return factory;
 }
