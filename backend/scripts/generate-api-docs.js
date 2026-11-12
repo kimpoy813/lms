@@ -54,6 +54,7 @@ const TITLES = {
 
 function typeOf(schema) {
   if (!schema || typeof schema !== 'object') return 'any';
+  if (schema.format === 'date-time') return 'date-time';
   if (schema.enum) return schema.enum.map((v) => JSON.stringify(v)).join(' \\| ');
   if (schema.const !== undefined) return JSON.stringify(schema.const);
   if (schema.anyOf) return [...new Set(schema.anyOf.map(typeOf))].join(' \\| ');
@@ -149,7 +150,7 @@ const lines = [
   '- **Access** — "signed in" endpoints still check membership: a class you do not belong to answers `404`, an action your role may not perform answers `403`. Role names in the tables are the roles allowed to call the endpoint at all.',
   '- **Pagination** — `?page=1&pageSize=20`; the response carries `meta: { page, pageSize, total, totalPages }`.',
   '- **Exports** — `?format=csv|xlsx|pdf` where an export endpoint exists.',
-  '- **Dates** — ISO 8601 in UTC. Calendar days and class times follow the institution time zone (setting `institution.timezone`, default `Asia/Manila`).',
+  '- **Dates** — ISO 8601 in UTC. Calendar days and class times follow the institution time zone (setting `institution.timezone`, default `Asia/Manila`). A field of type `date-time` takes ISO 8601 text such as `2026-11-12T09:00:00+08:00`; where it may be `null`, sending `null` means "no date" and leaving the field out of a `PATCH` keeps what is stored. Anything else is refused.',
   '- **Real time** — Socket.IO at `/socket.io`, authenticated by the same cookie. Events: `notification:new`, `message:new`, `message:read`, `message:deleted`, `attendance:update` (room `attendance:<sessionId>`, teachers only). A server that cannot push says so in the session (`runtime.realtime: false`); clients then ask again on a timer.',
   '',
   'In the tables, `name?` marks an optional field and `= value` a default.',

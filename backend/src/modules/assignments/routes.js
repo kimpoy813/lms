@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Prisma, lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
 import { safeFilename, sendBuffer } from '../../lib/exporter.js';
-import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
+import { created, fullName, idParams, noContent, ok, patchOf, round, zDateTime, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { escapeHtml, excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
@@ -606,7 +606,7 @@ assignmentsRouter.post('/:assignmentId/return', validate({ params: assignmentPar
 /** Let one student submit (again) after the deadline or after grading. */
 assignmentsRouter.post(
   '/:assignmentId/submissions/:studentId/reopen',
-  validate({ params: idParams('assignmentId', 'studentId'), body: z.object({ until: z.coerce.date(), note: z.string().trim().max(500).optional() }) }),
+  validate({ params: idParams('assignmentId', 'studentId'), body: z.object({ until: zDateTime, note: z.string().trim().max(500).optional() }) }),
   async (req, res) => {
     const { assignment, cls } = await loadManaged(req);
     const { studentId } = req.valid.params;

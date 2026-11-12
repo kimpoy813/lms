@@ -10,7 +10,7 @@ import { randomToken } from '../../lib/tokens.js';
 import { requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
-import { mailConfigured } from '../../services/mail.js';
+import { mailAvailable, mailConfigured } from '../../services/mail.js';
 import { notify } from '../../services/notifications.js';
 import { disconnectUser } from '../../services/realtime.js';
 import { sendInviteEmail } from '../auth/routes.js';
@@ -401,13 +401,15 @@ adminUsersRouter.post('/:userId/reset-password', validate({ params: idParams('us
 
 adminUsersRouter.post('/:userId/send-invite', validate({ params: idParams('userId') }), async (req, res) => {
   const target = await loadTarget(req);
+  // Nothing is created or logged as "sent" when no message can leave this server.
+  if (!mailAvailable()) throw conflict('This server cannot send e-mail, so a link cannot be sent. Use “Reset password” to give the user a temporary password instead.', 'EMAIL_NOT_AVAILABLE');
   await sendInviteEmail(target, fullName(req.user));
   await audit(req, { action: 'user.invite_sent', entityType: 'User', entityId: target.id, summary: `Sent a set-password link to ${fullName(target)}` });
   ok(res, {
     delivered: mailConfigured(),
     message: mailConfigured()
       ? 'A link to choose a password was e-mailed to the user.'
-      : 'E-mail is not configured on this server, so the link could not be delivered. Use "Reset password" to issue a temporary password instead.',
+      : 'The message is in the development mailbox (GET /api/dev/mailbox): this server has no SMTP settings.',
   });
 });
 

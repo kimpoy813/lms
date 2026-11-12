@@ -124,9 +124,9 @@ function OneTimePassword({ password, name }) {
 }
 
 function UserDialog({ userId, onClose }) {
-  const { user: me } = useAuth();
+  const { user: me, runtime } = useAuth();
   const query = useQuery({ queryKey: ['admin', 'users', userId], queryFn: () => api.get(`/admin/users/${userId}`), retry: false });
-  const [step, setStep] = useState(null); // 'edit' | 'suspend' | 'deactivate' | 'anonymize'
+  const [step, setStep] = useState(null); // 'edit' | 'reset' | 'suspend' | 'deactivate' | 'anonymize'
   const [temp, setTemp] = useState(null);
   const [reason, setReason] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -163,7 +163,7 @@ function UserDialog({ userId, onClose }) {
           {isLocked(u) && <Alert tone="warn" title="Locked after too many wrong passwords" action={<Button size="sm" variant="secondary" icon={Unlock} loading={busy('unlock')} onClick={() => act.mutate({ path: 'unlock', done: 'The account was unlocked.' })}>Unlock now</Button>}>Unlocks by itself {relativeTime(u.lockedUntil)}.</Alert>}
 
           <DescriptionList items={[
-            ['E-mail', <span key="e">{u.email}{u.emailVerified ? '' : <span className="font-normal text-faint"> · not verified</span>}</span>],
+            ['E-mail', <span key="e">{u.email}{u.emailVerified || !runtime.email ? '' : <span className="font-normal text-faint"> · not verified</span>}</span>],
             u.phone && ['Mobile', u.phone],
             u.studentProfile && ['Student number', u.studentProfile.studentNumber],
             u.studentProfile && ['Program', u.studentProfile.program ? `${u.studentProfile.program.code} — ${u.studentProfile.program.name}` : null],
@@ -185,6 +185,13 @@ function UserDialog({ userId, onClose }) {
             </div>
           )}
 
+          {step === 'reset' && (
+            <div className="rounded-xl border border-warn/40 p-4">
+              <p className="text-sm font-semibold text-ink">Replace the password of {u.name}?</p>
+              <p className="mt-1 text-sm text-soft">The password they use now stops working at once and they are signed out on every device. You get a temporary password to hand over, and they choose their own when they sign in with it.</p>
+              <div className="mt-3 flex justify-end gap-2"><Button variant="secondary" onClick={() => setStep(null)}>Cancel</Button><Button icon={KeyRound} loading={busy('reset-password')} onClick={() => act.mutate({ path: 'reset-password' })}>Replace the password</Button></div>
+            </div>
+          )}
           {step === 'suspend' && (
             <div className="rounded-xl border border-bad/40 p-4">
               <Field label="Reason for suspending this account" hint="Recorded in the audit log. The user is signed out everywhere and cannot sign in."><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} data-autofocus /></Field>
@@ -206,8 +213,8 @@ function UserDialog({ userId, onClose }) {
           {!u.anonymizedAt && !step && (
             <div className="flex flex-wrap gap-2 border-t border-line pt-4">
               <Button variant="secondary" icon={Pencil} onClick={() => setStep('edit')}>Edit details</Button>
-              <Button variant="secondary" icon={KeyRound} loading={busy('reset-password')} disabled={self} title={self ? 'Change your own password from your profile' : undefined} onClick={() => act.mutate({ path: 'reset-password' })}>Reset password</Button>
-              <Button variant="secondary" icon={Mail} loading={busy('send-invite')} onClick={() => act.mutate({ path: 'send-invite' })}>E-mail a set-password link</Button>
+              <Button variant="secondary" icon={KeyRound} disabled={self} title={self ? 'Change your own password from your profile' : undefined} onClick={() => { setTemp(null); setStep('reset'); }}>Reset password</Button>
+              {runtime.email && <Button variant="secondary" icon={Mail} loading={busy('send-invite')} onClick={() => act.mutate({ path: 'send-invite' })}>E-mail a set-password link</Button>}
               <Menu align="left" trigger={({ toggle, props }) => <Button variant="secondary" icon={MoreHorizontal} onClick={toggle} {...props}>More</Button>}>
                 {(u.status === 'SUSPENDED' || u.status === 'DEACTIVATED') && <MenuItem icon={RotateCcw} onClick={() => act.mutate({ path: 'reactivate', done: 'The account is active again.' })}>Reactivate</MenuItem>}
                 {u.status !== 'SUSPENDED' && u.status !== 'DEACTIVATED' && !self && <MenuItem icon={Ban} tone="danger" onClick={() => setStep('suspend')}>Suspend…</MenuItem>}
@@ -362,7 +369,7 @@ function ImportDialog({ onClose }) {
             <Textarea rows={7} value={text} onChange={(e) => setText(e.target.value)} className="font-mono text-[13px]" spellCheck={false} placeholder={TEMPLATE} />
           </Field>
           {parsed?.problems.length > 0 && <Alert tone="bad" title="Fix these before importing"><ul className="list-disc pl-5">{parsed.problems.map((p) => <li key={p}>{p}</li>)}</ul></Alert>}
-          {parsed && parsed.problems.length === 0 && <Alert tone="info">{plural(parsed.rows.length, 'account')} will be created: {parsed.rows.filter((r) => r.role === 'STUDENT').length} students and {parsed.rows.filter((r) => r.role === 'TEACHER').length} teachers. Rows with a problem (for example an e-mail that is already used) are skipped and reported.</Alert>}
+          {parsed && parsed.problems.length === 0 && <Alert tone="info">{plural(parsed.rows.length, 'account')} will be created: {plural(parsed.rows.filter((r) => r.role === 'STUDENT').length, 'student')} and {plural(parsed.rows.filter((r) => r.role === 'TEACHER').length, 'teacher')}. Rows with a problem (for example an e-mail that is already used) are skipped and reported.</Alert>}
         </div>
       )}
     </Modal>

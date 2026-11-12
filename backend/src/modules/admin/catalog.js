@@ -142,7 +142,7 @@ const yearFields = { name: name(40), startDate: zDateKey, endDate: zDateKey, isC
 const serializeSemester = (s) => ({
   id: s.id, name: s.name, academicYearId: s.academicYearId, academicYear: s.academicYear ? { id: s.academicYear.id, name: s.academicYear.name } : undefined,
   startDate: dbToDateKey(s.startDate), endDate: dbToDateKey(s.endDate), isCurrent: s.isCurrent, classCount: s._count?.classes,
-  label: s.academicYear ? `${s.name}, AY ${s.academicYear.name}` : s.name,
+  label: s.academicYear ? `${s.name}, ${s.academicYear.name}` : s.name,
 });
 const academicYears = crud({
   model: 'academicYear', label: 'Academic year', searchFields: ['name'],

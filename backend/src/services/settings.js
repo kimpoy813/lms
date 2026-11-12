@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { isValidTimeZone } from '../lib/time.js';
 import { fieldErrors } from '../lib/errors.js';
+import { mailAvailable } from './mail.js';
 
 const int = (min, max) => z.number().int().min(min).max(max);
 
@@ -134,7 +135,15 @@ export async function updateSettings(updates, userId) {
     if (!parsed.success) errors[key] = parsed.error.issues[0]?.message ?? 'Invalid value';
     else clean[key] = parsed.data;
   }
-  const next = { ...(await getSettings()), ...clean };
+  const current = await getSettings();
+  const next = { ...current, ...clean };
+  // Switching these on without e-mail would promise messages that never arrive; the first one
+  // would also keep every new student out. (Leaving one on that already is on stays possible.)
+  if (!mailAvailable()) {
+    for (const key of ['registration.requireEmailVerification', 'email.notificationsEnabled']) {
+      if (clean[key] === true && current[key] !== true) errors[key] = 'This server cannot send e-mail yet. Set up SMTP first (see the deployment guide).';
+    }
+  }
   if (next['attendance.minRadiusMeters'] > next['attendance.maxRadiusMeters']) {
     errors['attendance.minRadiusMeters'] = 'The smallest radius cannot exceed the largest radius.';
   }

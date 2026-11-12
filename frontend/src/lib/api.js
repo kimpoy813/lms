@@ -5,6 +5,7 @@
 // • Errors: thrown as ApiError with the server's message, code and per-field messages.
 
 import { formatLimit } from './format.js';
+import { reducePhotos } from './photos.js';
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -20,7 +21,8 @@ export class ApiError extends Error {
 
 let csrfToken = null;
 let uploadLimit = null;
-const listeners = { unauthorized: null, passwordChange: null };
+let photoThreshold = 0;
+const listeners = { unauthorized: null, passwordChange: null, photosReduced: null };
 
 export const setCsrfToken = (token) => {
   csrfToken = token ?? null;
@@ -28,6 +30,14 @@ export const setCsrfToken = (token) => {
 /** The largest single file the server accepts, in bytes (it says so when the session starts). */
 export const setUploadLimit = (bytes) => {
   uploadLimit = bytes > 0 ? bytes : null;
+};
+/** Photos above this many bytes are made smaller before they are sent (0 = never); see lib/photos.js. */
+export const setPhotoReduction = (bytes) => {
+  photoThreshold = bytes > 0 ? bytes : 0;
+};
+/** Called with [{ name, from, to }] whenever photos were made smaller on the way out. */
+export const onPhotosReduced = (fn) => {
+  listeners.photosReduced = fn;
 };
 /** The auth layer registers what should happen when the session ends or a password change is required. */
 export const onAuthEvent = (name, fn) => {
@@ -116,16 +126,20 @@ export const api = {
   /**
    * Upload files; resolves to [{ id, name, mimeType, sizeBytes }].
    *
+   * Photos above the size the server names are first made smaller, here in the browser: a phone
+   * photo is often larger than a host accepts in one request.
+   *
    * Each file travels in its own request: some hosts cap the size of a request, and several
    * files in one would add up. A file over the server's limit is refused here, before any bytes
    * are sent — a host that enforces the cap answers with an error page, not a useful message.
    * If a later file fails, the error carries the ones already stored as `err.saved`.
    */
   async upload(files, path = '/files', field = 'files') {
-    const list = [...files];
+    const { files: list, reduced } = await reducePhotos([...files], { threshold: photoThreshold, limit: uploadLimit ?? 0 });
+    if (reduced.length > 0) listeners.photosReduced?.(reduced);
     const tooLarge = uploadLimit ? list.find((file) => file.size > uploadLimit) : null;
     if (tooLarge) {
-      throw new ApiError(413, 'FILE_TOO_LARGE', `“${tooLarge.name}” is larger than ${formatLimit(uploadLimit)}, the most this site accepts for one file.`);
+      throw new ApiError(413, 'FILE_TOO_LARGE', `“${tooLarge.name}” is larger than ${formatLimit(uploadLimit)}, the most this site accepts for one file. A larger file can be shared as a link instead, for example from Google Drive or OneDrive.`);
     }
     const saved = [];
     for (const file of list) {

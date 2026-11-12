@@ -15,7 +15,7 @@ One more endpoint is for the host, not for the web app: `GET /api/internal/cron`
 - **Access** — "signed in" endpoints still check membership: a class you do not belong to answers `404`, an action your role may not perform answers `403`. Role names in the tables are the roles allowed to call the endpoint at all.
 - **Pagination** — `?page=1&pageSize=20`; the response carries `meta: { page, pageSize, total, totalPages }`.
 - **Exports** — `?format=csv|xlsx|pdf` where an export endpoint exists.
-- **Dates** — ISO 8601 in UTC. Calendar days and class times follow the institution time zone (setting `institution.timezone`, default `Asia/Manila`).
+- **Dates** — ISO 8601 in UTC. Calendar days and class times follow the institution time zone (setting `institution.timezone`, default `Asia/Manila`). A field of type `date-time` takes ISO 8601 text such as `2026-11-12T09:00:00+08:00`; where it may be `null`, sending `null` means "no date" and leaving the field out of a `PATCH` keeps what is stored. Anything else is refused.
 - **Real time** — Socket.IO at `/socket.io`, authenticated by the same cookie. Events: `notification:new`, `message:new`, `message:read`, `message:deleted`, `attendance:update` (room `attendance:<sessionId>`, teachers only). A server that cannot push says so in the session (`runtime.realtime: false`); clients then ask again on a timer.
 
 In the tables, `name?` marks an optional field and `= value` a default.
@@ -134,8 +134,8 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | GET | `/api/admin/status` | admin |  |  |
 | GET | `/api/admin/permissions` | admin |  |  |
 | PUT | `/api/admin/permissions` | admin |  | `role`: "TEACHER" \| "STUDENT"<br>`key`: string<br>`granted`: boolean |
-| GET | `/api/admin/audit-logs` | admin | `search?`: string<br>`action?`: string<br>`entityType?`: string<br>`actorId?`: string<br>`classId?`: string<br>`from?`: any<br>`to?`: any<br>`page?`: integer = 1<br>`pageSize?`: integer = 20 |  |
-| GET | `/api/admin/audit-logs/export` | admin | `search?`: string<br>`action?`: string<br>`entityType?`: string<br>`actorId?`: string<br>`classId?`: string<br>`from?`: any<br>`to?`: any<br>`page?`: integer = 1<br>`pageSize?`: integer = 20 |  |
+| GET | `/api/admin/audit-logs` | admin | `search?`: string<br>`action?`: string<br>`entityType?`: string<br>`actorId?`: string<br>`classId?`: string<br>`from?`: date-time<br>`to?`: date-time<br>`page?`: integer = 1<br>`pageSize?`: integer = 20 |  |
+| GET | `/api/admin/audit-logs/export` | admin | `search?`: string<br>`action?`: string<br>`entityType?`: string<br>`actorId?`: string<br>`classId?`: string<br>`from?`: date-time<br>`to?`: date-time<br>`page?`: integer = 1<br>`pageSize?`: integer = 20 |  |
 | POST | `/api/admin/enrollments` | admin |  | `classId`: string<br>`studentId`: string |
 | POST | `/api/admin/enrollments/transfer` | admin |  | `studentId`: string<br>`fromClassId`: string<br>`toClassId`: string<br>`note?`: string |
 | GET | `/api/admin/students` | admin | `search?`: string<br>`page?`: integer = 1<br>`pageSize?`: integer = 20 |  |
@@ -177,9 +177,9 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/announcements` | signed in | `classId?`: string<br>`page?`: integer = 1<br>`pageSize?`: integer = 20 |  |
-| POST | `/api/announcements` | teacher, admin |  | `classId?`: string \| null<br>`title`: string<br>`contentHtml`: string<br>`priority?`: "LOW" \| "NORMAL" \| "HIGH" \| "URGENT" = "NORMAL"<br>`audience?`: "CLASS" \| "SELECTED" = "CLASS"<br>`recipientIds?`: string[]<br>`isPinned?`: boolean = false<br>`allowComments?`: boolean = false<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "PUBLISHED"<br>`publishAt?`: any \| null<br>`fileIds?`: string[] |
+| POST | `/api/announcements` | teacher, admin |  | `classId?`: string \| null<br>`title`: string<br>`contentHtml`: string<br>`priority?`: "LOW" \| "NORMAL" \| "HIGH" \| "URGENT" = "NORMAL"<br>`audience?`: "CLASS" \| "SELECTED" = "CLASS"<br>`recipientIds?`: string[]<br>`isPinned?`: boolean = false<br>`allowComments?`: boolean = false<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "PUBLISHED"<br>`publishAt?`: date-time \| null<br>`fileIds?`: string[] |
 | GET | `/api/announcements/:announcementId` | signed in |  |  |
-| PATCH | `/api/announcements/:announcementId` | signed in |  | `title?`: string<br>`contentHtml?`: string<br>`priority?`: "LOW" \| "NORMAL" \| "HIGH" \| "URGENT"<br>`audience?`: "CLASS" \| "SELECTED"<br>`recipientIds?`: string[]<br>`isPinned?`: boolean<br>`allowComments?`: boolean<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: any \| null<br>`fileIds?`: string[] |
+| PATCH | `/api/announcements/:announcementId` | signed in |  | `title?`: string<br>`contentHtml?`: string<br>`priority?`: "LOW" \| "NORMAL" \| "HIGH" \| "URGENT"<br>`audience?`: "CLASS" \| "SELECTED"<br>`recipientIds?`: string[]<br>`isPinned?`: boolean<br>`allowComments?`: boolean<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: date-time \| null<br>`fileIds?`: string[] |
 | DELETE | `/api/announcements/:announcementId` | signed in |  |  |
 | POST | `/api/announcements/:announcementId/comments` | signed in |  | `body`: string |
 | DELETE | `/api/announcements/:announcementId/comments/:commentId` | signed in |  |  |
@@ -207,8 +207,8 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | PUT | `/api/classes/:classId/gradebook/structure` | signed in |  | `periods`: { id, name, weight, categories }[] |
 | POST | `/api/classes/:classId/gradebook/structure/template` | signed in |  | `key`: string |
 | PATCH | `/api/classes/:classId/gradebook/settings` | signed in |  | `gradingScaleId?`: string \| null<br>`transmutationBase?`: integer<br>`gradeRounding?`: integer<br>`treatMissingAsZero?`: boolean<br>`attendanceLateCredit?`: number |
-| POST | `/api/classes/:classId/gradebook/items` | signed in |  | `categoryId`: string<br>`title`: string<br>`maxPoints`: number<br>`dueAt?`: any \| null |
-| PATCH | `/api/classes/:classId/gradebook/items/:itemId` | signed in |  | `categoryId?`: string<br>`title?`: string<br>`maxPoints?`: number<br>`dueAt?`: any \| null |
+| POST | `/api/classes/:classId/gradebook/items` | signed in |  | `categoryId`: string<br>`title`: string<br>`maxPoints`: number<br>`dueAt?`: date-time \| null |
+| PATCH | `/api/classes/:classId/gradebook/items/:itemId` | signed in |  | `categoryId?`: string<br>`title?`: string<br>`maxPoints?`: number<br>`dueAt?`: date-time \| null |
 | DELETE | `/api/classes/:classId/gradebook/items/:itemId` | signed in |  |  |
 | PUT | `/api/classes/:classId/gradebook/entries` | signed in |  | `entries`: { itemId, studentId, status, score, feedback }[]<br>`reason?`: string |
 | POST | `/api/classes/:classId/gradebook/overrides` | signed in |  | `studentId`: string<br>`scope`: string<br>`percent`: number<br>`reason`: string |
@@ -232,9 +232,9 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/classes/:classId/assignments` | signed in |  |  |
-| POST | `/api/classes/:classId/assignments` | signed in |  | `title`: string<br>`instructionsHtml?`: string = ""<br>`points?`: number = 100<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "DRAFT"<br>`publishAt?`: any \| null<br>`availableFrom?`: any \| null<br>`dueAt?`: any \| null<br>`closeAt?`: any \| null<br>`allowLate?`: boolean = true<br>`latePenaltyType?`: "NONE" \| "PERCENT_PER_DAY" \| "PERCENT_FLAT" = "NONE"<br>`latePenaltyValue?`: number = 0<br>`latePenaltyMax?`: number = 100<br>`allowText?`: boolean = true<br>`allowFiles?`: boolean = true<br>`maxFiles?`: integer = 5<br>`allowResubmission?`: boolean = true<br>`rubricId?`: string \| null<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null<br>`fileIds?`: string[] |
+| POST | `/api/classes/:classId/assignments` | signed in |  | `title`: string<br>`instructionsHtml?`: string = ""<br>`points?`: number = 100<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "DRAFT"<br>`publishAt?`: date-time \| null<br>`availableFrom?`: date-time \| null<br>`dueAt?`: date-time \| null<br>`closeAt?`: date-time \| null<br>`allowLate?`: boolean = true<br>`latePenaltyType?`: "NONE" \| "PERCENT_PER_DAY" \| "PERCENT_FLAT" = "NONE"<br>`latePenaltyValue?`: number = 0<br>`latePenaltyMax?`: number = 100<br>`allowText?`: boolean = true<br>`allowFiles?`: boolean = true<br>`maxFiles?`: integer = 5<br>`allowResubmission?`: boolean = true<br>`rubricId?`: string \| null<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null<br>`fileIds?`: string[] |
 | GET | `/api/assignments/:assignmentId` | signed in |  |  |
-| PATCH | `/api/assignments/:assignmentId` | signed in |  | `title?`: string<br>`instructionsHtml?`: string<br>`points?`: number<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: any \| null<br>`availableFrom?`: any \| null<br>`dueAt?`: any \| null<br>`closeAt?`: any \| null<br>`allowLate?`: boolean<br>`latePenaltyType?`: "NONE" \| "PERCENT_PER_DAY" \| "PERCENT_FLAT"<br>`latePenaltyValue?`: number<br>`latePenaltyMax?`: number<br>`allowText?`: boolean<br>`allowFiles?`: boolean<br>`maxFiles?`: integer<br>`allowResubmission?`: boolean<br>`rubricId?`: string \| null<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null<br>`fileIds?`: string[] |
+| PATCH | `/api/assignments/:assignmentId` | signed in |  | `title?`: string<br>`instructionsHtml?`: string<br>`points?`: number<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: date-time \| null<br>`availableFrom?`: date-time \| null<br>`dueAt?`: date-time \| null<br>`closeAt?`: date-time \| null<br>`allowLate?`: boolean<br>`latePenaltyType?`: "NONE" \| "PERCENT_PER_DAY" \| "PERCENT_FLAT"<br>`latePenaltyValue?`: number<br>`latePenaltyMax?`: number<br>`allowText?`: boolean<br>`allowFiles?`: boolean<br>`maxFiles?`: integer<br>`allowResubmission?`: boolean<br>`rubricId?`: string \| null<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null<br>`fileIds?`: string[] |
 | DELETE | `/api/assignments/:assignmentId` | signed in |  |  |
 | POST | `/api/assignments/:assignmentId/copy` | signed in |  | `targetClassId?`: string |
 | PUT | `/api/assignments/:assignmentId/submission` | student |  | `textContent?`: string \| null<br>`fileIds?`: string[]<br>`submit?`: boolean = false |
@@ -242,7 +242,7 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | GET | `/api/assignments/:assignmentId/submissions/:studentId` | signed in |  |  |
 | PUT | `/api/assignments/:assignmentId/submissions/:studentId/grade` | signed in |  | `score?`: number \| null<br>`rubricScores?`: object<br>`feedback?`: string \| null<br>`waivePenalty?`: boolean<br>`return?`: boolean = false |
 | POST | `/api/assignments/:assignmentId/return` | signed in |  | `studentIds?`: string[] |
-| POST | `/api/assignments/:assignmentId/submissions/:studentId/reopen` | signed in |  | `until`: any<br>`note?`: string |
+| POST | `/api/assignments/:assignmentId/submissions/:studentId/reopen` | signed in |  | `until`: date-time<br>`note?`: string |
 | GET | `/api/assignments/:assignmentId/submissions-archive` | signed in |  |  |
 
 ## Rubrics
@@ -278,9 +278,9 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/classes/:classId/quizzes` | signed in |  |  |
-| POST | `/api/classes/:classId/quizzes` | signed in |  | `title`: string<br>`instructionsHtml?`: string = ""<br>`kind?`: "QUIZ" \| "EXAM" \| "PRACTICE" = "QUIZ"<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "DRAFT"<br>`publishAt?`: any \| null<br>`availableFrom?`: any \| null<br>`availableUntil?`: any \| null<br>`timeLimitMinutes?`: integer \| null<br>`maxAttempts?`: integer = 1<br>`attemptScoring?`: "HIGHEST" \| "LATEST" \| "AVERAGE" = "HIGHEST"<br>`passingPercent?`: number \| null<br>`shuffleQuestions?`: boolean = false<br>`shuffleChoices?`: boolean = false<br>`resultVisibility?`: "IMMEDIATE" \| "AFTER_CLOSE" \| "MANUAL" \| "NEVER" = "MANUAL"<br>`answerVisibility?`: "SCORE_ONLY" \| "RESPONSES" \| "CORRECT_ANSWERS" = "SCORE_ONLY"<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null |
+| POST | `/api/classes/:classId/quizzes` | signed in |  | `title`: string<br>`instructionsHtml?`: string = ""<br>`kind?`: "QUIZ" \| "EXAM" \| "PRACTICE" = "QUIZ"<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "DRAFT"<br>`publishAt?`: date-time \| null<br>`availableFrom?`: date-time \| null<br>`availableUntil?`: date-time \| null<br>`timeLimitMinutes?`: integer \| null<br>`maxAttempts?`: integer = 1<br>`attemptScoring?`: "HIGHEST" \| "LATEST" \| "AVERAGE" = "HIGHEST"<br>`passingPercent?`: number \| null<br>`shuffleQuestions?`: boolean = false<br>`shuffleChoices?`: boolean = false<br>`resultVisibility?`: "IMMEDIATE" \| "AFTER_CLOSE" \| "MANUAL" \| "NEVER" = "MANUAL"<br>`answerVisibility?`: "SCORE_ONLY" \| "RESPONSES" \| "CORRECT_ANSWERS" = "SCORE_ONLY"<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null |
 | GET | `/api/quizzes/:quizId` | signed in |  |  |
-| PATCH | `/api/quizzes/:quizId` | signed in |  | `title?`: string<br>`instructionsHtml?`: string<br>`kind?`: "QUIZ" \| "EXAM" \| "PRACTICE"<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: any \| null<br>`availableFrom?`: any \| null<br>`availableUntil?`: any \| null<br>`timeLimitMinutes?`: integer \| null<br>`maxAttempts?`: integer<br>`attemptScoring?`: "HIGHEST" \| "LATEST" \| "AVERAGE"<br>`passingPercent?`: number \| null<br>`shuffleQuestions?`: boolean<br>`shuffleChoices?`: boolean<br>`resultVisibility?`: "IMMEDIATE" \| "AFTER_CLOSE" \| "MANUAL" \| "NEVER"<br>`answerVisibility?`: "SCORE_ONLY" \| "RESPONSES" \| "CORRECT_ANSWERS"<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null |
+| PATCH | `/api/quizzes/:quizId` | signed in |  | `title?`: string<br>`instructionsHtml?`: string<br>`kind?`: "QUIZ" \| "EXAM" \| "PRACTICE"<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: date-time \| null<br>`availableFrom?`: date-time \| null<br>`availableUntil?`: date-time \| null<br>`timeLimitMinutes?`: integer \| null<br>`maxAttempts?`: integer<br>`attemptScoring?`: "HIGHEST" \| "LATEST" \| "AVERAGE"<br>`passingPercent?`: number \| null<br>`shuffleQuestions?`: boolean<br>`shuffleChoices?`: boolean<br>`resultVisibility?`: "IMMEDIATE" \| "AFTER_CLOSE" \| "MANUAL" \| "NEVER"<br>`answerVisibility?`: "SCORE_ONLY" \| "RESPONSES" \| "CORRECT_ANSWERS"<br>`moduleId?`: string \| null<br>`categoryId?`: string \| null |
 | DELETE | `/api/quizzes/:quizId` | signed in |  |  |
 | POST | `/api/quizzes/:quizId/copy` | signed in |  | `targetClassId?`: string |
 | PUT | `/api/quizzes/:quizId/questions` | signed in |  | `items`: { questionId, points }[] |
@@ -342,9 +342,9 @@ In the tables, `name?` marks an optional field and `= value` a default.
 
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
-| GET | `/api/calendar` | signed in | `from`: any<br>`to`: any<br>`classId?`: string |  |
-| POST | `/api/calendar/events` | signed in |  | `scope?`: "INSTITUTION" \| "CLASS" \| "PERSONAL" = "PERSONAL"<br>`classId?`: string \| null<br>`type?`: "HOLIDAY" \| "INSTITUTIONAL" \| "CLASS_ACTIVITY" \| "EXAM" \| "CONSULTATION" \| "OTHER" = "OTHER"<br>`title`: string<br>`description?`: string \| null<br>`location?`: string \| null<br>`startAt`: any<br>`endAt`: any<br>`allDay?`: boolean = false |
-| PATCH | `/api/calendar/events/:eventId` | signed in |  | `type?`: "HOLIDAY" \| "INSTITUTIONAL" \| "CLASS_ACTIVITY" \| "EXAM" \| "CONSULTATION" \| "OTHER"<br>`title?`: string<br>`description?`: string \| null<br>`location?`: string \| null<br>`startAt?`: any<br>`endAt?`: any<br>`allDay?`: boolean |
+| GET | `/api/calendar` | signed in | `from`: date-time<br>`to`: date-time<br>`classId?`: string |  |
+| POST | `/api/calendar/events` | signed in |  | `scope?`: "INSTITUTION" \| "CLASS" \| "PERSONAL" = "PERSONAL"<br>`classId?`: string \| null<br>`type?`: "HOLIDAY" \| "INSTITUTIONAL" \| "CLASS_ACTIVITY" \| "EXAM" \| "CONSULTATION" \| "OTHER" = "OTHER"<br>`title`: string<br>`description?`: string \| null<br>`location?`: string \| null<br>`startAt`: date-time<br>`endAt`: date-time<br>`allDay?`: boolean = false |
+| PATCH | `/api/calendar/events/:eventId` | signed in |  | `type?`: "HOLIDAY" \| "INSTITUTIONAL" \| "CLASS_ACTIVITY" \| "EXAM" \| "CONSULTATION" \| "OTHER"<br>`title?`: string<br>`description?`: string \| null<br>`location?`: string \| null<br>`startAt?`: date-time<br>`endAt?`: date-time<br>`allDay?`: boolean |
 | DELETE | `/api/calendar/events/:eventId` | signed in |  |  |
 
 ## Consultations
@@ -352,7 +352,7 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/consultations/slots` | signed in | `includePast?`: "true" \| "false" = "false" |  |
-| POST | `/api/consultations/slots` | teacher |  | `startAt`: any<br>`endAt`: any<br>`location?`: string \| null<br>`note?`: string \| null<br>`capacity?`: integer = 1 |
+| POST | `/api/consultations/slots` | teacher |  | `startAt`: date-time<br>`endAt`: date-time<br>`location?`: string \| null<br>`note?`: string \| null<br>`capacity?`: integer = 1 |
 | DELETE | `/api/consultations/slots/:slotId` | teacher, admin |  |  |
 | POST | `/api/consultations/slots/:slotId/book` | student |  | `topic?`: string \| null |
 | DELETE | `/api/consultations/bookings/:bookingId` | signed in |  |  |
@@ -362,8 +362,8 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/tasks` | signed in |  |  |
-| POST | `/api/tasks` | signed in |  | `title`: string<br>`dueAt?`: any \| null |
-| PATCH | `/api/tasks/:taskId` | signed in |  | `title?`: string<br>`dueAt?`: any \| null<br>`completed?`: boolean |
+| POST | `/api/tasks` | signed in |  | `title`: string<br>`dueAt?`: date-time \| null |
+| PATCH | `/api/tasks/:taskId` | signed in |  | `title?`: string<br>`dueAt?`: date-time \| null<br>`completed?`: boolean |
 | DELETE | `/api/tasks/:taskId` | signed in |  |  |
 
 ## Search
@@ -409,13 +409,13 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | Method | Path | Access | Query | Body |
 |---|---|---|---|---|
 | GET | `/api/classes/:classId/modules` | signed in |  |  |
-| POST | `/api/classes/:classId/modules` | signed in |  | `title`: string<br>`description?`: string \| null<br>`objectives?`: string[]<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "DRAFT"<br>`publishAt?`: any \| null<br>`availableUntil?`: any \| null<br>`prerequisiteModuleId?`: string \| null |
+| POST | `/api/classes/:classId/modules` | signed in |  | `title`: string<br>`description?`: string \| null<br>`objectives?`: string[]<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED" = "DRAFT"<br>`publishAt?`: date-time \| null<br>`availableUntil?`: date-time \| null<br>`prerequisiteModuleId?`: string \| null |
 | PUT | `/api/classes/:classId/modules/order` | signed in |  | `ids`: string[] |
 | GET | `/api/classes/:classId/modules-progress` | signed in |  |  |
 | POST | `/api/classes/:classId/resources` | signed in |  | `title`: string<br>`description?`: string \| null<br>`type`: "FILE" \| "LINK" \| "EMBED"<br>`fileId?`: string<br>`url?`: string<br>`moduleId?`: string \| null<br>`lessonId?`: string \| null<br>`allowDownload?`: boolean = true<br>`isPublished?`: boolean = true |
 | GET | `/api/classes/:classId/resources` | signed in |  |  |
 | GET | `/api/modules/:moduleId` | signed in |  |  |
-| PATCH | `/api/modules/:moduleId` | signed in |  | `title?`: string<br>`description?`: string \| null<br>`objectives?`: string[]<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: any \| null<br>`availableUntil?`: any \| null<br>`prerequisiteModuleId?`: string \| null |
+| PATCH | `/api/modules/:moduleId` | signed in |  | `title?`: string<br>`description?`: string \| null<br>`objectives?`: string[]<br>`status?`: "DRAFT" \| "SCHEDULED" \| "PUBLISHED"<br>`publishAt?`: date-time \| null<br>`availableUntil?`: date-time \| null<br>`prerequisiteModuleId?`: string \| null |
 | DELETE | `/api/modules/:moduleId` | signed in |  |  |
 | PUT | `/api/modules/:moduleId/lessons/order` | signed in |  | `ids`: string[] |
 | POST | `/api/modules/:moduleId/copy` | signed in |  | `targetClassId?`: string |

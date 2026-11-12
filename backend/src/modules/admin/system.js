@@ -5,11 +5,11 @@ import { prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
 import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { sendCsv, toCsv } from '../../lib/csv.js';
-import { fullName, ok, pageMeta, pageQuery, paging, zId } from '../../lib/http.js';
+import { fullName, ok, pageMeta, pageQuery, paging, zDateTime, zId } from '../../lib/http.js';
 import { requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
-import { mailConfigured } from '../../services/mail.js';
+import { mailAvailable, mailConfigured } from '../../services/mail.js';
 import { notify } from '../../services/notifications.js';
 import { permissionMatrix, setRolePermission } from '../../services/permissions.js';
 import { getSettings, SETTING_DEFINITIONS, updateSettings } from '../../services/settings.js';
@@ -55,9 +55,11 @@ adminSystemRouter.get('/status', async (req, res) => {
     environment: env.nodeEnv,
     demoAccountsEnabled: env.demoAccountsEnabled,
     mailConfigured: mailConfigured(),
+    mailAvailable: mailAvailable(),
     ai: { configured: env.ai.configured, provider: env.ai.provider, model: env.ai.configured ? env.ai.model : null },
     codeRunner: { configured: env.codeRunner.configured, provider: env.codeRunner.provider },
     maxUploadBytes: env.maxUploadBytes,
+    reducePhotosOverBytes: env.reducePhotosOverBytes,
     // How the API is hosted, and what follows from it.
     platform: env.platform,
     serverless: env.serverless,
@@ -92,8 +94,8 @@ const auditQuery = z.object({
   entityType: z.string().trim().max(60).optional(),
   actorId: zId.optional(),
   classId: zId.optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: zDateTime.optional(),
+  to: zDateTime.optional(),
   ...pageQuery,
 });
 

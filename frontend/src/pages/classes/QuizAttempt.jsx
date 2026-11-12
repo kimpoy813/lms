@@ -303,7 +303,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
           <div className="text-center"><Spinner className="mx-auto size-8" label="Submitting" /><p className="mt-3 font-semibold text-ink">Time is up — submitting your answers…</p></div>
         </div>
       )}
-      <button type="button" className="sr-only" onClick={() => navigate(back)}>Leave the quiz (your answers stay saved and the timer keeps running)</button>
+      <button type="button" className="sr-only" onClick={() => navigate(back)}>{deadline ? 'Leave the quiz (your answers stay saved and the timer keeps running)' : 'Leave the quiz (your answers stay saved)'}</button>
     </div>
   );
 }

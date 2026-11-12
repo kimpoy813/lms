@@ -108,14 +108,15 @@ export function Checkbox({ label, description, className, ...props }) {
   );
 }
 
-export function Switch({ checked, onChange, label, description, disabled, className }) {
+export function Switch({ checked, onChange, label, description, error, disabled, className }) {
   const id = useId();
   return (
     <div className={cn('flex items-start justify-between gap-4', className)}>
-      {(label || description) && (
+      {(label || description || error) && (
         <label htmlFor={id} className="min-w-0 text-sm leading-snug">
           <span className="font-medium text-ink">{label}</span>
           {description && <span className="mt-0.5 block text-[13px] text-faint">{description}</span>}
+          {error && <span role="alert" className="mt-0.5 block text-[13px] font-medium text-bad">{error}</span>}
         </label>
       )}
       <button id={id} type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50', checked ? 'bg-brand-fill' : 'bg-line-strong')}>

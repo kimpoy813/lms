@@ -13,6 +13,7 @@ import { api } from '../lib/api.js';
 import { dueLabel, formatBytes, formatClock, formatDateKey, formatDay, formatPercent, formatScore, formatTime, getTimeZone, plural, relativeTime } from '../lib/format.js';
 import { useLiveInterval, useOnReturn } from '../lib/live.js';
 import { classColor } from './classes/classColors.js';
+import SetupGuide from './SetupGuide.jsx';
 
 const AdminCharts = lazy(() => import('./DashboardCharts.jsx'));
 
@@ -127,7 +128,7 @@ function StudentDashboard({ data }) {
           <span className="relative grid size-10 shrink-0 place-items-center rounded-xl bg-brand-fill text-white"><Radio className="size-5" aria-hidden="true" /><span className="absolute -right-0.5 -top-0.5 size-3 animate-ping rounded-full bg-ok" aria-hidden="true" /></span>
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-ink">Attendance is open for {c.classLabel}</p>
-            <p className="text-sm text-soft">{c.title ?? 'Class meeting'}{c.endTime ? ` · closes ${formatClock(c.endTime)}` : ''}{c.requireLocation ? ' · location check required' : ''}</p>
+            <p className="text-sm text-soft">{c.title ?? 'Class meeting'}{c.endTime ? ` · closes ${formatTime(c.endTime)}` : ''}{c.requireLocation ? ' · location check required' : ''}</p>
           </div>
           <Button to="/attendance/scan" icon={ScanLine}>Check in now</Button>
         </div>
@@ -245,7 +246,7 @@ function TeacherDashboard({ data }) {
           <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-ok text-white dark:text-[#06281a]"><Radio className="size-5" aria-hidden="true" /></span>
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-ink">Attendance is open for {s.classLabel}</p>
-            <p className="text-sm text-soft">{plural(s.recorded, 'student')} recorded so far{s.endTime ? ` · scheduled until ${formatClock(s.endTime)}` : ''}</p>
+            <p className="text-sm text-soft">{plural(s.recorded, 'student')} recorded so far{s.endTime ? ` · open until ${formatTime(s.endTime)}` : ''}</p>
           </div>
           <Button to={`/classes/${s.classId}/attendance?session=${s.sessionId}`} variant="secondary">Open session</Button>
         </div>
@@ -371,12 +372,13 @@ function TeacherDashboard({ data }) {
 function AdminDashboard({ data }) {
   const { stats, system, attendance14d } = data;
   const services = [
-    ['E-mail delivery', system.mailConfigured, 'Messages are written to the development mailbox until SMTP is configured.'],
+    ['E-mail delivery', system.mailConfigured, system.mailAvailable === false ? 'Nothing is e-mailed. Forgotten passwords are replaced by an administrator, under Users.' : 'Messages are written to the development mailbox until SMTP is configured.'],
     ['AI authoring', system.aiConfigured, 'Teachers cannot generate drafts until an AI provider key is set.'],
     ['Code runner', system.codeRunnerConfigured, 'Programming problems cannot be executed until a judge service is connected.'],
   ];
   return (
     <div className="space-y-5">
+      <SetupGuide setup={data.setup} system={system} />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Students" value={stats.students} icon={GraduationCap} to="/admin/users?role=STUDENT" hint={`${plural(stats.enrollments, 'enrolment')}`} />
         <StatCard label="Teachers" value={stats.teachers} icon={Users} to="/admin/users?role=TEACHER" hint={plural(stats.admins, 'administrator')} />

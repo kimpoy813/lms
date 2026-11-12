@@ -3,6 +3,7 @@
 //   • development / test, no SMTP → messages are kept in an in-memory outbox (and logged) so that
 //                                   verification and password-reset links can be followed locally.
 //   • production, no SMTP        → messages are dropped with a warning. Tokens are never logged.
+//                                   Callers ask mailAvailable() first and say so instead.
 import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
@@ -17,6 +18,19 @@ if (env.smtp) {
 }
 
 export const mailConfigured = () => Boolean(transporter);
+
+/**
+ * Can a message reach its reader? Yes with SMTP; outside production the development mailbox
+ * stands in for it. Where the answer is no, nothing that depends on e-mail is offered or
+ * demanded: a reset link that never arrives, or a verification nobody can complete, would only
+ * lock people out.
+ */
+let availability = null;
+export const mailAvailable = () => availability ?? (Boolean(transporter) || !env.isProduction);
+/** Tests only: `false` behaves like a production server without SMTP, `null` restores the default. */
+export function setMailAvailable(value) {
+  availability = value;
+}
 
 /** Development/test only: the most recent messages, newest first. */
 export function devOutbox() {
@@ -65,7 +79,7 @@ export async function sendMail({ to, subject, text, title, paragraphs = [], acti
       return { delivered: false };
     }
   }
-  if (env.isProduction) {
+  if (!mailAvailable()) {
     logger.warn({ to, subject }, 'e-mail not sent: SMTP is not configured');
     return { delivered: false };
   }

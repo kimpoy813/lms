@@ -95,6 +95,12 @@ const schema = z.object({
   /** Total space for uploads in megabytes, 0 = no limit. Default: 300 with the database driver, else 0. */
   STORAGE_QUOTA_MB: z.coerce.number().min(0).optional(),
   /**
+   * Photos (JPEG, PNG, WebP) larger than this many megabytes are made smaller by the browser before
+   * they are sent. Default: 1 with the database driver, where space is short; otherwise the upload
+   * limit, so that only a photo that would be refused is touched. 0 = never.
+   */
+  REDUCE_PHOTOS_OVER_MB: z.coerce.number().min(0).max(500).optional(),
+  /**
    * Background jobs (auto-submit quizzes, close attendance, scheduled publishing, reminders).
    * Off by default on Vercel preview deployments: they usually share the production database, and
    * code from a branch should not act on live data by itself.
@@ -163,6 +169,9 @@ if (onVercel && maxUploadMb > VERCEL_MAX_UPLOAD_MB) {
   maxUploadMb = VERCEL_MAX_UPLOAD_MB;
 }
 
+// A photo from a phone is several megabytes; a page of handwriting stays readable at a tenth of that.
+const reducePhotosOverMb = Math.min(raw.REDUCE_PHOTOS_OVER_MB ?? (storageDriver === 'database' ? 1 : maxUploadMb), maxUploadMb);
+
 function parseTrustProxy(value) {
   if (value === 'true') return true;
   if (value === 'false') return false;
@@ -216,6 +225,8 @@ export const env = Object.freeze({
   // A function may write only below the system's temporary folder.
   storageDir: path.resolve(backendRoot, raw.STORAGE_DIR ?? (serverless ? path.join(os.tmpdir(), 'edusphere') : 'storage')),
   maxUploadBytes: Math.round(maxUploadMb * 1024 * 1024),
+  /** The web app shrinks photos above this size before sending them. 0 = it never does. */
+  reducePhotosOverBytes: Math.round(reducePhotosOverMb * 1024 * 1024),
   /** 0 = unlimited. */
   storageQuotaBytes: Math.round((raw.STORAGE_QUOTA_MB ?? (storageDriver === 'database' ? 300 : 0)) * 1024 * 1024),
   /** Run background jobs by themselves (on a timer, or driven by requests). Never in the test-suite. */

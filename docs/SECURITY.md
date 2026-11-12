@@ -7,12 +7,12 @@ operates it. No independent security review has been done.
 
 | Topic | How it works |
 |---|---|
-| Passwords | Hashed with scrypt (work factor `PASSWORD_HASH_COST`, 15 by default; old hashes are upgraded at the next sign-in). At least 10 characters; common passwords and passwords containing the user's name or e-mail are refused |
+| Passwords | Hashed with scrypt (work factor `PASSWORD_HASH_COST`, 15 by default; old hashes are upgraded at the next sign-in). At least 10 characters; common passwords and passwords containing the user's name or e-mail are refused, and the message names the word to leave out |
 | Sign-in | The same answer for a wrong e-mail and a wrong password. After 5 failed attempts the account is locked for 15 minutes (both adjustable). Failed sign-ins are also rate-limited per address and per e-mail |
 | Sessions | A random token in an `HttpOnly` cookie; only its hash is stored. Sessions last 7 days, extended while in use. A user can see and end their sessions; changing the password ends the others |
 | Cookie | `Secure` whenever the request arrived over HTTPS, `SameSite=Lax`, and the `__Host-` name prefix when secure. No tokens are kept in browser storage |
 | CSRF | Every changing request must come from a trusted origin (`APP_URL`, the request's own host, `CORS_ORIGINS`) **and** carry the session's token in `X-CSRF-Token` |
-| Recovery | Reset links are single-use and expire. Asking for a reset never reveals whether an address has an account. An administrator can issue a temporary password that must be changed at first sign-in |
+| Recovery | Reset links are single-use and expire. Asking for a reset never reveals whether an address has an account. An administrator can issue a temporary password that must be changed at first sign-in. A site without an e-mail server answers every request for a reset link alike — "this site does not send e-mail" — which reveals nothing about accounts either; there, e-mail verification cannot be required and is not enforced |
 | Registration | Students may register themselves; teachers can request an account that an administrator approves. Both can be switched off |
 | Demo accounts | Refused when `NODE_ENV=production` |
 

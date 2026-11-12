@@ -7,7 +7,7 @@ administrators, teachers and students.
 - **Backend** — Node.js 22 or newer, Express 5, PostgreSQL through Prisma, Socket.IO
 - **Web app** — React 19, React Router 7, TanStack Query, Tailwind CSS 4 (installable, works on phones)
 - **Hosting** — one Node.js server, or Vercel with a Neon database ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md))
-- **Tests** — 313 API and unit tests, 22 web-app unit tests, 27 end-to-end browser tests
+- **Tests** — 338 API and unit tests, 31 web-app unit tests, 33 end-to-end browser tests
 
 ## Quick start
 
@@ -57,7 +57,7 @@ administrator, who must change the password at first sign-in.
 | Accounts | Sign-in with lockout, self-registration (students; teachers on approval), password reset, e-mail verification (optional), sessions per device, profile and avatar |
 | Classes | Academic catalogue (terms, departments, programmes, courses, sections), join codes, enrolment requests, class list, archiving |
 | Learning content | Modules and lessons with a rich-text editor, attachments, video embeds, prerequisites, scheduled publishing, progress tracking, bookmarks, class library |
-| Assignments | Text and file submissions, due dates, late penalties, attempts, rubrics, feedback, returning grades, bulk download |
+| Assignments | Text and file submissions (photos from a phone are made smaller before they are sent), due dates, late penalties, attempts, rubrics, feedback, returning grades, bulk download |
 | Quizzes | 12 question types, question banks and random pools, import from PDF/Word/text, time limits enforced by the server, autosave, automatic and manual scoring, item analysis |
 | Attendance | Sessions by code, rotating QR code and GPS geofence; manual marking, correction requests, summaries, exports. See [docs/ATTENDANCE.md](docs/ATTENDANCE.md) |
 | Grades | Grading periods and weighted categories, grading scales, transmutation, overrides with reasons, history, appeals, publishing, exports. See [docs/GRADING.md](docs/GRADING.md) |
@@ -65,7 +65,7 @@ administrator, who must change the password at first sign-in.
 | Insight | Dashboards per role, class analytics, at-risk indicators |
 | Coding exercises | Problems with visible and hidden tests, checked by an external judge (optional) |
 | AI-assisted authoring | Drafts of modules, questions, rubrics and assignments that a teacher reviews before anything reaches a class (optional) |
-| Administration | Users (import from CSV), enrolment, settings, per-role permissions, audit log |
+| Administration | A set-up guide for a new school, users (import from CSV), enrolment, settings, per-role permissions, audit log |
 
 ## Optional services
 
@@ -76,7 +76,7 @@ feature says that it is not set up.
 |---|---|---|
 | AI authoring | `AI_PROVIDER=openai-compatible`, `AI_API_KEY`, `AI_MODEL` (any OpenAI-compatible chat-completions API) | The AI studio explains that AI is not set up; no drafts are generated |
 | Code judge | `CODE_RUNNER_PROVIDER=piston`, `CODE_RUNNER_URL` (a sandboxed [Piston](https://github.com/engineer-man/piston) instance) | Students can write code but not run it; programs in quizzes are marked by the teacher |
-| E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | No e-mail is sent. Administrators reset passwords by issuing a temporary one. In development, messages are kept in a mailbox readable at `GET /api/dev/mailbox` from the same computer |
+| E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | No e-mail is sent, and the site says so instead of promising one: “Forgot password” tells people to ask the school, administrators issue temporary passwords, addresses are not verified, and the settings that need e-mail cannot be switched on. In development, messages are kept in a mailbox readable at `GET /api/dev/mailbox` from the same computer |
 | Map tiles | `MAP_TILE_URL` (defaults to OpenStreetMap) | The classroom picker shows a plain grid; coordinates can be typed or taken from the device |
 
 Student code is never executed by EduSphere itself.
@@ -158,6 +158,10 @@ Read this before relying on EduSphere for real classes.
   monthly allowance runs out. This setup was checked against the output of Vercel's own build
   tool, served by a local stand-in — not under real use.
   See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#vercel-and-neon).
+- **Photos are reduced, not kept.** Where space is short (on Vercel: above 1 MB) a JPEG, PNG or
+  WebP picture is redrawn in the browser at 2048 pixels on its long side and saved as JPEG; the
+  original never reaches the server. Fine for a photographed page, wrong for a drawing that has
+  to stay exact: send that as a PDF, or raise `REDUCE_PHOTOS_OVER_MB`. Tried in Chromium only.
 - **GPS attendance is a deterrent, not proof.** A student who fakes the phone's location can
   pass the geofence. See [docs/ATTENDANCE.md](docs/ATTENDANCE.md) for what is and is not prevented.
 - **Not included:** single sign-on, two-factor authentication, integration with a student
