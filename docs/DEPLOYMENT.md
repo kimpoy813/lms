@@ -264,7 +264,7 @@ the program itself needs** (a Java program takes a second longer to compile).
 C and C++ (GCC 15), JavaScript (Node.js 22).
 
 **The image** is a sandbox that was set up once (compilers installed, about a minute) and then
-stopped; Vercel keeps its disk as a snapshot of about 1.1 GB. It is called
+stopped; Vercel keeps its disk as a snapshot of about 1 GB. It is called
 `edusphere-judge-<fingerprint of the recipe>-<region>` and is listed under the project's
 *Sandboxes*.
 
@@ -306,7 +306,11 @@ the reason is shown to the administrator and written to the function's log.
   the network. Eight machines. See [TESTING.md](TESTING.md#the-code-runner-against-a-real-account).
 
 Outside Vercel the same judge can be used with an access token (`VERCEL_TOKEN`, `VERCEL_TEAM_ID`,
-`VERCEL_PROJECT_ID`, `CODE_RUNNER_REGION`); the machines still run on Vercel.
+`VERCEL_PROJECT_ID`, `CODE_RUNNER_REGION`); the machines still run on Vercel. The same works on
+Vercel, should a check ever report that no identity reached the function: an access token
+(*Account Settings → Tokens*) in `VERCEL_TOKEN` and the team's ID in `VERCEL_TEAM_ID` take the
+place of the project's identity. They are then a secret to look after, which the project's
+identity is not.
 
 ### What the free plans allow
 
@@ -330,7 +334,7 @@ time**, and **20 new machines a minute**, rising to 40 while they keep coming. A
 use for seven to ten seconds per program. A class of forty pressing "Run" within the same few
 seconds therefore sees "busy" for some of them, and the page asks again by itself. Snapshots may
 take up to 15 GB, which Vercel's table calls "lifetime" without saying whether that is a ceiling
-or a budget that is used up; the image takes 1.1 GB of it.
+or a budget that is used up; the image takes about 1 GB of it.
 
 Nothing is charged on these plans, so a used-up allowance means **the site stops**: Vercel
 suspends the feature concerned for up to 30 days (for Sandbox: no new machines, so programs are

@@ -203,10 +203,12 @@ It needs to be somebody on the Vercel account: inside a Vercel build that is the
 elsewhere set `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`, or `VERCEL_OIDC_TOKEN`
 from `vercel env pull`. It starts eight machines for a few seconds each.
 
-**What was run.** On 2026-11-12, in preview builds of the branch that introduced the judge, on a
-free-plan account, region `sin1`: the image was prepared in 44 seconds (1,103 MB as a snapshot),
-every check above passed, limits were enforced by kernel control groups, and a check of five
-languages took 5.1 seconds from start to answer.
+**What was run.** On 2026-11-12 and 2026-11-13, in preview builds of the branch that introduced
+the judge, on a free-plan account, region `sin1`: the image was prepared in 44 to 50 seconds
+(1.0 to 1.1 GB as a snapshot), every check above passed, limits were enforced by kernel control
+groups, and a check of five languages took 5.1 seconds from start to answer. The account agreed
+to keep the image until it is deleted, the build's identity was the one of the project Vercel
+named, and no machine was left on the account afterwards.
 
 **What that run does not show.**
 

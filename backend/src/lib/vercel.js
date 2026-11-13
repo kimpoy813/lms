@@ -71,7 +71,9 @@ const requestInProgress = new AsyncLocalStorage();
  * `createFunctionHandler` to whatever the request starts.
  *
  * The token is the project's key to its Vercel account for the next hour or two. It is removed
- * from the request's headers here, so that no log line, error report or route ever comes across it.
+ * from the request's headers here, so that no log line, error report or route ever comes across
+ * it — unless those headers are the very object the platform publishes, which is the platform's
+ * to keep as it is (Vercel's own packages read the token there).
  *
  * @param {import('node:http').IncomingMessage} req
  */
@@ -79,7 +81,8 @@ export function notePlatformRequest(req) {
   const context = platformContext();
   const fromHeader = text(req.headers?.[IDENTITY_HEADER]);
   const fromContext = text(context?.headers?.[IDENTITY_HEADER]);
-  if (req.headers && IDENTITY_HEADER in req.headers) {
+  const platformsOwn = Boolean(context?.headers) && context.headers === req.headers;
+  if (!platformsOwn && req.headers && IDENTITY_HEADER in req.headers) {
     delete req.headers[IDENTITY_HEADER];
     const raw = req.rawHeaders;
     if (Array.isArray(raw)) {

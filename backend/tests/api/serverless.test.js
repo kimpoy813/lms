@@ -306,6 +306,15 @@ describe('the Vercel entry point', () => {
       expect(notePlatformRequest(both)).toMatchObject({ identityToken: 'token-from-the-platform', seen: { identityHeader: true, identityInContext: true } });
       expect(both.headers).toEqual({});
 
+      // Headers that are the very object the platform publishes are the platform's: Vercel's own
+      // packages read the token there, so nothing is taken out of them.
+      const shared = incoming({ host: 'school.example', 'x-vercel-oidc-token': 'token-of-request-a' });
+      globalThis[symbol] = { get: () => ({ waitUntil: (promise) => kept.push(promise), headers: shared.headers }) };
+      expect(notePlatformRequest(shared).identityToken).toBe('token-of-request-a');
+      expect(shared.headers['x-vercel-oidc-token']).toBe('token-of-request-a');
+      expect(shared.rawHeaders).toContain('X-Vercel-Oidc-Token');
+      globalThis[symbol] = { get: () => ({ waitUntil: (promise) => kept.push(promise), headers: { 'x-vercel-oidc-token': 'token-from-the-platform' } }) };
+
       // Should the platform stop answering for a request that is still at work, what was noted is used.
       delete globalThis[symbol];
       const work = Promise.resolve();
