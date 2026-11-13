@@ -374,6 +374,86 @@ aiRouter.get('/generated/:generatedId/export', validate({ params: idParams('gene
   sendBuffer(res, buffer, `${safeFilename(doc.title)}.${format}`, format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 });
 
+// ── A teacher's own module as the material for a quiz, an exam or an assignment ──
+/**
+ * How many characters of each text to use when all of them together may take `budget`: short
+ * texts whole, and what they leave over shared out among the long ones. Cutting the whole at the
+ * budget instead would drop the last lessons of a module, and an examination would then ask
+ * about the first weeks only.
+ * @param {number[]} lengths
+ * @returns {number[]} in the order given; never more than a text's own length
+ */
+export function shareBudget(lengths, budget) {
+  const shares = new Array(lengths.length).fill(0);
+  let left = Math.max(0, Math.floor(budget));
+  [...lengths.keys()].sort((a, b) => lengths[a] - lengths[b]).forEach((index, done) => {
+    shares[index] = Math.min(lengths[index], Math.floor(left / (lengths.length - done)));
+    left -= shares[index];
+  });
+  return shares;
+}
+
+/** Cut at the end of a sentence or a word where there is one near the limit. */
+function cutText(text, length) {
+  if (text.length <= length) return text;
+  const head = text.slice(0, length);
+  const stop = Math.max(head.lastIndexOf('. '), head.lastIndexOf('.\n'), head.lastIndexOf('\n'));
+  const at = stop > length * 0.7 ? stop + 1 : head.lastIndexOf(' ') > length * 0.7 ? head.lastIndexOf(' ') : length;
+  return `${head.slice(0, at).trimEnd()} […]`;
+}
+
+/** The modules a person may draft from: those of the classes they teach (any class for an administrator). */
+const ownModule = (user) => ({ deletedAt: null, class: user.role === 'ADMIN' ? {} : { teacherId: user.id } });
+
+/**
+ * The written lessons of one module, as reference text for the model.
+ * @returns {Promise<{ module: { id: string, title: string, classId: string }, text: string, lessonCount: number, usedLessons: number, shortened: boolean }>}
+ */
+async function moduleMaterial(user, moduleId) {
+  const found = await prisma.learningModule.findFirst({
+    where: { id: moduleId, ...ownModule(user) },
+    select: { id: true, title: true, description: true, objectives: true, classId: true, lessons: { where: { deletedAt: null }, orderBy: { position: 'asc' }, select: { title: true, contentHtml: true } } },
+  });
+  if (!found) throw notFound('Module');
+  const lessons = found.lessons.map((l) => ({ title: plainText(l.title, 200), text: plainText(l.contentHtml).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n') })).filter((l) => l.text.length > 0);
+  if (lessons.length === 0) {
+    throw new AppError(422, 'MODULE_HAS_NO_TEXT', 'This module has no written lessons yet, so there is nothing to draw from. Add a lesson with text, or give a topic instead.', { fields: { moduleId: 'This module has no written lessons yet.' } });
+  }
+  const objectives = (Array.isArray(found.objectives) ? found.objectives : []).filter((o) => typeof o === 'string').map((o) => plainText(o, 300)).filter(Boolean).slice(0, 12);
+  const head = [`Module: ${plainText(found.title, 200)}`, found.description ? `Overview: ${plainText(found.description, 1500)}` : null, objectives.length > 0 ? `Learning objectives:\n${objectives.map((o) => `- ${o}`).join('\n')}` : null].filter(Boolean).join('\n');
+  const headings = lessons.map((l, i) => `Lesson ${i + 1}: ${l.title}`);
+  const shares = shareBudget(lessons.map((l) => l.text.length), REFERENCE_CHAR_BUDGET - head.length - headings.reduce((sum, h) => sum + h.length + 8, 0));
+  const parts = lessons.map((l, i) => (shares[i] > 0 ? `${headings[i]}\n${cutText(l.text, shares[i])}` : null)).filter(Boolean);
+  return {
+    module: { id: found.id, title: found.title, classId: found.classId },
+    text: `${head}\n\n${parts.join('\n\n')}`,
+    lessonCount: found.lessons.length, usedLessons: parts.length,
+    shortened: lessons.some((l, i) => shares[i] < l.text.length),
+  };
+}
+
+/** What is told back about the material, so that the teacher knows what the draft was made from. */
+const sourceView = (material) => (material ? { moduleId: material.module.id, moduleTitle: material.module.title, classId: material.module.classId, lessonCount: material.lessonCount, usedLessons: material.usedLessons, shortened: material.shortened } : null);
+
+/** The modules to choose from, class by class. */
+aiRouter.get('/material', async (req, res) => {
+  const classes = await prisma.class.findMany({
+    where: { teacherId: req.user.id, status: 'ACTIVE' },
+    orderBy: [{ course: { code: 'asc' } }, { createdAt: 'asc' }],
+    select: {
+      id: true, course: { select: { code: true, title: true } }, section: { select: { name: true } },
+      modules: { where: { deletedAt: null }, orderBy: { position: 'asc' }, select: { id: true, title: true, status: true, _count: { select: { lessons: { where: { deletedAt: null } } } } } },
+    },
+  });
+  ok(res, classes.map((c) => ({ id: c.id, label: classLabel(c), courseTitle: c.course.title, modules: c.modules.map((m) => ({ id: m.id, title: m.title, status: m.status, lessonCount: m._count.lessons })) })));
+});
+
+const PURPOSE = {
+  QUIZ: 'The questions are for a short quiz that checks whether students understood the material.',
+  EXAM: 'The questions are for an examination on the whole of the material: draw on every lesson, roughly in proportion to its length, and order the questions from easier to harder.',
+  PRACTICE: 'The questions are for ungraded practice: give each one an explanation a student can learn from.',
+};
+
 // ── Smaller helpers: nothing is stored, the teacher gets a draft to edit ──────
 aiRouter.post(
   '/questions',
@@ -383,6 +463,11 @@ aiRouter.post(
       topic: z.string().trim().max(300).optional(),
       sourceText: z.string().max(40_000).optional(),
       lessonId: zId.optional(),
+      /** A whole module of the teacher's own: every written lesson in it is the material. */
+      moduleId: zId.optional(),
+      purpose: z.enum(['QUIZ', 'EXAM', 'PRACTICE']).default('QUIZ'),
+      /** Questions already drafted, so that another round brings new ones. */
+      avoid: z.array(z.string().max(2000)).max(60).default([]),
       count: z.number().int().min(1).max(20).default(5),
       types: z.array(z.enum(['MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER', 'FILL_BLANKS', 'MATCHING', 'ORDERING', 'ESSAY'])).min(1).max(9).default(['MULTIPLE_CHOICE']),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD', 'MIXED']).default('MIXED'),
@@ -396,14 +481,19 @@ aiRouter.post(
       if (!lesson) throw notFound('Lesson');
       source = `${lesson.title}\n\n${plainText(lesson.contentHtml, REFERENCE_CHAR_BUDGET)}`;
     }
-    if (!b.topic && !source) throw new AppError(422, 'VALIDATION_ERROR', 'Give a topic, paste some text, or choose a lesson.', { fields: { topic: 'Give a topic, paste some text, or choose a lesson.' } });
+    const material = b.moduleId ? await moduleMaterial(req.user, b.moduleId) : null;
+    if (material) source = material.text;
+    if (!b.topic && !source) throw new AppError(422, 'VALIDATION_ERROR', 'Choose a module, give a topic, or paste some text.', { fields: { topic: 'Choose a module, give a topic, or paste some text.' } });
     await guard(req);
+    const drafted = b.avoid.map((text) => plainText(text, 200)).filter(Boolean);
     const out = await chatJson({
       system: SYSTEM,
       user: [
         `Write ${b.count} assessment question(s)${b.topic ? ` about: ${b.topic}` : ''}.`,
+        material || b.purpose !== 'QUIZ' ? PURPOSE[b.purpose] : null,
         `Allowed types: ${b.types.join(', ')}. Difficulty: ${b.difficulty === 'MIXED' ? 'a mix of easy, medium and hard' : b.difficulty.toLowerCase()}.`,
-        source ? `Use only this material:\n<reference name="source">\n${source}\n</reference>` : null,
+        source ? `Use only this material${material ? ', and ask nothing it does not cover. In "topic" name the lesson a question comes from' : ''}:\n<reference name="${material ? 'module' : 'source'}">\n${source}\n</reference>` : null,
+        drafted.length > 0 ? `These questions exist already; write different ones:\n<reference name="existing questions">\n${drafted.map((text) => `- ${text}`).join('\n')}\n</reference>` : null,
         'Answer with one JSON object: { "questions": [question] }',
         QUESTION_GUIDE,
       ].filter(Boolean).join('\n'),
@@ -412,29 +502,40 @@ aiRouter.post(
     const { kept, rejected } = cleanQuestions(out.data.questions);
     const allowed = kept.filter((q) => b.types.includes(q.type));
     // rejected: incomplete or invalid; skipped: valid, but of a type the teacher did not ask for.
-    ok(res, { questions: allowed.slice(0, b.count), rejected, skipped: kept.length - allowed.length, needsReview: true });
+    ok(res, { questions: allowed.slice(0, b.count), rejected, skipped: kept.length - allowed.length, source: sourceView(material), needsReview: true });
   },
 );
 
 aiRouter.post(
   '/assignment',
   aiLimiter,
-  validate({ body: z.object({ topic: z.string().trim().min(3).max(300), details: z.string().trim().max(2000).optional(), points: z.number().int().min(1).max(1000).default(100), withRubric: z.boolean().default(true) }) }),
+  validate({
+    body: z.object({
+      topic: z.string().trim().max(300).optional(),
+      /** A module of the teacher's own to base the assignment on. */
+      moduleId: zId.optional(),
+      details: z.string().trim().max(2000).optional(), points: z.number().int().min(1).max(1000).default(100), withRubric: z.boolean().default(true),
+    }),
+  }),
   async (req, res) => {
     const b = req.valid.body;
+    const topic = b.topic && b.topic.length >= 3 ? b.topic : null;
+    const material = b.moduleId ? await moduleMaterial(req.user, b.moduleId) : null;
+    if (!topic && !material) throw new AppError(422, 'VALIDATION_ERROR', 'Choose a module or say what the assignment is about.', { fields: { topic: 'Choose a module or say what the assignment is about (at least 3 characters).' } });
     await guard(req);
     const out = await chatJson({
       system: SYSTEM,
       user: [
-        `Draft an assignment about: ${b.topic}. It is worth ${b.points} points.`,
+        `Draft an assignment${topic ? ` about: ${topic}` : ' in which students apply what the module below teaches'}. It is worth ${b.points} points.`,
         b.details ? `Details from the teacher: ${b.details}` : null,
+        material ? `Base it on this material, and ask for nothing it has not prepared students for:\n<reference name="module">\n${material.text}\n</reference>` : null,
         `Answer with one JSON object: { "title": string, "instructionsHtml": string (use <p>, <ul>, <ol>, <li>, <strong>)${b.withRubric ? ', "rubric": { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } — criteria points must add up to the assignment points' : ''} }`,
       ].filter(Boolean).join('\n'),
     });
     await recordUsage(req.user.id, 'ASSIGNMENT', out);
     const shape = z.object({ title: z.string().min(1).max(600), instructionsHtml: z.string().max(100_000), rubric: z.any().optional() }).safeParse(out.data);
     if (!shape.success) throw new AppError(502, 'AI_FAILED', 'The AI service returned an assignment in an unexpected shape. Please try again.');
-    ok(res, { title: plainText(shape.data.title, 200), instructionsHtml: sanitizeRichText(shape.data.instructionsHtml), points: b.points, rubric: b.withRubric ? cleanRubric(shape.data.rubric) : null, needsReview: true });
+    ok(res, { title: plainText(shape.data.title, 200), instructionsHtml: sanitizeRichText(shape.data.instructionsHtml), points: b.points, rubric: b.withRubric ? cleanRubric(shape.data.rubric) : null, source: sourceView(material), needsReview: true });
   },
 );
 

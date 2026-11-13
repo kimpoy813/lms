@@ -22,10 +22,14 @@ async function adjust(page, urlPattern, change) {
 const json = (status, body) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
 const refusal = (code, message, details) => json(503, { error: { code, message, details } });
 
-/** A site whose programs are checked in Vercel Sandbox machines. */
+/**
+ * A site whose programs are checked in Vercel Sandbox machines. These tests are about the server's
+ * part, so every program goes there: trying Python in the browser is switched off, as an
+ * administrator can do (python-in-browser.spec.js is about the other case).
+ */
 async function withCodeRunner(page) {
-  await adjust(page, '**/api/programming/status', (status) => Object.assign(status, { configured: true, provider: 'vercel-sandbox', message: null, totalTimeLimitMs: 50_000 }));
-  await adjust(page, /\/api\/programming\/problems\/[^/?]+(\?.*)?$/, (problem) => Object.assign(problem.runner, { configured: true, provider: 'vercel-sandbox', message: null }));
+  await adjust(page, '**/api/programming/status', (status) => Object.assign(status, { configured: true, provider: 'vercel-sandbox', message: null, totalTimeLimitMs: 50_000, inBrowser: [] }));
+  await adjust(page, /\/api\/programming\/problems\/[^/?]+(\?.*)?$/, (problem) => Object.assign(problem.runner, { configured: true, provider: 'vercel-sandbox', message: null, inBrowser: [] }));
 }
 
 async function openPracticeProblem(page) {

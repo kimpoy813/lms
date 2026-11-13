@@ -305,6 +305,28 @@ the reason is shown to the administrator and written to the function's log.
   to withstand: endless loops, memory and process bombs, attempts to read the tests or to reach
   the network. Eight machines. See [TESTING.md](TESTING.md#the-code-runner-against-a-real-account).
 
+**Python that is only being tried runs in the browser.** "Run sample tests" and "Try my own
+input" for a Python program do not start a machine at all: the program runs on the student's own
+device, in the same Python version (3.14) built for browsers
+([Pyodide](https://pyodide.org), served from this site: about 13 MB on the first run, about half of that over the wire where the
+host compresses, and from the browser's store afterwards). Nothing is counted against the allowance, a class can press "Run"
+as often as it likes, and an answer takes a fraction of a second instead of three.
+
+- "Submit for checking" and programs in quizzes are always checked on the server, with the hidden
+  tests, which never reach the browser.
+- A program the browser's Python might run differently goes to the server by itself, as before:
+  one that uses files, threads, the network or a package that is not part of Python, one that
+  fails in a way that can be the browser's own (memory, very deep recursion), and one whose answer
+  is wrong only by the order of a set or the last digits of a decimal number. The page says "Run
+  on the server instead" where a student may want that anyway.
+- A program that does not end is stopped after three times the problem's time limit (at least 3
+  and at most 30 seconds): a phone is slower than the server.
+- Java, C, C++ and JavaScript always run on the server.
+- Without a code runner, Python can still be tried this way; nothing can be submitted for checking.
+- **Settings → Programming → "Let students try Python in their own browser"** switches it off,
+  and every run goes to the server again. How the program is kept from the site and the network:
+  [SECURITY.md](SECURITY.md#python-in-the-browser).
+
 Outside Vercel the same judge can be used with an access token (`VERCEL_TOKEN`, `VERCEL_TEAM_ID`,
 `VERCEL_PROJECT_ID`, `CODE_RUNNER_REGION`); the machines still run on Vercel. The same works on
 Vercel, should a check ever report that no identity reached the function: an access token
@@ -325,14 +347,15 @@ Figures from the providers' plan pages on 2026-11-11, those for Sandbox on 2026-
 | Neon: database running time | 100 compute-hours, about 400 hours at the smallest size | The database runs while the site is in use and pauses after 5 minutes without queries. The first request after a pause takes a second or two longer |
 | Neon: storage | 1 GB | All records and all uploaded files |
 | Neon: data sent to the API | 5 GB | Every query result, and every download of an uploaded file |
-| Vercel Sandbox: machines started | 5,000 | One for every program that is run or checked, however many tests it has; one for every "Check now"; one per deployment |
+| Vercel Sandbox: machines started | 5,000 | One for every program that is checked on the server, however many tests it has (Python that is only being tried runs in the browser and starts none); one for every "Check now"; one per deployment |
 | Vercel Sandbox: processor time | 5 hours | Measured: 2 to 6 seconds for a small program, most of it the machine itself. Together with the line above: **some 3,000 to 5,000 programs a month** |
 | Vercel Sandbox: memory | 420 GB-hours | A machine has 2 GB and is counted for at least a minute: 12,000 programs |
 
 Vercel Sandbox has limits that are not monthly as well: on the free plan **10 machines at the same
 time**, and **20 new machines a minute**, rising to 40 while they keep coming. A machine is in
-use for seven to ten seconds per program. A class of forty pressing "Run" within the same few
-seconds therefore sees "busy" for some of them, and the page asks again by itself. Snapshots may
+use for seven to ten seconds per program. A class of forty pressing "Submit for checking" within
+the same few seconds (or "Run" in a language other than Python) therefore sees "busy" for some of
+them, and the page asks again by itself. Snapshots may
 take up to 15 GB, which Vercel's table calls "lifetime" without saying whether that is a ceiling
 or a budget that is used up; the image takes about 1 GB of it.
 
@@ -376,13 +399,96 @@ Set these when you want the features (see `backend/.env.example` for all variabl
 | Feature | Variables | Notes |
 |---|---|---|
 | E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Needed for password-reset links, e-mail verification and e-mail notifications. See [Without an e-mail server](#without-an-e-mail-server) |
-| AI authoring | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | A daily limit per teacher is set in **Settings** |
+| AI authoring | `AI_PROVIDER=vercel-ai-gateway` (on Vercel nothing else), or `AI_PROVIDER=openai-compatible` with `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | See [The AI assistant](#the-ai-assistant). A daily limit per teacher is set in **Settings** |
 | Code judge | `CODE_RUNNER_PROVIDER=vercel-sandbox` (on Vercel nothing else), or `CODE_RUNNER_PROVIDER=piston` with `CODE_RUNNER_URL`, `CODE_RUNNER_API_KEY` | Vercel Sandbox: a machine per program on your Vercel account, see [Checking students' programs](#checking-students-programs). Piston: a server you run; keep it isolated from the database and the API host |
 | Map tiles | `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` | The default is OpenStreetMap's public tile server; check its usage policy or use your own provider |
 
 E-mail, AI authoring, a Piston server and map tiles were never exercised against a real service
 during development. The Vercel Sandbox judge was, from a Vercel build; see
 [TESTING.md](TESTING.md#the-code-runner-against-a-real-account) for what that covers.
+
+### The AI assistant
+
+Teachers can have a first draft written for them in the **AI studio**: a module, a quiz or an
+examination, an assignment, a rubric. The draft is made from a topic, from a document, or from
+the lessons of a module the teacher chooses, and it stays a draft until the teacher has read and
+approved it. EduSphere talks to the AI service from the server; the browser never does.
+
+**What is sent to the service:** what the teacher typed or chose — the topic, the pasted text, or
+the text of the chosen module's lessons (shortened to about 24,000 characters) — and the
+instructions for the draft. Names, grades, submissions and other records of students are never
+sent. Choose a service whose terms your school accepts for its teaching material.
+
+There are three ways to connect one. None of them was tried with a real service during
+development, apart from Vercel's refusal described below.
+
+| | Set | Cost | Good to know |
+|---|---|---|---|
+| **Vercel's AI Gateway** | `AI_PROVIDER=vercel-ai-gateway` | $5 of credit a month is included, for a part of the models. **Vercel wants a payment card on the account first**, and says it does not charge it for this | No key: on Vercel the gateway is asked with the project's own identity, as the code runner is. From another host, put a key of the gateway into `AI_API_KEY` |
+| **A service with a free plan and a key** | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | Free within the limits of the plan, no card | You create the key in an account of your own; see the two examples below |
+| **Any other OpenAI-compatible service** | the same four | As that service charges | OpenAI itself is the default address (`https://api.openai.com/v1`, model `gpt-4o-mini`) |
+
+**Vercel's AI Gateway, in detail.** What Vercel's pages said on 2026-11-13
+([pricing](https://vercel.com/docs/ai-gateway/pricing), [questions](https://vercel.com/docs/ai-gateway/faq),
+[rate limits](https://vercel.com/docs/ai-gateway/rate-limits)), and what was seen:
+
+- Without a card every request is refused, whatever the model (`403 customer_verification_required`).
+  That is what this project's account answered when it was asked from a build on 2026-11-13. The
+  refusal names the page for adding a card; **Settings → Server → AI assistant → Check now** shows
+  it as a link.
+- The monthly credit covers [a part of the models](https://vercel.com/ai-gateway/models?freeTier=true),
+  with lower limits on requests per minute. On that day the small models of Anthropic, Google and
+  OpenAI were not among them. EduSphere asks `meta/muse-ember` unless `AI_MODEL` names another
+  one: it was on the list, cost $0.10 per million tokens read and $0.50 written — about a fifth
+  of a cent for a quiz drafted from a whole module, so the $5 are some 2,500 drafts — and every
+  provider behind it was listed as neither keeping what it is sent nor training on it.
+- **Buying credit ends the monthly free credit**, Vercel writes. To stay free, add the card and
+  buy nothing. A budget can be set in the dashboard (*AI Gateway → Budgets*).
+- When the month's credit is used up, or a model is not covered, teachers are told that the
+  assistant needs an administrator's attention, and the administrator sees Vercel's reason.
+
+**Two services with a free plan,** as their own and other pages described them in November 2026.
+Limits and terms change; read them before a class depends on it.
+
+- *Google AI Studio (Gemini).* A key from <https://aistudio.google.com> needs a Google account and
+  no card. `AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`, `AI_MODEL` a
+  current "Flash" model from the list in AI Studio (for example `gemini-3.5-flash`). The free plan
+  allows some requests a minute and some hundreds a day for each project; AI Studio shows the
+  numbers. **On the free plan Google may use what is sent to improve its products, and people may
+  read it** (its terms for "unpaid services"; not for users in the EEA, Switzerland and the United
+  Kingdom, and not on the paid plan). That is the text of your lessons.
+- *Groq.* A key from <https://console.groq.com> needs no card. `AI_BASE_URL=https://api.groq.com/openai/v1`,
+  `AI_MODEL` a model from its console. The free plan counts tokens per minute, and for some models
+  that is less than a whole module with its questions: teachers are then told that the request is
+  more than the service takes at once, and can ask for fewer items or draft from a topic.
+
+**Is it working?**
+
+- **Administration → Settings → Server → AI assistant → Check now** asks the service one small
+  question and shows which model answered and how quickly, or the service's own words when it
+  refused. Before a check, it shows the reason the last request of a teacher failed.
+- `npm run ai:check` does the same from a computer that has the configuration. The Vercel build
+  runs it when `AI_PROVIDER` is set, so the log of each deployment says whether the assistant
+  answers (a failure is a warning, not a failed build).
+- `npm run ai:check -- --models`, or `AI_CHECK=models` for one build, lists the models of
+  Vercel's gateway that suit the assistant with their prices, and tries the likely ones.
+
+**What a teacher is told when the service says no:**
+
+| The service | The teacher reads | Who can do something |
+|---|---|---|
+| is busy (`429`) | To wait a minute and try again. EduSphere has already asked a second time after a short wait | The teacher |
+| takes too long, or fails | To try again | The teacher |
+| finds the request too large | To ask for fewer items, or to draft from a topic or a shorter module | The teacher |
+| does not accept the key, the account, the model, or has no credit left | That the assistant needs an administrator, who finds the reason under **Settings** | The administrator |
+
+Requests that fail are not counted against the teacher's daily limit.
+
+**Settings that matter:** `AI_MODEL`; `AI_MAX_OUTPUT_TOKENS` (8000; lower it when a model writes
+less than that at once and says so); `AI_TIMEOUT_MS` for the whole exchange (two minutes; on
+Vercel 100 seconds, because Vercel ends a request after 120); the daily limit per teacher under
+**Settings → AI**. A model that does not take a part of the request the usual way (a temperature,
+the name of the length limit, an answer promised as JSON) is asked again without that part.
 
 ### Without an e-mail server
 

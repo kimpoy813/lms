@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { pgFieldsFromUrl, pgOptionsFromUrl } from '../../src/db/connection.js';
+import { PYTHON_SANDBOX_PREFIX, pythonSandboxHeaders, webAppFileHeaders } from '../../src/lib/pythonSandbox.js';
 import { isDatabaseUnavailable, isSchemaOutOfDate } from '../../src/middleware/errors.js';
 import { allowsRequireOfEsModules, findRequiredEsModules } from '../../../scripts/required-es-modules.mjs';
 
@@ -116,7 +117,36 @@ describe('vercel.json', () => {
 
   it('keeps those headers away from API responses, which set their own', () => {
     // A stored file is served with a stricter policy than a page; a blanket header would undo it.
-    expect(config.headers[0].source).toBe('/((?!api$|api/|healthz$|readyz$).*)');
+    // The frame for Python programs has a rule of its own (below).
+    expect(config.headers[0].source).toBe('/((?!api$|api/|healthz$|readyz$|pyrunner/).*)');
+  });
+
+  it('shuts the frame that runs students’ Python programs off from the site, as the API does when it serves the web app', () => {
+    const rule = config.headers[1];
+    expect(rule.source).toBe(`${PYTHON_SANDBOX_PREFIX}(.*)`);
+    const lower = (headers) => Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
+    // A page's headers, with the sandbox's own in place of three of them.
+    expect(Object.fromEntries(rule.headers.map((h) => [h.key.toLowerCase(), h.value]))).toEqual({ ...staticHeaders, ...lower(pythonSandboxHeaders()) });
+    expect(Object.keys(pythonSandboxHeaders()).sort()).toEqual(['Content-Security-Policy', 'Permissions-Policy', 'Referrer-Policy']);
+
+    const policy = Object.fromEntries(pythonSandboxHeaders()['Content-Security-Policy'].split(';').map((directive) => { const [name, ...values] = directive.trim().split(/\s+/); return [name, values]; }));
+    expect(policy.sandbox).toEqual(['allow-scripts']); // an origin of its own: no cookies, no storage, no same-origin anything
+    expect(policy['default-src']).toEqual(["'none'"]);
+    expect(policy['connect-src']).toEqual(["'none'"]); // no network for the program
+    expect(policy['script-src']).not.toContain("'self'"); // nothing of the site is loaded as a script
+    expect(policy['frame-ancestors']).toEqual(["'self'"]);
+    expect(pythonSandboxHeaders('https://school.example')['Content-Security-Policy']).toContain('frame-ancestors https://school.example;');
+
+    // Exactly the files below pyrunner/ get them, whatever the separator of the system.
+    for (const file of ['pyrunner/frame.html', 'pyrunner\\frame.html']) expect(webAppFileHeaders(file, "'self'")).toEqual({ 'Cache-Control': 'no-cache', ...pythonSandboxHeaders() });
+    expect(webAppFileHeaders('index.html', "'self'")).toEqual({ 'Cache-Control': 'no-cache' });
+    expect(webAppFileHeaders('pyrunner.html', "'self'")).toEqual({ 'Cache-Control': 'no-cache' });
+    expect(webAppFileHeaders('assets/pyodide.asm-abc123.wasm', "'self'")).toEqual({ 'Cache-Control': 'public, max-age=31536000, immutable' });
+    expect(webAppFileHeaders('img/assets/logo.svg', "'self'")).toEqual({ 'Cache-Control': 'no-cache' });
+
+    // And the frame is where both sides expect it.
+    expect(fs.existsSync(path.join(root, 'frontend', 'public', PYTHON_SANDBOX_PREFIX, 'frame.html'))).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'frontend', 'src', 'lib', 'pyRunner', 'sandbox.js'), 'utf8')).toContain('`${import.meta.env.BASE_URL}pyrunner/frame.html`');
   });
 
   it('sends the API paths and the health checks to the one function', () => {
@@ -140,6 +170,53 @@ describe('vercel.json', () => {
     expect(config.crons).toEqual([{ path: '/api/internal/cron', schedule: expect.stringMatching(/^\d+ \d+ \* \* \*$/) }]);
     const res = await request(createApp()).get(config.crons[0].path);
     expect(res.status).not.toBe(404);
+  });
+
+  it('leaves .env files out of the function', () => {
+    // A build made on somebody's own computer (`vercel build`) finds the developer's .env next to
+    // the code, because the configuration names that path. It must not travel with the function.
+    const excluded = /^\{(.+)\}$/.exec(config.functions['api/index.js'].excludeFiles)[1].split(',');
+    expect(excluded).toEqual(expect.arrayContaining(['.env', '.env.*', 'backend/.env', 'backend/.env.*']));
+    // Nothing the function needs is under these.
+    expect(excluded.filter((pattern) => !pattern.includes('.env'))).toEqual(['frontend/**', 'e2e/**', 'docs/**']);
+  });
+});
+
+describe('.env files', () => {
+  const before = { NODE_ENV: process.env.NODE_ENV, VERCEL: process.env.VERCEL };
+  afterEach(() => {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  /** Which files the configuration reads when it is loaded in this environment. */
+  async function filesRead(vars) {
+    Object.assign(process.env, vars);
+    const read = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {});
+    vi.resetModules();
+    await import('../../src/config/env.js');
+    return read.mock.calls.map(([file]) => path.relative(root, file));
+  }
+
+  it('are read on a server, the one of the API first', async () => {
+    delete process.env.VERCEL;
+    expect(await filesRead({ NODE_ENV: 'development' })).toEqual([path.join('backend', '.env'), '.env']);
+  });
+
+  it('are never read on Vercel, where the project’s settings are the configuration', async () => {
+    // Also not one that came along inside the function: with development settings in it
+    // (cookies without "Secure", a folder for uploads that cannot be written) it would undo the site.
+    expect(await filesRead({ NODE_ENV: 'development', VERCEL: '1' })).toEqual([]);
+    expect(await filesRead({ NODE_ENV: 'production', VERCEL: '1' })).toEqual([]);
+  });
+
+  it('are not read by the tests', async () => {
+    delete process.env.VERCEL;
+    expect(await filesRead({ NODE_ENV: 'test' })).toEqual([]);
   });
 });
 

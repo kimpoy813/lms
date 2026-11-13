@@ -2,10 +2,10 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 435 tests in 23 files, about a minute | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
-| Web-app unit tests | `npm run test:frontend` | 40 tests in 6 files, a few seconds | Nothing |
+| API and unit tests | `npm run test:backend` | 487 tests in 26 files, about a minute and a half | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
+| Web-app unit tests | `npm run test:frontend` | 230 tests in 10 files, about ten seconds | Nothing |
 | Both of the above | `npm test` | | |
-| Browser tests | `npm run test:e2e` | 37 tests in 9 files, about three and a half minutes | A Chromium browser and the demo data |
+| Browser tests | `npm run test:e2e` | 47 tests in 11 files, about four minutes | A Chromium browser and the demo data |
 | Lint | `npm run lint` | | |
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
 | The code runner on a real Vercel account | `npm run judge:check` | 29 checks, about a minute | Vercel credentials; starts eight machines ([below](#the-code-runner-against-a-real-account)) |
@@ -32,7 +32,8 @@ HTTP requests to the application against a real PostgreSQL database, one file pe
 | `forms.test.js` | Requests shaped the way the web app's forms send them, with every optional field present and empty. A date left empty is no date — it was once stored as 1 January 1970, which the other files could not notice because they leave optional fields out |
 | `first-day.test.js` | A new installation: the administrator's set-up guide, and a site without an e-mail server (what it tells people, what it refuses to promise, which settings it will not switch on) |
 | `migrations.test.js` | Migrations through the adapter production uses: a file is applied whole (a semicolon in a comment ends nothing) and completely or not at all; a failed one is found, explained and can be let through again; what the data-only migrations change |
-| `programming-ai.test.js` | Coding problems, programs inside quizzes, AI drafts and their review |
+| `programming-ai.test.js` | Coding problems, programs inside quizzes, what the web app is told about trying Python in the browser. AI drafts and their review; drafts from a module the teacher chose: which lessons are used, how the room is shared between them, that a module of another teacher is refused and an empty one is said to be empty, that the model is told the purpose and the questions that exist already |
+| `ai-gateway.test.js` | The assistant inside a Vercel Function, through the function's real entry point, asking a pretend AI Gateway that is a small server inside the test: the request really leaves the application and its answer is really read. The project's identity is the one that came with the request, read anew each time, and one of another project is not passed on; each refusal Vercel documents (no payment method, no credit, a budget, a model outside the free credit, a restriction of the team) becomes the right sentence for the teacher and the right detail for the administrator; a busy service is asked once more, within the time that is left; a service that never answers is given up on; a model that refuses a part of the request is asked again without it; requests that failed are not counted against the teacher; the administrator's check; a link is passed on only when it leads to vercel.com |
 | `code-runner.test.js` | The API with programs checked in Vercel Sandbox machines, Vercel's SDK replaced by a pretend account: one machine per submission, only the inputs uploaded, a verdict per test, a judge that is busy, being prepared or out of its allowance (what a student is told, what the administrator is told), the checks for the administrator and for the operator, a quiz handed in while the judge is busy |
 | `code-runner-vercel.test.js` | The same judge inside a Vercel Function, through the function's real entry point, with Vercel's part played by the test: the machines are started with the identity token that came with the request (also when the request's body arrives late, and without mixing several requests at once); a token of another project starts nothing; the token never shows in an answer; the machine is removed after the answer where the platform keeps the function awake, and before it where it does not; machines that were never removed are deleted by the daily job |
 | `serverless.test.js` | The application as it runs on a function platform: files kept in the database (whole and partial downloads, quota, clean-up), background jobs claimed by requests and by the scheduled call, work that outlives a response, the Vercel entry point and what it notes about each request |
@@ -40,7 +41,15 @@ HTTP requests to the application against a real PostgreSQL database, one file pe
 `backend/tests/unit/hosting.test.js` covers what is easy to break without noticing: how a
 database address turns into connection options (TLS on, certificate checked), which failures
 count as "the database is away", and that `vercel.json` still matches the application — the
-security headers it sends for pages are compared with the ones the API sends.
+security headers it sends for pages, and the different ones for the frame Python programs run in,
+are compared with the ones the API sends. Also that no `.env` file is read on Vercel or travels
+with the function.
+
+`ai-provider.test.js` and `ai-config.test.js` cover the AI service without a database: what each
+refusal means, how one request is asked and its answer read, which configuration switches the
+assistant on (a key, or Vercel's gateway on Vercel), that the time it is given on Vercel is less
+than Vercel gives the request (read from `vercel.json`), and that the identity of the Vercel
+project is sent to Vercel's gateway and nowhere else, whatever `AI_BASE_URL` says.
 
 How the database is provided (`backend/tests/setup/global.js`):
 
@@ -60,10 +69,11 @@ The whole suite can be pointed at another way of running:
 | `TEST_DATABASE_URL='postgresql://…?sslmode=require' npm run test:backend` | Against a server that only accepts encrypted connections (with `NODE_EXTRA_CA_CERTS` for a private certificate authority) |
 
 The AI provider and the code judge are replaced by fakes inside the tests
-(`setAiTransport`, `setCodeRunnerTransport`, `setSandboxSdk`), so those tests prove how EduSphere
-handles the answers — not that a real provider or judge works. For the Vercel Sandbox judge that
-proof is a separate run against a real account
-([below](#the-code-runner-against-a-real-account)). Rate limits are off in tests unless a test
+(`setAiTransport`, `setCodeRunnerTransport`, `setSandboxSdk`, and in `ai-gateway.test.js` a
+pretend service on the same computer), so those tests prove how EduSphere handles the answers —
+not that a real provider or judge works. For the Vercel Sandbox judge that proof is a separate
+run against a real account ([below](#the-code-runner-against-a-real-account)); for the AI
+assistant there is none yet ([below](#the-ai-assistant-against-a-real-account)). Rate limits are off in tests unless a test
 sends the header `x-test-rate-limit: 1`.
 
 Two unit files belong to the code runner:
@@ -90,10 +100,14 @@ Run one file with `cd backend && npx vitest run tests/api/quizzes.test.js`.
 ## Web-app unit tests
 
 `frontend/src/lib/*.test.js`: date and number formatting in the institution's time zone, the
-distance helper, CSV parsing, the idle detection that pauses timed refreshing, and the rules for
+distance helper, CSV parsing, the idle detection that pauses timed refreshing, the rules for
 making photos smaller (which files, to what size, what the person is told — the redrawing itself
-needs a browser and is in the browser tests). Screens are covered by the browser tests, not by
-component tests.
+needs a browser and is in the browser tests), when a program is run in the browser and what the
+student is told about it (`codeRunner.test.js`), and the service worker with a pretend browser
+around it (`serviceWorker.test.js`: what it keeps, and that it leaves the API and the frame for
+Python programs alone). Screens are covered by the browser tests, not by component tests.
+
+`frontend/src/lib/pyRunner/` has the tests of [Python in the browser](#python-in-the-browser).
 
 ## Browser tests
 
@@ -109,6 +123,8 @@ Playwright drives the real web app with the demo accounts (`e2e/tests/`):
 | `live.spec.js` | A new message appears in an open conversation and a check-in on the teacher's attendance monitor without reloading — pushed over a socket, or fetched on a timer when the server cannot push |
 | `documents.spec.js` | An uploaded file comes back byte for byte (whole and in part), an oversized one is refused, the gradebook and attendance export as PDF and spreadsheet, a test paper in PDF form is read into questions |
 | `code-runner.spec.js` | The three screens of the code runner, with the server's answers replaced on their way to the page (the development server has no judge): a busy checker is asked again by the page, the student sees why it takes longer, and a limit that was hit is told in words; one that stays busy is given up after three more tries, and one that is being prepared is explained at once; the administrator's "Check now" shows every language with its version, the language that failed, or the reason in full; the problem editor says when a slow program cannot get through all tests |
+| `python-in-browser.spec.js` | Python in a real browser, on the practice problem of the demo data: the sample tests run without the server being asked; a program the browser cannot run faithfully goes to the server by itself, "Run on the server instead" and "Submit for checking" always do, and so does C++; the frame opened by itself with a student's session has no origin, no cookies, no storage and no network; the administrator's switch sends everything to the server again |
+| `ai-studio.spec.js` | The assistant's screens, with the model's answers written by the test (the development server has no AI service): an examination drafted from a module becomes a draft quiz of the chosen questions, an assignment is saved into the module; what a teacher reads when the service refuses, and that the choices made stay; the administrator's "Check now" with Vercel's refusal, its link, a link that leads elsewhere (not shown), and an answer |
 | `first-day.spec.js` | What a new school meets first: the set-up guide ticks a step when the thing is done; replacing a temporary password leads to the dashboard, and a refused password names the word to leave out; a module and an assignment are created with every date left empty; a meeting that takes only a code opens check-in on the code; "forgot password" on a site without e-mail; a photo as a phone stores it arrives smaller and upright, a long screenshot untouched |
 
 First time:
@@ -163,6 +179,11 @@ Node.js runtime, each of which stopped or would have stopped the real site:
 - **Request bodies are read ahead of a function that does not look like a server**, as Vercel's
   request helpers do unless `NODEJS_HELPERS=0`.
 
+The function gets its configuration from the environment it is started in, as on Vercel: no
+`.env` file is read there, and `vercel.json` keeps such files out of the function, so the
+`backend/.env` of your development server takes no part (it once did, and uploads failed for a
+folder that file named).
+
 With `NODE_ENV=development` and a database that holds the demo data, the browser tests run
 against it:
 
@@ -178,6 +199,57 @@ What the stand-in cannot show: the rest of Vercel's own launcher, an instance be
 between requests, several instances at once, and Neon. Those need a real deployment; there,
 `CRON_SECRET=… npm run smoke -- https://<your-site>` also reports how Vercel loaded the function,
 which address it passed on and whether it left request bodies alone.
+
+## Python in the browser
+
+A Python program that is only being tried runs in the student's browser. Three things have to
+hold: the browser's Python gives the answers the server's Python gives, the program cannot leave
+its sandbox, and the page knows when it must ask the server instead.
+
+| What | Where | How |
+|---|---|---|
+| The same answers | `frontend/src/lib/pyRunner/runtime.test.js` | 94 programs (`fixtures/programs.js`: reading input every way a beginner does, printing, syntax errors, every way a program can end, errors and their tracebacks, numbers and their formatting, text, lists, dictionaries and sets, classes, generators, recursion that ends and recursion that does not, the standard library a first course uses, long output) are run by the code the web app runs them with, on Pyodide under Node.js. What the server's checker says about each is in `fixtures/reference.json`, written by `node scripts/python-reference.mjs` with the checker's own runner and CPython 3.14.4. The two must agree on output, error output and outcome — or the web app must have noticed that it has to ask the server |
+| Knowing when to ask the server | the same file, and `index.test.js` with the sandbox played by the test | Programs that use files, threads, sockets, packages outside Python's library, or the machine's number sizes; failures that can be the browser's own; answers wrong only by the order of a set or the last digits of a decimal number; a browser without what Python needs; Python that cannot be fetched or does not start |
+| The same comparison and limits as the server | `judge.test.js` | Imports the server's own `backend/src/lib/judging.js` and compares: every pair of outputs in every comparison mode, where long output is cut, how many tests are run at most. Also the wording of each outcome |
+| Stopping a program that does not end | `index.test.js` | The sandbox is taken away after three times the problem's limit; what was printed is kept; later tests are not run |
+| The sandbox | `e2e/tests/python-in-browser.spec.js`, `backend/tests/unit/hosting.test.js` | In Chromium: the frame has no origin, cookies and storage are refused, `fetch` is refused. The headers that do this are compared between the API and `vercel.json` |
+
+`node scripts/python-reference.mjs --check` compares the reference with the Python on the
+computer it runs on, and says so when that is another version than the one recorded.
+
+**What was done by hand,** on 2026-11-13, in Chromium against the development server and against
+the built app behind the local stand-in for Vercel: a correct program, a wrong one, a runtime
+error (the traceback names `main.py` and the line), a syntax error, own input, a program handed
+to the server, an endless loop (stopped after 9.2 seconds with its earlier output kept), a loop
+of four million steps (1.1 seconds). The first run took 2.5 seconds including the download from
+the same computer, later ones 0.16 seconds. In the built app the frame was served with its own
+policy, the pages with theirs, and Python's files were identical to the package's. During
+development about 240,000 results of mathematical functions were also compared with CPython
+3.14.4 once; that comparison is not part of the suite.
+
+**What that does not show:** browsers other than Chromium, real phones (speed and memory), a
+slow connection for the first 13 MB, and the site on Vercel itself.
+
+## The AI assistant against a real account
+
+`scripts/ai-check.mjs` (`npm run ai:check`) asks the configured AI service one small question,
+the way the application asks for a draft. The Vercel build runs it when `AI_PROVIDER` is set.
+With `--models` it also reads the catalogue of Vercel's AI Gateway, lists the models that suit
+the assistant and tries the likely ones.
+
+**What was run.** On 2026-11-13, in a preview build on this project's free-plan account, with
+the project's own identity and no key: the catalogue was read (511 models, 119 of them suitable),
+and every model that was tried, the ones without a price included, was refused with
+`403 customer_verification_required`: Vercel wants a payment card on the account before its free
+credit can be used. Nothing was charged and no credit was used. Vercel answers `401` to a
+missing or invalid identity and answered `403` here, so the project's identity was taken as a
+valid way of asking; and what the gateway answers to an account without a card is known.
+
+**What has not been run:** a single request that a model answered. Everything about answers —
+that the drafts are usable, how long they take, what they cost, whether the model EduSphere asks
+by default is covered by the free credit when the request is made — is tested against pretend
+services only. After a card is added, or a key of another service is set, "Check now" under
+Administration → Settings and the build log say whether the assistant answers.
 
 ## The code runner against a real account
 
@@ -208,7 +280,10 @@ the judge, on a free-plan account, region `sin1`: the image was prepared in 44 t
 (1.0 to 1.1 GB as a snapshot), every check above passed, limits were enforced by kernel control
 groups, and a check of five languages took 5.1 seconds from start to answer. The account agreed
 to keep the image until it is deleted, the build's identity was the one of the project Vercel
-named, and no machine was left on the account afterwards.
+named, and no machine was left on the account afterwards. The production build that followed the
+merge (2026-11-13) found the image in place, passed the five languages again (6.8 seconds for the
+check: one second for the machine, one for the upload, the rest for compiling and running) and
+removed the image of the earlier recipe.
 
 **What that run does not show.**
 
@@ -225,7 +300,9 @@ named, and no machine was left on the account afterwards.
 
 ## What is not tested
 
-- A real AI provider, a real Piston server, a real SMTP server and real map tiles.
+- A real AI provider answering ([above](#the-ai-assistant-against-a-real-account)), a real Piston
+  server, a real SMTP server and real map tiles.
+- Python in the browser outside Chromium, and on Vercel itself.
 - Scanning a QR code with a camera. The browser tests check in by code and location.
 - Browsers other than Chromium; real phones. This includes making photos smaller: a picture
   drawn in Chromium with a phone's orientation note was used, not a file from a camera, and

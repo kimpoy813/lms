@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Python sandbox</title>
+<!--
+  Where a student's Python program runs when it runs in the browser (frontend/src/lib/pyRunner).
+
+  The page that embeds this frame gives it `sandbox="allow-scripts"`, and the server sends it with
+  a Content-Security-Policy that says the same and allows no network at all. The frame therefore
+  has an origin of its own: no cookies, no storage, no access to the site. Whatever the program
+  does, it does in here.
+
+  The frame only starts the worker. Its text and everything Python needs arrive in one message
+  from the page; from then on the page talks to the worker directly through the port.
+-->
+</head>
+<body>
+<script>
+(() => {
+  let started = false;
+  addEventListener('message', (event) => {
+    if (started || event.source !== parent || event.data?.type !== 'boot') return;
+    started = true;
+    const { workerSource, port, assets, harness } = event.data;
+    const failed = (message) => event.source.postMessage({ type: 'sandbox-failed', message: String(message).slice(0, 300) }, event.origin);
+    try {
+      // A classic worker: a frame without an origin cannot start a module worker from a blob.
+      const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
+      worker.onerror = (error) => failed(error.message || 'The worker could not be started.');
+      worker.onmessageerror = () => failed('A message to the worker could not be read.');
+      worker.postMessage({ type: 'boot', port, assets, harness }, [port, assets.wasm, assets.stdlib]);
+    } catch (error) {
+      failed(error?.message ?? error);
+    }
+  });
+  parent.postMessage({ type: 'sandbox-ready' }, '*');
+})();
+</script>
+</body>
+</html>

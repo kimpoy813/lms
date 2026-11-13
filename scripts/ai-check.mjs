@@ -15,7 +15,7 @@
 //
 // Exit code: 0 when the assistant answered, 1 otherwise. The build treats 1 as a warning.
 import { resolveIdentity } from '../backend/src/lib/vercelIdentity.js';
-import { DEFAULT_GATEWAY_MODEL, VERCEL_AI_GATEWAY_URL, AiProviderError, chatCompletion } from '../backend/src/services/aiProvider.js';
+import { AiProviderError, aiTarget, chatCompletion, identityMayGoTo } from '../backend/src/services/aiProvider.js';
 
 const listModels = process.argv.includes('--models') || process.env.AI_CHECK === 'models';
 const say = (line = '') => console.log(`  ${line}`);
@@ -23,8 +23,7 @@ const env = (name) => process.env[name]?.trim() || '';
 
 const provider = env('AI_PROVIDER') || (listModels ? 'vercel-ai-gateway' : 'none');
 const gateway = provider === 'vercel-ai-gateway';
-const baseUrl = (env('AI_BASE_URL') || (gateway ? VERCEL_AI_GATEWAY_URL : 'https://api.openai.com/v1')).replace(/\/+$/, '');
-const model = env('AI_MODEL') || (gateway ? DEFAULT_GATEWAY_MODEL : 'gpt-4o-mini');
+const { baseUrl, model } = aiTarget({ provider, baseUrl: env('AI_BASE_URL'), model: env('AI_MODEL') });
 
 if (provider === 'none') {
   say('AI_PROVIDER is not set: the assistant is switched off, nothing to check.');
@@ -33,6 +32,10 @@ if (provider === 'none') {
 
 let bearer = env('AI_API_KEY');
 let who = 'the key in AI_API_KEY';
+if (!bearer && gateway && !identityMayGoTo(baseUrl)) {
+  say('✗ AI_BASE_URL points away from Vercel’s AI Gateway: the identity of the Vercel project is not sent there. Remove AI_BASE_URL, or set AI_API_KEY to a key of that service.');
+  process.exit(1);
+}
 if (!bearer && gateway) {
   const identity = resolveIdentity();
   if (identity.problem) say(`! ${identity.problem}`);
@@ -51,7 +54,7 @@ const QUESTION = 'Answer with this JSON object, filled in: { "ok": true, "capita
 async function ask(modelId, { timeoutMs = 60_000 } = {}) {
   const started = Date.now();
   try {
-    const out = await chatCompletion({ baseUrl, bearer, model: modelId, json: true, maxTokens: 600, timeoutMs, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: QUESTION }] });
+    const out = await chatCompletion({ baseUrl, bearer, model: modelId, json: true, maxTokens: 2000, timeoutMs, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: QUESTION }] });
     const ms = Date.now() - started;
     let data = null;
     try {
@@ -132,7 +135,7 @@ const advice = {
   verification: `Vercel gives its free credit only to accounts with a payment method on file. Add one${result.error?.link ? ` (${result.error.link})` : ' (Vercel dashboard → AI Gateway)'}, or use another AI service: AI_PROVIDER=openai-compatible with AI_BASE_URL, AI_API_KEY and AI_MODEL.`,
   credit: 'This month’s credit is used up. It comes back by itself; the assistant says so to teachers until then.',
   budget: 'A budget set in the Vercel dashboard (AI Gateway → Budgets) has been reached.',
-  model: `Choose another model with AI_MODEL. \`npm run ai:check -- --models\` lists the ones that suit and tries them.`,
+  model: `Choose another model with AI_MODEL. Vercel's free credit covers only some models (https://vercel.com/ai-gateway/models?freeTier=true); \`npm run ai:check -- --models\` lists the ones that suit the assistant and tries the likely ones.`,
   identity: gateway ? 'On Vercel the project’s identity is used; anywhere else AI_API_KEY must hold a key of the AI Gateway.' : 'Check AI_API_KEY.',
   busy: 'Too many requests for the moment. Nothing is wrong with the set-up.',
 }[result.error?.kind];

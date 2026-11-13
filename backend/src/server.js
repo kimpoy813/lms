@@ -34,7 +34,7 @@ async function main() {
     if (env.demoAccountsEnabled) logger.info('Demo accounts are ENABLED (non-production mode).');
     if (!env.realtime) logger.info('Real-time push is off; the web app refreshes its live screens on a timer.');
     if (env.storageDriver === 'database') logger.info('Uploaded files are kept in the database (STORAGE_DRIVER=database).');
-    if (!env.ai.configured) logger.info('AI authoring is not configured (set AI_PROVIDER and AI_API_KEY to enable it).');
+    if (!env.ai.configured) logger.info('The AI assistant for teachers is not set up (AI_PROVIDER; see docs/DEPLOYMENT.md).');
     if (!env.codeRunner.configured) logger.info('Code execution is not configured (set CODE_RUNNER_PROVIDER and CODE_RUNNER_URL to enable it).');
   });
 

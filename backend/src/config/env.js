@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { aiTarget } from '../services/aiProvider.js';
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -19,8 +20,10 @@ if (onVercel) {
   process.env.DATABASE_URL ||= process.env.POSTGRES_URL ?? '';
 }
 
-// Real environment variables always take precedence over .env files.
-if (process.env.NODE_ENV !== 'test') {
+// Real environment variables always take precedence over .env files. On Vercel no file is read:
+// the configuration is the project's settings alone. A .env that a build on somebody's own
+// computer swept into the function, with its development settings, must not take part.
+if (process.env.NODE_ENV !== 'test' && !onVercel) {
   for (const file of [path.join(backendRoot, '.env'), path.join(backendRoot, '..', '.env')]) {
     try {
       process.loadEnvFile(file);
@@ -118,11 +121,15 @@ const schema = z.object({
   MAP_TILE_URL: z.string().default('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
   MAP_TILE_ATTRIBUTION: z.string().default('&copy; OpenStreetMap contributors'),
 
-  AI_PROVIDER: z.enum(['none', 'openai-compatible']).default('none'),
-  AI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
+  // openai-compatible: any service with an OpenAI-style API and a key (AI_BASE_URL, AI_API_KEY, AI_MODEL).
+  // vercel-ai-gateway: Vercel's AI Gateway; on Vercel no key is needed, the project's identity is used.
+  AI_PROVIDER: z.enum(['none', 'openai-compatible', 'vercel-ai-gateway']).default('none'),
+  AI_BASE_URL: z.string().url().optional(),
   AI_API_KEY: optionalString,
-  AI_MODEL: z.string().default('gpt-4o-mini'),
-  AI_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+  AI_MODEL: optionalString,
+  // For the whole exchange with the service. On Vercel a request is cut off after 120 s
+  // (vercel.json), so the default there leaves time to tell the teacher what happened.
+  AI_TIMEOUT_MS: z.coerce.number().int().positive().default(onVercel ? 100000 : 120000),
   AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(8000),
   AI_INPUT_COST_PER_1K: z.coerce.number().min(0).default(0),
   AI_OUTPUT_COST_PER_1K: z.coerce.number().min(0).default(0),
@@ -188,6 +195,9 @@ function parseTrustProxy(value) {
 if (isProduction && raw.COOKIE_SAMESITE === 'none' && raw.COOKIE_SECURE === 'false') {
   refuse('COOKIE_SAMESITE=none requires COOKIE_SECURE=true.');
 }
+
+// Vercel's AI Gateway is asked with the project's own identity when no key is set.
+const aiGateway = raw.AI_PROVIDER === 'vercel-ai-gateway';
 
 // Programs checked in Vercel Sandbox machines. On Vercel the project's own identity starts them and
 // they run where the function runs; elsewhere an access token and a region have to be given.
@@ -266,15 +276,17 @@ export const env = Object.freeze({
 
   ai: {
     provider: raw.AI_PROVIDER,
-    baseUrl: raw.AI_BASE_URL.replace(/\/+$/, ''),
+    /** `baseUrl` and `model`: what was set, or the defaults of the provider (services/aiProvider.js). */
+    ...aiTarget({ provider: raw.AI_PROVIDER, baseUrl: raw.AI_BASE_URL, model: raw.AI_MODEL }),
     apiKey: raw.AI_API_KEY,
-    model: raw.AI_MODEL,
+    /** Asked with the identity of the Vercel project instead of a key (see services/ai.js). */
+    usesProjectIdentity: aiGateway && !raw.AI_API_KEY,
     timeoutMs: raw.AI_TIMEOUT_MS,
     maxOutputTokens: raw.AI_MAX_OUTPUT_TOKENS,
     inputCostPer1k: raw.AI_INPUT_COST_PER_1K,
     outputCostPer1k: raw.AI_OUTPUT_COST_PER_1K,
-    /** True only when a provider and a key are both configured. */
-    configured: raw.AI_PROVIDER !== 'none' && Boolean(raw.AI_API_KEY),
+    /** True when a provider is chosen and there is something to ask it with: a key, or on Vercel the project's identity. */
+    configured: raw.AI_PROVIDER !== 'none' && (Boolean(raw.AI_API_KEY) || (aiGateway && onVercel)),
   },
 
   codeRunner: {

@@ -1,4 +1,5 @@
-// AI studio: drafts of modules, questions, assignments and rubrics.
+// AI studio: drafts of modules, and of quizzes, examinations and assignments based on a module
+// the teacher chose (or on a topic), plus rubrics and writing help.
 // Everything the AI writes is a draft. Nothing reaches students until the teacher has
 // reviewed it and published it like any other content.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,7 +21,7 @@ import { RubricDialog } from './Rubrics.jsx';
 
 const TOOLS = [
   { value: 'module', label: 'Module', icon: Layers },
-  { value: 'questions', label: 'Questions', icon: FileQuestion },
+  { value: 'questions', label: 'Quiz or exam', icon: FileQuestion },
   { value: 'assignment', label: 'Assignment', icon: ClipboardList },
   { value: 'rubric', label: 'Rubric', icon: Table2 },
   { value: 'assistant', label: 'Writing help', icon: Wand2 },
@@ -29,11 +30,13 @@ const TOOLS = [
 /** Messages for the ways an AI request can fail. Returns true so the default toast is not shown. */
 function aiError(err, setError) {
   const text = {
-    AI_UNAVAILABLE: 'AI assistance is not set up on this server. Ask your administrator to configure an AI provider.',
+    AI_UNAVAILABLE: err.message || 'AI assistance is not set up on this server. Ask your administrator to connect an AI service.',
     AI_QUOTA_EXCEEDED: 'You have used all of today’s AI requests. The limit resets tomorrow.',
     AI_IN_PROGRESS: 'Another draft is still being generated. Wait for it to finish, then try again.',
     RATE_LIMITED: 'Too many requests in a short time. Wait a minute and try again.',
-  }[err.code] ?? err.fields?.topic ?? err.fields?.task ?? err.fields?.prompt ?? err.message;
+    // The server's sentence says what to do about it; the note for the field alone does not.
+    MODULE_HAS_NO_TEXT: err.message,
+  }[err.code] ?? err.fields?.moduleId ?? err.fields?.topic ?? err.fields?.task ?? err.fields?.prompt ?? err.message;
   setError(text);
   return true;
 }
@@ -58,7 +61,7 @@ export default function AiStudio() {
         actions={quota && ready ? <Badge tone={quota.remaining > 5 ? 'neutral' : 'warn'}>{quota.remaining} of {quota.limit} requests left today</Badge> : null} />
       {status.data && !ready && (
         <Alert tone="warn" className="mb-5" title="AI assistance is not set up on this server">
-          An administrator needs to add an AI provider key to the server configuration (<code>AI_PROVIDER</code>, <code>AI_API_KEY</code>, <code>AI_MODEL</code>). The forms below show what will be available; nothing is generated until then.
+          An administrator needs to connect an AI service (the deployment guide lists the choices, free ones among them). The forms below show what will be available; nothing is drafted until then.
         </Alert>
       )}
       <Tabs className="mb-5" value={tool} onChange={(next) => setParams({ tool: next })} tabs={TOOLS} />
@@ -67,7 +70,7 @@ export default function AiStudio() {
       {tool === 'assignment' && <AssignmentTool ready={ready} onDone={refreshQuota} />}
       {tool === 'rubric' && <RubricTool ready={ready} onDone={refreshQuota} />}
       {tool === 'assistant' && <AssistantTool ready={ready} onDone={refreshQuota} />}
-      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Only what you type or attach here is sent to the AI service — never student names, scores or submissions.</p>
+      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Only what you type, attach or choose here is sent to the AI service (for a module you choose: the text of its lessons) — never student names, scores or submissions.</p>
     </>
   );
 }
@@ -165,30 +168,90 @@ function ModuleTool({ ready, onDone, onOpen }) {
 }
 
 // ── Questions ────────────────────────────────────────────────────────────────
+// ── A module of the teacher's own as the material ───────────────────────────
+function useMaterial() {
+  return useQuery({ queryKey: ['ai', 'material'], queryFn: () => api.get('/ai/material'), staleTime: 60_000 });
+}
+
+/** Finds a module in what GET /ai/material answered. */
+const findModule = (material, moduleId) => {
+  for (const c of material ?? []) {
+    const found = c.modules.find((m) => m.id === moduleId);
+    if (found) return { ...found, classId: c.id, classLabel: c.label };
+  }
+  return null;
+};
+
+function ModulePicker({ material, value, onChange, emptyLabel }) {
+  const classes = (material.data ?? []).filter((c) => c.modules.length > 0);
+  return (
+    <Field label="Based on" hint={material.isError ? 'Your modules could not be loaded. You can still give a topic.' : material.data && classes.length === 0 ? 'You have no modules yet. Draft one under “Module”, or write lessons in one of your classes; until then, give a topic.' : 'The written lessons of the module are what the draft is made from.'}>
+      <Select value={value} onChange={(e) => onChange(e.target.value)} disabled={classes.length === 0}>
+        <option value="">{emptyLabel}</option>
+        {classes.map((c) => (
+          <optgroup key={c.id} label={c.label}>
+            {c.modules.map((m) => <option key={m.id} value={m.id} disabled={m.lessonCount === 0}>{m.title} ({m.lessonCount === 0 ? 'no lessons yet' : plural(m.lessonCount, 'lesson')})</option>)}
+          </optgroup>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** What the draft was made from, and what was left out of it. */
+function sourceNote(source) {
+  if (!source) return null;
+  const without = source.lessonCount - source.usedLessons;
+  return [
+    `Drafted from “${source.moduleTitle}” (${plural(source.usedLessons, 'lesson')}).`,
+    without > 0 && `${plural(without, 'lesson')} without text could not be used.`,
+    source.shortened && 'The module is long, so its lessons were shortened to fit; for a long module, give a focus to draft one part at a time.',
+  ].filter(Boolean).join(' ');
+}
+
+const PURPOSES = { QUIZ: { label: 'A quiz', noun: 'quiz' }, EXAM: { label: 'An examination', noun: 'examination' }, PRACTICE: { label: 'Practice (not graded)', noun: 'practice quiz' } };
+
 const AI_TYPES = ['MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER', 'FILL_BLANKS', 'MATCHING', 'ORDERING', 'ESSAY'];
 
 function QuestionsTool({ ready, onDone }) {
-  const [v, setV] = useState({ topic: '', sourceText: '', count: 5, types: ['MULTIPLE_CHOICE', 'TRUE_FALSE'], difficulty: 'MIXED' });
+  const material = useMaterial();
+  const [v, setV] = useState({ moduleId: '', purpose: 'QUIZ', topic: '', sourceText: '', count: 10, types: ['MULTIPLE_CHOICE', 'TRUE_FALSE'], difficulty: 'MIXED' });
   const [drafts, setDrafts] = useState([]);
   const [note, setNote] = useState(null);
   const [error, setError] = useState(null);
-  const generate = useAction(() => api.post('/ai/questions', { topic: v.topic.trim() || undefined, sourceText: v.sourceText.trim() || undefined, count: Number(v.count) || 5, types: v.types, difficulty: v.difficulty }), {
+  const chosen = findModule(material.data, v.moduleId);
+  const generate = useAction(() => api.post('/ai/questions', {
+    moduleId: v.moduleId || undefined, purpose: v.purpose, topic: v.topic.trim() || undefined, sourceText: v.moduleId ? undefined : v.sourceText.trim() || undefined,
+    count: Number(v.count) || 5, types: v.types, difficulty: v.difficulty,
+    // What is on the list already, so that another round brings new questions.
+    avoid: drafts.slice(-60).map((d) => String(d.text ?? '').slice(0, 1500)).filter(Boolean),
+  }), {
     onSuccess: (r) => {
       onDone();
       setDrafts((list) => [...list, ...r.questions.map((q, i) => ({ ...q, key: `${Date.now()}-${i}`, include: true }))]);
       const left = [r.rejected > 0 && `${r.rejected} incomplete`, r.skipped > 0 && `${r.skipped} of a type you did not ask for`].filter(Boolean).join(' and ');
-      setNote(r.questions.length === 0 ? 'No usable questions came back. Try again with a more specific topic.' : left ? `Some questions from the AI were left out: ${left}.` : null);
+      setNote([sourceNote(r.source), r.questions.length === 0 ? 'No usable questions came back. Try again, or give a more specific topic.' : left ? `Some questions from the AI were left out: ${left}.` : null].filter(Boolean).join(' ') || null);
     },
     onError: (err) => aiError(err, setError),
   });
   return (
     <div className="space-y-5">
       <Card>
-        <CardHeader icon={FileQuestion} title="Draft assessment questions" description="From a topic, or from text you paste — for example a lesson or a reading." />
+        <CardHeader icon={FileQuestion} title="Draft a quiz or an examination" description="Questions from one of your modules, or from a topic or a text of your own. You check them, then make a quiz of them or keep them in a question bank." />
         <form onSubmit={(e) => { e.preventDefault(); setError(null); generate.mutate(); }} className="space-y-4">
           {error && <Alert tone="bad">{error}</Alert>}
-          <Field label="Topic" hint="Required unless you paste source text."><Input value={v.topic} onChange={(e) => setV({ ...v, topic: e.target.value })} maxLength={300} placeholder="e.g. Parts of the CPU and the fetch–execute cycle" /></Field>
-          <Field label="Source text" optional hint="Questions are based only on this text."><Textarea rows={4} value={v.sourceText} onChange={(e) => setV({ ...v, sourceText: e.target.value })} maxLength={40000} /></Field>
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
+            <ModulePicker material={material} value={v.moduleId} onChange={(moduleId) => setV({ ...v, moduleId })} emptyLabel="A topic or a text of my own" />
+            <Field label="For"><Select value={v.purpose} onChange={(e) => setV({ ...v, purpose: e.target.value })}>{Object.entries(PURPOSES).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}</Select></Field>
+          </div>
+          {v.moduleId
+            ? <Field label="Focus" optional hint="Leave empty to cover the whole module."><Input value={v.topic} onChange={(e) => setV({ ...v, topic: e.target.value })} maxLength={300} placeholder="e.g. only the fetch–execute cycle" /></Field>
+            : (
+              <>
+                <Field label="Topic" hint="Required unless you paste source text."><Input value={v.topic} onChange={(e) => setV({ ...v, topic: e.target.value })} maxLength={300} placeholder="e.g. Parts of the CPU and the fetch–execute cycle" /></Field>
+                <Field label="Source text" optional hint="Questions are based only on this text."><Textarea rows={4} value={v.sourceText} onChange={(e) => setV({ ...v, sourceText: e.target.value })} maxLength={40000} /></Field>
+              </>
+            )}
           <fieldset>
             <legend className="mb-1.5 text-sm font-medium text-ink">Question types</legend>
             <div className="flex flex-wrap gap-x-5 gap-y-2">{AI_TYPES.map((t) => <Checkbox key={t} label={QUESTION_TYPES[t].label} checked={v.types.includes(t)} onChange={(e) => setV({ ...v, types: e.target.checked ? [...v.types, t] : v.types.filter((x) => x !== t) })} />)}</div>
@@ -196,15 +259,16 @@ function QuestionsTool({ ready, onDone }) {
           <div className="flex flex-wrap items-end gap-4">
             <Field label="How many" className="w-28"><Input type="number" min="1" max="20" value={v.count} onChange={(e) => setV({ ...v, count: e.target.value })} /></Field>
             <Field label="Difficulty" className="w-44"><Select value={v.difficulty} onChange={(e) => setV({ ...v, difficulty: e.target.value })}><option value="MIXED">Mixed</option><option value="EASY">Easy</option><option value="MEDIUM">Medium</option><option value="HARD">Hard</option></Select></Field>
-            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || v.types.length === 0 || (!v.topic.trim() && !v.sourceText.trim())}>Draft questions</Button>
+            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || v.types.length === 0 || (!v.moduleId && !v.topic.trim() && !v.sourceText.trim())}>{drafts.length > 0 ? 'Draft more questions' : 'Draft questions'}</Button>
           </div>
+          <p className="text-xs text-faint">Up to 20 questions at a time. For a longer examination, draft again: the new questions are added to the list below and do not repeat it.</p>
         </form>
       </Card>
       {note && <Alert tone="info">{note}</Alert>}
       {drafts.length > 0 && (
         <Card>
-          <CardHeader title={`${plural(drafts.length, 'draft question')} to review`} description="Check each answer key. Untick or discard what you do not want, then save the rest to a question bank." />
-          <QuestionDrafts drafts={drafts} setDrafts={setDrafts} defaultBankTitle={v.topic.trim().slice(0, 120)} />
+          <CardHeader title={`${plural(drafts.length, 'draft question')} to review`} description="Check each answer key. Untick or discard what you do not want, then make a quiz of the rest or save them to a question bank." />
+          <QuestionDrafts drafts={drafts} setDrafts={setDrafts} defaultBankTitle={(chosen?.title ?? v.topic.trim()).slice(0, 120)} quiz={{ kind: v.purpose, noun: PURPOSES[v.purpose].noun, module: chosen }} />
         </Card>
       )}
     </div>
@@ -215,17 +279,23 @@ function QuestionsTool({ ready, onDone }) {
 function AssignmentTool({ ready, onDone }) {
   const navigate = useNavigate();
   const classes = useTeachingClasses();
-  const [v, setV] = useState({ topic: '', details: '', points: 100, withRubric: true });
+  const material = useMaterial();
+  const [v, setV] = useState({ moduleId: '', topic: '', details: '', points: 100, withRubric: true });
   const [draft, setDraft] = useState(null);
   const [classId, setClassId] = useState('');
   const [error, setError] = useState(null);
-  const generate = useAction(() => api.post('/ai/assignment', { topic: v.topic.trim(), details: v.details.trim() || undefined, points: Number(v.points) || 100, withRubric: v.withRubric }), {
-    onSuccess: (r) => { onDone(); setDraft(r); },
+  const generate = useAction(() => api.post('/ai/assignment', { moduleId: v.moduleId || undefined, topic: v.topic.trim() || undefined, details: v.details.trim() || undefined, points: Number(v.points) || 100, withRubric: v.withRubric }), {
+    // A draft made from a module belongs to that module's class unless the teacher says otherwise.
+    onSuccess: (r) => { onDone(); setDraft(r); if (r.source?.classId) setClassId(r.source.classId); },
     onError: (err) => aiError(err, setError),
   });
   const create = useAction(async () => {
     const rubric = draft.rubric ? await api.post('/rubrics', draft.rubric) : null;
-    return api.post(`/classes/${classId}/assignments`, { title: draft.title, instructionsHtml: draft.instructionsHtml, points: rubric?.totalPoints ?? draft.points, rubricId: rubric?.id ?? null, status: 'DRAFT' });
+    return api.post(`/classes/${classId}/assignments`, {
+      title: draft.title, instructionsHtml: draft.instructionsHtml, points: rubric?.totalPoints ?? draft.points, rubricId: rubric?.id ?? null, status: 'DRAFT',
+      // Listed with the module it was made from, when it stays in that module's class.
+      ...(draft.source?.classId === classId ? { moduleId: draft.source.moduleId } : {}),
+    });
   }, {
     invalidate: [['rubrics'], ['class', classId]], success: 'Saved as a draft assignment. Set the dates and publish it when you are ready.',
     onSuccess: (a) => navigate(`/classes/${classId}/assignments/${a.id}`),
@@ -233,15 +303,16 @@ function AssignmentTool({ ready, onDone }) {
   return (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
       <Card className="min-w-0 xl:self-start">
-        <CardHeader icon={ClipboardList} title="Draft an assignment" description="Instructions for students, with an optional grading rubric." />
+        <CardHeader icon={ClipboardList} title="Draft an assignment" description="Instructions for students, based on one of your modules or on a topic, with an optional grading rubric." />
         <form onSubmit={(e) => { e.preventDefault(); setError(null); generate.mutate(); }} className="space-y-4">
           {error && <Alert tone="bad">{error}</Alert>}
-          <Field label="What is the assignment about?"><Input value={v.topic} onChange={(e) => setV({ ...v, topic: e.target.value })} required minLength={3} maxLength={300} placeholder="e.g. A reflection essay on technology in daily life" /></Field>
+          <ModulePicker material={material} value={v.moduleId} onChange={(moduleId) => setV({ ...v, moduleId })} emptyLabel="A topic of my own" />
+          <Field label="What is the assignment about?" optional={Boolean(v.moduleId)} hint={v.moduleId ? 'Leave empty to let the module decide.' : undefined}><Input value={v.topic} onChange={(e) => setV({ ...v, topic: e.target.value })} required={!v.moduleId} minLength={3} maxLength={300} placeholder="e.g. A reflection essay on technology in daily life" /></Field>
           <Field label="Details" optional hint="Length, format, what to submit, anything specific to your class."><Textarea rows={3} value={v.details} onChange={(e) => setV({ ...v, details: e.target.value })} maxLength={2000} /></Field>
           <div className="flex flex-wrap items-end gap-4">
             <Field label="Points" className="w-28"><Input type="number" min="1" max="1000" value={v.points} onChange={(e) => setV({ ...v, points: e.target.value })} /></Field>
             <Checkbox className="mb-2" label="Also draft a rubric" checked={v.withRubric} onChange={(e) => setV({ ...v, withRubric: e.target.checked })} />
-            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || v.topic.trim().length < 3}>Draft assignment</Button>
+            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || (v.moduleId ? v.topic.trim().length > 0 && v.topic.trim().length < 3 : v.topic.trim().length < 3)}>Draft assignment</Button>
           </div>
         </form>
       </Card>
@@ -250,6 +321,7 @@ function AssignmentTool({ ready, onDone }) {
         {!draft ? <EmptyState compact icon={BookOpenCheck} title="The draft appears here" /> : (
           <div className="space-y-4">
             <div><p className="text-lg font-semibold text-ink">{draft.title}</p><p className="text-[13px] text-faint">{formatScore(draft.points)} points</p></div>
+            {draft.source && <Alert tone="info">{sourceNote(draft.source)}</Alert>}
             <RichText html={draft.instructionsHtml} />
             {draft.rubric && (
               <div>

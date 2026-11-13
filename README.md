@@ -7,7 +7,7 @@ administrators, teachers and students.
 - **Backend** — Node.js 22 or newer, Express 5, PostgreSQL through Prisma, Socket.IO
 - **Web app** — React 19, React Router 7, TanStack Query, Tailwind CSS 4 (installable, works on phones)
 - **Hosting** — one Node.js server, or Vercel with a Neon database ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md))
-- **Tests** — 435 API and unit tests, 40 web-app unit tests, 37 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
+- **Tests** — 487 API and unit tests, 230 web-app unit tests, 47 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
 
 ## Quick start
 
@@ -63,8 +63,8 @@ administrator, who must change the password at first sign-in.
 | Grades | Grading periods and weighted categories, grading scales, transmutation, overrides with reasons, history, appeals, publishing, exports. See [docs/GRADING.md](docs/GRADING.md) |
 | Communication | Announcements, direct messages, class discussions, notifications (in-app, real time; e-mail optional), calendar, consultation booking |
 | Insight | Dashboards per role, class analytics, at-risk indicators |
-| Coding exercises | Problems with visible and hidden tests in Python, Java, C, C++ and JavaScript. Programs are run and checked outside EduSphere: in throw-away machines on Vercel, or by a judge server you run (optional) |
-| AI-assisted authoring | Drafts of modules, questions, rubrics and assignments that a teacher reviews before anything reaches a class (optional) |
+| Coding exercises | Problems with visible and hidden tests in Python, Java, C, C++ and JavaScript. Python that a student is only trying out runs in the student's own browser, as often as they like. What counts is run and checked outside EduSphere: in throw-away machines on Vercel, or by a judge server you run (optional) |
+| AI-assisted authoring | Drafts of modules, quizzes, examinations, rubrics and assignments, from a topic, a document or a module the teacher chooses. A teacher reviews every draft before anything reaches a class (optional) |
 | Administration | A set-up guide for a new school, users (import from CSV), enrolment, settings, per-role permissions, audit log |
 
 ## Optional services
@@ -74,12 +74,15 @@ feature says that it is not set up.
 
 | Service | Configure | Without it |
 |---|---|---|
-| AI authoring | `AI_PROVIDER=openai-compatible`, `AI_API_KEY`, `AI_MODEL` (any OpenAI-compatible chat-completions API) | The AI studio explains that AI is not set up; no drafts are generated |
+| AI authoring | On Vercel: `AI_PROVIDER=vercel-ai-gateway`, nothing else (Vercel wants a payment card on the account first). Or any OpenAI-compatible chat-completions API: `AI_PROVIDER=openai-compatible` with `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`. [The choices, and what is free](docs/DEPLOYMENT.md#the-ai-assistant) | The AI studio explains that AI is not set up; no drafts are generated |
 | Code judge | On Vercel: `CODE_RUNNER_PROVIDER=vercel-sandbox`, nothing else ([how it works](docs/DEPLOYMENT.md#checking-students-programs)). Or `CODE_RUNNER_PROVIDER=piston` with `CODE_RUNNER_URL` (a sandboxed [Piston](https://github.com/engineer-man/piston) instance) | Students can write code but not run it; programs in quizzes are marked by the teacher |
 | E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | No e-mail is sent, and the site says so instead of promising one: “Forgot password” tells people to ask the school, administrators issue temporary passwords, addresses are not verified, and the settings that need e-mail cannot be switched on. In development, messages are kept in a mailbox readable at `GET /api/dev/mailbox` from the same computer |
 | Map tiles | `MAP_TILE_URL` (defaults to OpenStreetMap) | The classroom picker shows a plain grid; coordinates can be typed or taken from the device |
 
-Student code is never executed by EduSphere itself.
+Student code is never executed on EduSphere's server. Python that a student is trying out runs in
+that student's own browser, shut into a sandbox that can reach neither the site nor the network
+([how](docs/SECURITY.md#python-in-the-browser)); an administrator can switch that off under
+**Settings → Programming**.
 
 ## Commands
 
@@ -125,7 +128,7 @@ backend/     API: src/modules/<feature>, src/services, src/middleware, prisma/ (
 frontend/    Web app: src/pages, src/components, src/lib, src/layout
 api/         The API as a Vercel Function (entry point only)
 e2e/         Browser tests (Playwright); vercel/serve.mjs runs a Vercel build locally
-scripts/     dev.mjs (one-command launcher), embedded-postgres.mjs, vercel-build.mjs, smoke.mjs
+scripts/     dev.mjs (one-command launcher), embedded-postgres.mjs, vercel-build.mjs, smoke.mjs, ai-check.mjs
 docs/        Architecture, deployment, security and privacy, attendance, grading, testing, API reference
 vercel.json  Build, routing and security headers on Vercel
 ```
@@ -140,13 +143,29 @@ vercel.json  Build, routing and security headers on Vercel
 - [Testing](docs/TESTING.md)
 - [API reference](docs/API.md) (generated)
 
+## Python in the browser: whose software it is
+
+The Python that runs in students' browsers is [Pyodide](https://pyodide.org) 314.0.7: CPython
+3.14 built for WebAssembly. Its files are served as they come in the `pyodide` npm package,
+unchanged. Pyodide is distributed under the Mozilla Public License 2.0 and its source is at
+<https://github.com/pyodide/pyodide>; CPython and the libraries built into it come under their
+own licences, which that project lists.
+
 ## Known limits
 
 Read this before relying on EduSphere for real classes.
 
 - **Checked only against local stand-ins.** AI authoring and the Piston judge were developed and
   tested against fake services, never against a real AI provider or a real Piston instance.
+  Vercel's AI Gateway was asked for real once, from a build, and refused every model until a
+  payment card is on the account ([what was seen](docs/TESTING.md#the-ai-assistant-against-a-real-account)).
   E-mail was never sent through a real SMTP server.
+- **Python in the browser is close to the server's Python, not identical.** It is the same
+  language version (3.14) built for the browser. Programs that use files, threads, the network or
+  third-party packages, and results that can differ between the two (the order of a set, the last
+  digits of a decimal number, very deep recursion, memory limits) are handed to the server's code
+  runner instead of being judged in the browser. Tried in Chromium only; the first run downloads
+  about 13 MB (less where the host compresses). "Submit for checking" and quiz answers never rely on it.
 - **The Vercel Sandbox judge was run for real, but not by a class.** From a Vercel build it
   prepared its machine image and passed `scripts/judge-image.mjs --full` on a real account (all
   five languages, and the programs a judge has to withstand; see [docs/TESTING.md](docs/TESTING.md#the-code-runner-against-a-real-account)).

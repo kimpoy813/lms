@@ -29,8 +29,8 @@ const SECTIONS = [
     'You see your own records. Classmates see your name and picture, and only if your teacher shows the class list.',
     'Your teachers see your work, scores and attendance in their own classes only.',
     'School administrators can see records as needed to manage accounts and classes; what they do is logged.',
-    'If a teacher uses the AI drafting tool, the text they provide (for example a topic or a reference document) is sent to the AI service the school configured. Student records are never sent to it.',
-    'When a program you wrote is run or checked, the program and the test inputs are sent to a separate computer that exists only for that run, at the service the school uses for it. Your name and your other records are not sent with it. That computer has no access to the internet and is deleted afterwards.',
+    'If a teacher uses the AI drafting tool, the text they provide (for example a topic, a reference document, or the lessons of a module they choose) is sent to the AI service the school configured. Student records are never sent to it.',
+    'When you try out a Python program, it usually runs on your own device, inside your browser, and is sent nowhere. When a program is checked for a score, or cannot be run in the browser, the program and the test inputs are sent to a separate computer that exists only for that run, at the service the school uses for it. Your name and your other records are not sent with it. That computer has no access to the internet and is deleted afterwards.',
   ]],
   ['How long we keep it', [
     'Academic records are kept for as long as the school is required to keep them. Classes are archived, not deleted, at the end of a term.',
