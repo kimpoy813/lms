@@ -75,6 +75,10 @@ export const SETTING_DEFINITIONS = {
   'analytics.atRiskMissingAtLeast': {
     default: 2, schema: int(1, 50), public: true, group: 'At-risk indicators', label: 'Flag when missing submissions reach',
   },
+  'programming.runPythonInBrowser': {
+    default: true, schema: z.boolean(), public: true, group: 'Programming', label: 'Try Python programs in the student’s browser',
+    help: '“Run sample tests” and “Try my own input” then run a Python program on the student’s own device and use nothing of the code runner’s allowance. Programs the browser cannot run faithfully still go to the server, and so does every submission that counts.',
+  },
   'ai.dailyRequestLimit': {
     default: 30, schema: int(0, 1000), group: 'AI', label: 'AI requests per teacher per day', help: '0 disables AI features.',
   },

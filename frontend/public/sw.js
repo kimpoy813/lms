@@ -3,6 +3,8 @@
 // What it caches: the application shell (HTML, hashed JS/CSS, fonts, icons).
 // What it never caches: anything under /api or /socket.io — grades, attendance and messages are
 // private, change constantly, and must always come from the server.
+// What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
+// page has to come from the server with its own security headers, and is not the app's page.
 const VERSION = 'edusphere-v1';
 const SHELL = ['/', '/offline.html', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png'];
 
@@ -21,14 +23,17 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/') || url.pathname.startsWith('/pyrunner/')) return;
 
   // Page loads: network first, then the cached shell, then the offline page.
   if (request.mode === 'navigate') {
+    // Every address of the app answers with the same page, which is kept as the shell. An
+    // address that names a file (/offline.html, a frame) is some other page and must not replace it.
+    const isAppPage = !url.pathname.split('/').pop().includes('.');
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response.ok) {
+          if (response.ok && isAppPage) {
             const copy = response.clone(); // clone before the page consumes the body
             caches.open(VERSION).then((cache) => cache.put('/', copy));
           }

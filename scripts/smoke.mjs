@@ -82,6 +82,16 @@ if (script) {
 check('a missing script is a 404, not the app page', (await call('GET', '/assets/not-there.js')).status === 404);
 const worker = await call('GET', '/sw.js');
 check('the service worker is served as a script', worker.status === 200 && (worker.headers.get('content-type') ?? '').includes('javascript'));
+// The frame in which students' Python programs run in the browser. Its policy is what keeps a
+// program away from the site and the network; with the pages' policy instead, Python would not start.
+const frame = await call('GET', '/pyrunner/frame.html');
+const framePolicy = (frame.headers.get('content-security-policy') ?? '').split(';').map((part) => part.trim());
+check('the frame for Python programs is served', frame.status === 200 && frame.text.includes('Python sandbox'), `status ${frame.status}`);
+check(
+  'that frame is shut off from the site and from the network',
+  framePolicy.includes('sandbox allow-scripts') && framePolicy.includes("default-src 'none'") && framePolicy.includes("connect-src 'none'"),
+  `its Content-Security-Policy is "${framePolicy.join(';').slice(0, 160)}"`,
+);
 
 // ── The API is one function behind /api, /healthz and /readyz ────────────────────────────────
 const health = await call('GET', '/healthz');

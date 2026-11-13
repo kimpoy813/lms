@@ -7,8 +7,9 @@ import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { sendCsv, toCsv } from '../../lib/csv.js';
 import { fullName, ok, pageMeta, pageQuery, paging, zDateTime, zId } from '../../lib/http.js';
 import { requireRole } from '../../middleware/auth.js';
-import { codeRunLimiter } from '../../middleware/rateLimit.js';
+import { aiLimiter, codeRunLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
+import { aiHealth, checkAi } from '../../services/ai.js';
 import { audit } from '../../services/audit.js';
 import { checkCodeRunner, codeRunnerConfigured, codeRunnerHealth } from '../../services/codeRunner.js';
 import { mailAvailable, mailConfigured } from '../../services/mail.js';
@@ -58,7 +59,13 @@ adminSystemRouter.get('/status', async (req, res) => {
     demoAccountsEnabled: env.demoAccountsEnabled,
     mailConfigured: mailConfigured(),
     mailAvailable: mailAvailable(),
-    ai: { configured: env.ai.configured, provider: env.ai.provider, model: env.ai.configured ? env.ai.model : null },
+    ai: {
+      configured: env.ai.configured, provider: env.ai.provider, model: env.ai.configured ? env.ai.model : null,
+      // "key" or "project identity": never the key itself.
+      askedWith: env.ai.configured ? (env.ai.usesProjectIdentity ? 'project identity' : 'key') : null,
+      // What this instance of the API saw last. Each instance of a hosted function has its own view.
+      ...aiHealth(),
+    },
     codeRunner: {
       configured: codeRunnerConfigured(), provider: env.codeRunner.provider,
       region: env.codeRunner.provider === 'vercel-sandbox' ? env.codeRunner.region : null,
@@ -81,6 +88,14 @@ adminSystemRouter.get('/status', async (req, res) => {
  */
 adminSystemRouter.post('/code-runner/check', codeRunLimiter, async (req, res) => {
   ok(res, await checkCodeRunner());
+});
+
+/**
+ * Does the AI service answer? One small request (a fraction of a cent where the service is paid
+ * for), and the answer says which model replied and how quickly, or what the service said instead.
+ */
+adminSystemRouter.post('/ai/check', aiLimiter, async (req, res) => {
+  ok(res, await checkAi());
 });
 
 // ── Role permissions ──────────────────────────────────────────────────────────

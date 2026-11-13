@@ -3,7 +3,8 @@ import globals from 'globals';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default [
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/.local/**', '**/coverage/**', 'e2e/test-results/**', 'e2e/playwright-report/**', 'backend/storage/**'] },
+  // .vercel/output is what `vercel build` writes when the Vercel build is tried locally (docs/TESTING.md).
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/.local/**', '**/coverage/**', '.vercel/**', 'e2e/test-results/**', 'e2e/playwright-report/**', 'backend/storage/**'] },
   js.configs.recommended,
   {
     files: ['**/*.{js,mjs,jsx}'],

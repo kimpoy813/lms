@@ -9,6 +9,7 @@ import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { codeRunLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { LANGUAGES, codeRunnerStatus, judge, maskResult, runCode } from '../../services/codeRunner.js';
+import { getSetting } from '../../services/settings.js';
 import { classLabel, loadClassAccess, requireWritableClassManager } from '../classes/access.js';
 
 export const programmingRouter = Router();
@@ -18,7 +19,15 @@ const languageIds = Object.keys(LANGUAGES);
 const zLanguage = z.enum(languageIds);
 const zCode = z.string().min(1).max(100_000);
 
-programmingRouter.get('/status', (req, res) => ok(res, codeRunnerStatus()));
+/**
+ * What runs programs: the code runner on the server, and for trying a program out (the sample
+ * tests, an input of one's own) the languages the web app may run in the browser instead.
+ */
+async function runnerStatus() {
+  return { ...codeRunnerStatus(), inBrowser: (await getSetting('programming.runPythonInBrowser')) ? ['PYTHON'] : [] };
+}
+
+programmingRouter.get('/status', async (req, res) => ok(res, await runnerStatus()));
 
 const caseBody = z.object({
   input: z.string().max(20_000).default(''),
@@ -47,7 +56,8 @@ function problemView(p, forStudent) {
   return {
     id: p.id, title: p.title, statementHtml: p.statementHtml, classId: p.classId, classLabel: p.class ? classLabel(p.class) : null,
     allowedLanguages: p.allowedLanguages, starterCode: p.starterCode ?? {}, timeLimitMs: p.timeLimitMs, memoryLimitKb: p.memoryLimitKb,
-    testCases: cases.map((t) => ({ id: t.id, input: t.input, expectedOutput: t.expectedOutput, ...(forStudent ? {} : { isHidden: t.isHidden, weight: t.weight, comparison: t.comparison }) })),
+    // How the output is compared is no secret, and the web app needs it to check a sample test itself.
+    testCases: cases.map((t) => ({ id: t.id, input: t.input, expectedOutput: t.expectedOutput, comparison: t.comparison, ...(forStudent ? {} : { isHidden: t.isHidden, weight: t.weight }) })),
     hiddenTestCount: p.testCases.filter((t) => t.isHidden).length,
     ...(forStudent ? {} : { partialCredit: p.partialCredit, updatedAt: p.updatedAt }),
   };
@@ -118,7 +128,7 @@ programmingRouter.post('/problems', requireRole('TEACHER', 'ADMIN'), validate({ 
 
 programmingRouter.get('/problems/:problemId', validate({ params: idParams('problemId'), query: z.object({ studentAnswerId: zId.optional() }) }), async (req, res) => {
   const { problem, manage } = await loadProblem(req.user, req.valid.params.problemId, req.valid.query);
-  ok(res, { ...problemView(problem, !manage), runner: codeRunnerStatus() });
+  ok(res, { ...problemView(problem, !manage), runner: await runnerStatus() });
 });
 
 programmingRouter.patch('/problems/:problemId', requireRole('TEACHER', 'ADMIN'), validate({ params: idParams('problemId'), body: patchOf(problemBody) }), async (req, res) => {

@@ -159,7 +159,7 @@ Each one sits behind a small service with a replaceable transport, which is how 
 | Service | File | When it is not configured |
 |---|---|---|
 | E-mail (SMTP) | `services/mail.js` | Messages are kept in a development mailbox; nothing is sent |
-| AI provider | `services/ai.js` | `503 AI_UNAVAILABLE` |
+| AI provider | `services/ai.js`, with `services/aiProvider.js` for the request itself and what a refusal means | `503 AI_UNAVAILABLE` |
 | Code judge | `services/codeRunner.js`, with `services/judge/` for Vercel Sandbox | `503 CODE_RUNNER_UNAVAILABLE`; programs in quizzes go to manual grading |
 
 The code judge has two kinds of back-end. A Piston server is asked once per test. Vercel Sandbox
@@ -170,6 +170,13 @@ busy or still being prepared answers `503 CODE_RUNNER_BUSY` or `503 CODE_RUNNER_
 the web app treats as "ask again", not as "broken". See
 [DEPLOYMENT.md](DEPLOYMENT.md#checking-students-programs) and [SECURITY.md](SECURITY.md#running-students-programs).
 
+The AI provider is any service with an OpenAI-style chat-completions API, or Vercel's AI Gateway
+asked with the project's identity instead of a key (the same identity the code judge uses,
+`lib/vercelIdentity.js`). `services/aiProvider.js` sends one request and turns a refusal into a
+reason; `services/ai.js` decides what follows from the reason: ask once more (busy), tell the
+teacher to try again, or send for an administrator (`503 AI_NEEDS_ATTENTION`), who finds the
+service's own words under Settings. See [DEPLOYMENT.md](DEPLOYMENT.md#the-ai-assistant).
+
 ## Web app
 
 - **Routing**: `src/App.jsx` lists every route. `Protected` requires a session, `Only` restricts by role. Heavy screens (editor, charts, map, code editor) are loaded on demand.
@@ -178,6 +185,7 @@ the web app treats as "ask again", not as "broken". See
 - **Dates**: all dates are shown in the institution's time zone (`src/lib/format.js`), not the device's, so "due 11:59 PM" means the same for everyone.
 - **User-written HTML** is rendered only through `components/RichText.jsx`. It was sanitised by the server when it was stored, and the Content-Security-Policy forbids inline scripts.
 - **Offline**: a service worker caches the application shell only. API responses are never cached, so no private data is left on a shared computer.
+- **Python in the browser**: `src/lib/pyRunner/`. A Python program that is only being tried runs in a worker inside a sandboxed frame (`public/pyrunner/frame.html`), on Pyodide; `index.js` decides between the browser and the server and answers in the shape of the API's `…/run`, so the code editor does not care which of the two ran the program. `harness.py` runs the program the way the server's runner does and names what the browser's Python cannot do faithfully; `judge.js` holds the server's comparison and limits, and a test keeps the two alike. The page fetches Python's files and hands them into the frame, which has no network of its own. See [SECURITY.md](SECURITY.md#python-in-the-browser).
 - **Styling**: Tailwind CSS 4 with theme tokens in `src/index.css` (light and dark).
 
 ## Why these choices
@@ -190,3 +198,5 @@ the web app treats as "ask again", not as "broken". See
 | One code base for a server and for Vercel | The differences are three services with two back-ends each, so every feature is tested once and works in both |
 | Prisma's JavaScript engines | Installation needs no native binary downloads |
 | Pure functions for grading, scoring and geofencing | The rules that matter most can be tested without a database |
+| Trying Python in the browser, checking on the server | Practice is most of what a class runs, and in the browser it costs nothing and answers at once. A score needs hidden tests and a result the student cannot have made up, so it stays on the server |
+| CodeMirror for the code editor, not Monaco | Students write on phones, which Monaco's own documentation says it does not support; it is also several megabytes where the CodeMirror part of the build is about 250 kB compressed, and it would not change how programs are run |

@@ -17,6 +17,7 @@ const GROUP_HELP = {
   Security: 'Protection against password guessing.',
   Attendance: 'Limits for QR and location-verified check-in.',
   'At-risk indicators': 'When a student is flagged for a teacher’s attention. Flags are hints, never a grade.',
+  Programming: 'How a program is run when a student tries it out. What counts is always checked on the server.',
 };
 
 export default function AdminSettings() {
@@ -83,8 +84,12 @@ export default function AdminSettings() {
               {(s) => (
                 <ul className="space-y-3 text-sm">
                   <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText={s.mailAvailable === false ? 'Not configured. Nothing is e-mailed: when someone forgets a password, open the account under Users and choose “Reset password”.' : 'Not configured. Messages are kept in the development mailbox instead of being sent.'} />
-                  <Service icon={Bot} name="AI drafting" on={s.ai.configured} onText={`Provider: ${s.ai.provider}${s.ai.model ? ` · ${s.ai.model}` : ''}`} offText="Not configured. The AI studio shows a notice and generates nothing." />
-                  <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={RUNNER_TEXT[s.codeRunner.provider]?.(s.codeRunner) ?? `Provider: ${s.codeRunner.provider}`} offText="Not configured. Code is not run: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be checked.">
+                  <Service icon={Bot} name="AI assistant for teachers" on={s.ai.configured}
+                    onText={`${AI_PROVIDERS[s.ai.provider] ?? s.ai.provider}${s.ai.model ? `, model ${s.ai.model}` : ''}${s.ai.askedWith === 'project identity' ? '. Asked with the identity of this site’s Vercel project; no key is stored.' : '.'}`}
+                    offText="Not set up. The AI studio shows a notice and drafts nothing.">
+                    {s.ai.configured && <AiCheck last={s.ai} />}
+                  </Service>
+                  <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={RUNNER_TEXT[s.codeRunner.provider]?.(s.codeRunner) ?? `Provider: ${s.codeRunner.provider}`} offText="Not configured. Programs are not checked: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be submitted. Python can still be tried in the browser while that is switched on under “Programming”.">
                     {s.codeRunner.configured && <CodeRunnerCheck provider={s.codeRunner.provider} />}
                   </Service>
                   <li className="border-t border-line pt-3 text-[13px] text-soft">
@@ -121,6 +126,68 @@ function Service({ icon: Icon, name, on, onText, offText, children }) {
         {children}
       </div>
     </li>
+  );
+}
+
+const AI_PROVIDERS = { 'vercel-ai-gateway': 'Vercel AI Gateway', 'openai-compatible': 'A service with an OpenAI-compatible API' };
+
+/** Only a page of Vercel's own is ever made a link (the server checks the same); anything else stays text. */
+function vercelPage(link) {
+  try {
+    const url = new URL(String(link ?? ''));
+    return url.protocol === 'https:' && url.hostname === 'vercel.com' && !url.username && !url.password && !url.port ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What an AI service said when it refused, with the page to fix it on where Vercel names one. */
+function AiFailure({ failure }) {
+  const link = vercelPage(failure.link);
+  return (
+    <div className="mt-2 rounded-xl border border-line p-3 text-[13px]">
+      <p className="flex items-center gap-1.5 font-medium text-bad"><XCircle className="size-4 shrink-0" aria-hidden="true" />{failure.message}</p>
+      {failure.detail && <p className="mt-1 break-words text-xs text-faint">{failure.detail}</p>}
+      {link && <p className="mt-1.5"><a className="font-medium text-brand underline-offset-2 hover:underline" href={link} target="_blank" rel="noreferrer">Open the page on vercel.com</a></p>}
+    </div>
+  );
+}
+
+/** "Is it working?" — asks the AI service one small question and shows what came back. */
+function AiCheck({ last }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [failure, setFailure] = useState(null);
+  const run = async () => {
+    setBusy(true);
+    setFailure(null);
+    try {
+      setResult(await api.post('/admin/ai/check', {}));
+    } catch (err) {
+      setResult(null);
+      setFailure(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Before a check: what teachers ran into last, if that is the latest news.
+  const earlier = !result && !failure && last.lastFailure && (!last.lastSuccessAt || last.lastFailureAt > last.lastSuccessAt) ? last.lastFailure : null;
+  return (
+    <div className="mt-2">
+      <Button size="sm" variant="secondary" icon={PlayCircle} loading={busy} onClick={run}>{busy ? 'Asking…' : 'Check now'}</Button>
+      {!result && !failure && !earlier && <p className="mt-1 text-xs text-faint">Asks the AI service one small question. Takes a few seconds.</p>}
+      <div aria-live="polite">
+        {failure && <p className="mt-2 text-[13px] text-bad">{failure}</p>}
+        {earlier && <><p className="mt-2 text-xs text-faint">The last request of a teacher failed:</p><AiFailure failure={earlier} /></>}
+        {result?.ok && (
+          <div className="mt-2 rounded-xl border border-line p-3 text-[13px]">
+            <p className="flex items-center gap-1.5 font-medium text-ok"><CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />The AI service answers.{result.ms ? <span className="ml-auto whitespace-nowrap font-normal text-faint">{(result.ms / 1000).toFixed(1)} s</span> : null}</p>
+            <p className="mt-1 text-xs text-faint">Model {result.model}. Its answer began: “{result.answer}”</p>
+          </div>
+        )}
+        {result && !result.ok && <AiFailure failure={result.failure} />}
+      </div>
+    </div>
   );
 }
 

@@ -11,9 +11,12 @@
 import { env } from '../config/env.js';
 import { canFinishAfterResponse, runInBackground } from '../lib/background.js';
 import { AppError, unavailable } from '../lib/errors.js';
+import { MAX_TESTS, clip, compareOutput, scoreResults } from '../lib/judging.js';
 import { logger } from '../lib/logger.js';
 import { platformIdentityToken } from '../lib/vercel.js';
 import { JOB_DEADLINE_MS, JudgeUnavailable, createSandboxJudge, describeError, resolveIdentity } from './judge/vercelSandbox.js';
+
+export { compareOutput, scoreResults };
 
 export const LANGUAGES = {
   PYTHON: { label: 'Python 3', piston: 'python', file: 'main.py' },
@@ -21,13 +24,6 @@ export const LANGUAGES = {
   C: { label: 'C', piston: 'c', file: 'main.c' },
   CPP: { label: 'C++', piston: 'c++', file: 'main.cpp' },
   JAVASCRIPT: { label: 'JavaScript (Node.js)', piston: 'javascript', file: 'main.js' },
-};
-
-const MAX_OUTPUT = 64_000;
-const MAX_TESTS = 25;
-const clip = (text) => {
-  const s = String(text ?? '');
-  return s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n… (output truncated)` : s;
 };
 
 async function pistonTransport({ language, code, stdin, timeLimitMs, memoryLimitKb }) {
@@ -212,27 +208,6 @@ export async function checkCodeRunner() {
   } catch (err) {
     return { ok: false, provider, code: err.code, detail: health.lastFailure ?? err.message };
   }
-}
-
-const lines = (s) => String(s ?? '').replace(/\r\n?/g, '\n');
-
-/** Compare program output with the expected output. */
-export function compareOutput(actual, expected, mode = 'TRIMMED') {
-  const a = lines(actual);
-  const e = lines(expected);
-  if (mode === 'EXACT') return a === e;
-  if (mode === 'TOKENS') return a.split(/\s+/).filter(Boolean).join(' ') === e.split(/\s+/).filter(Boolean).join(' ');
-  const tidy = (s) => s.split('\n').map((l) => l.replace(/\s+$/, '')).join('\n').replace(/\n+$/, '');
-  return tidy(a) === tidy(e);
-}
-
-/** Weighted score of a set of test results (0–100). */
-export function scoreResults(results, partialCredit = true) {
-  const total = results.reduce((a, r) => a + r.weight, 0);
-  if (total <= 0) return 0;
-  const passed = results.filter((r) => r.passed).reduce((a, r) => a + r.weight, 0);
-  if (!partialCredit) return passed === total ? 100 : 0;
-  return Math.round((passed / total) * 10_000) / 100;
 }
 
 /**

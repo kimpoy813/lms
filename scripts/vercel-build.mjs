@@ -170,4 +170,13 @@ if (process.env.CODE_RUNNER_PROVIDER?.trim() === 'vercel-sandbox') {
   if (result.status !== 0) console.warn('\n! Programs cannot be checked automatically yet (see above). The deployment continues.');
 }
 
+// The assistant that drafts modules, questions and assignments for teachers asks an AI service.
+// One small request here, and the log of the deployment says whether it answers, and if not why.
+// Not a reason to stop either: without it teachers write by hand, as before.
+if ((process.env.AI_PROVIDER?.trim() || 'none') !== 'none' || process.env.AI_CHECK?.trim()) {
+  console.log('\n▸ AI assistant for teachers');
+  const result = spawnSync(process.execPath, ['scripts/ai-check.mjs'], { cwd: root, stdio: 'inherit', timeout: 10 * 60_000 });
+  if (result.status !== 0) console.warn('\n! The AI assistant does not answer yet (see above). The deployment continues.');
+}
+
 console.log('\n✓ Build finished.');

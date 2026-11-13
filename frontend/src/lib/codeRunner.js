@@ -37,6 +37,18 @@ export function runnerProblem(err, { inQuiz = false } = {}) {
   return err?.fields?.language ?? err?.message ?? 'The program could not be run.';
 }
 
+// Python and its library, as the browser receives them unpacked (frontend/node_modules/pyodide).
+// A test compares this with the files themselves.
+export const PYTHON_IN_BROWSER_BYTES = 13_531_207;
+
+/** What to say while a program is being run in the browser (lib/pyRunner). */
+export function browserRunStatus({ phase, bytes = 0, index = 0, total = 1 } = {}) {
+  if (phase === 'download') return `Getting Python ready… ${Math.min(99, Math.round((bytes / PYTHON_IN_BROWSER_BYTES) * 100))}%`;
+  if (phase === 'start') return 'Starting Python…';
+  if (phase === 'run') return total > 1 ? `Running test ${index + 1} of ${total}…` : 'Running your program…';
+  return null;
+}
+
 /**
  * For the teacher who sets the time limit of a problem. Said only when it can matter: a program that is slow on every test may not
  * get through all of them, because the checker has a limit for a whole program too.

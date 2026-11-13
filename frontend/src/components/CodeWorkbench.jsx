@@ -1,15 +1,21 @@
 // Write code against a problem, try it on the sample tests, and (for students) submit it.
-// Running needs a code runner on the server; without one the code is still saved with the
-// answer and the teacher checks it.
+//
+// Trying a Python program — the sample tests, or an input of one's own — happens in the browser
+// when the site allows it (lib/pyRunner); everything else, and every submission that counts, is
+// run by the code runner on the server. Without one the code is still saved with the answer and
+// the teacher checks it.
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, CircleSlash, Clock, EyeOff, Play, RotateCcw, Send, Terminal, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleSlash, Clock, EyeOff, MonitorSmartphone, Play, RotateCcw, Send, Terminal, XCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
-import { askAgainWhileBusy, runnerProblem } from '../lib/codeRunner.js';
+import { askAgainWhileBusy, browserRunStatus, runnerProblem } from '../lib/codeRunner.js';
 import { formatPercent, plural } from '../lib/format.js';
 import LazyCodeEditor from './LazyCodeEditor.jsx';
 import RichText from './RichText.jsx';
 import { Alert, Badge, Button, cn, Select, Textarea } from './ui.jsx';
+
+// lib/pyRunner once it has been loaded: it is only fetched when a Python program is first run.
+let pythonHere = null;
 
 const OUTCOME = {
   PASSED: { label: 'Passed', tone: 'ok', icon: CheckCircle2 },
@@ -51,6 +57,8 @@ export function TestResults({ result }) {
                   {[['Input', r.input], ['Expected', r.expectedOutput], ['Your output', r.stdout || r.stderr || '(nothing)']].map(([label, text]) => (
                     <div key={label}><dt className="text-[11px] font-semibold uppercase tracking-wide text-faint">{label}</dt><dd><pre className="mt-0.5 max-h-28 overflow-auto rounded bg-raised p-2 font-mono text-xs text-ink">{text}</pre></dd></div>
                   ))}
+                  {/* What went wrong is said on standard error; a program that had already printed something would otherwise hide it. */}
+                  {r.stdout && r.stderr && <div className="sm:col-span-3"><dt className="text-[11px] font-semibold uppercase tracking-wide text-faint">Error output</dt><dd><pre className="mt-0.5 max-h-28 overflow-auto rounded bg-bad-soft p-2 font-mono text-xs text-bad">{r.stderr}</pre></dd></div>}
                 </dl>
               )}
             </li>
@@ -75,21 +83,56 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [waiting, setWaiting] = useState(null);
+  // Which button the result on screen came from, when it was produced in this browser.
+  const [ranHere, setRanHere] = useState(null);
   const shown = useRef(true);
   useEffect(() => {
     shown.current = true;
-    return () => { shown.current = false; };
+    return () => {
+      shown.current = false;
+      pythonHere?.discardSpare(); // the Python that was kept ready for the next run
+    };
   }, []);
   const configured = problem.runner?.configured !== false;
+  // Programs in this language can be tried without the server.
+  const here = problem.runner?.inBrowser?.includes(language) === true;
+  const canTry = configured || here;
   // Inside a quiz the code is part of the saved answer; in practice nothing is kept unless it is checked.
   const inQuiz = Boolean(studentAnswerId);
 
   const update = (next) => { setCode(next.code); setLanguage(next.language); onChange?.(next.code.trim() ? next : null); };
-  const call = async (kind) => {
+
+  /** The program in this browser. Returns the result, or null when the server has to run it. */
+  const tryHere = async (kind) => {
+    let answer;
+    try {
+      const python = (pythonHere ??= await import('../lib/pyRunner/index.js'));
+      const onStatus = (status) => { if (shown.current) setWaiting(browserRunStatus(status)); };
+      answer = kind === 'custom' ? await python.runCustomInBrowser(problem, { code, stdin, onStatus }) : await python.runSamplesInBrowser(problem, { code, onStatus });
+    } catch {
+      answer = { where: 'server', reason: 'Python could not be loaded' };
+    }
+    if (answer.where === 'browser') return answer.result;
+    if (!configured) throw Object.assign(new Error(`This program cannot be run in your browser (${answer.reason}), and no code runner is set up on the server.`), { code: 'NOT_HERE' });
+    return null;
+  };
+
+  const call = async (kind, { onServer = false } = {}) => {
     setBusy(kind);
     setError(null);
     setWaiting(null);
+    setRanHere(null);
     try {
+      if (kind !== 'submit' && here && !onServer) {
+        const result = await tryHere(kind);
+        if (!shown.current) return;
+        if (result) {
+          setResult(result);
+          setRanHere(kind);
+          return;
+        }
+        setWaiting(null);
+      }
       const body = { language, code, ...(studentAnswerId ? { studentAnswerId } : {}), ...(kind === 'custom' ? { stdin } : {}) };
       // A busy checker is asked again by itself, a few seconds apart.
       const data = await askAgainWhileBusy(() => api.post(`/programming/problems/${problem.id}/${kind === 'submit' ? 'submit' : 'run'}`, body), {
@@ -123,10 +166,11 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
         <span className="ml-auto text-xs text-faint">Limit: {problem.timeLimitMs / 1000}s per test</span>
       </div>
       <LazyCodeEditor value={code} language={language} readOnly={readOnly} minHeight={minHeight} onChange={(next) => update({ language, code: next })} ariaLabel="Your code" />
-      {!configured && <Alert tone="info" title="Code is not run automatically on this server">{inQuiz ? 'Write your program as usual: it is saved with your answer, and your teacher marks it by hand.' : 'You can write code here, but it cannot be run or checked until an administrator connects a code runner.'}</Alert>}
+      {!configured && !here && <Alert tone="info" title="Code is not run automatically on this server">{inQuiz ? 'Write your program as usual: it is saved with your answer, and your teacher marks it by hand.' : 'You can write code here, but it cannot be run or checked until an administrator connects a code runner.'}</Alert>}
+      {!configured && here && <Alert tone="info" title="Programs are not checked automatically on this server">{inQuiz ? 'You can try your program here in your browser. It is saved with your answer, and your teacher marks it by hand.' : 'You can try your program here in your browser. It cannot be submitted for checking until an administrator connects a code runner.'}</Alert>}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" icon={Play} loading={busy === 'run'} disabled={!code.trim() || !configured || Boolean(busy)} onClick={() => call('run')}>Run sample tests</Button>
+          <Button variant="secondary" icon={Play} loading={busy === 'run'} disabled={!code.trim() || !canTry || Boolean(busy)} onClick={() => call('run')}>Run sample tests</Button>
           <Button variant="ghost" icon={Terminal} onClick={() => setCustom((v) => !v)} aria-expanded={custom}>Try my own input</Button>
           {canSubmit && <Button icon={Send} className="ml-auto" loading={busy === 'submit'} disabled={!code.trim() || !configured || Boolean(busy)} onClick={() => call('submit')}>Submit for checking</Button>}
         </div>
@@ -135,12 +179,20 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
         <div className="rounded-xl border border-line p-3">
           <label htmlFor="custom-stdin" className="mb-1.5 block text-[13px] font-medium text-ink">Input for the program (stdin)</label>
           <Textarea id="custom-stdin" rows={3} value={stdin} onChange={(e) => setStdin(e.target.value)} className="font-mono text-[13px]" spellCheck={false} />
-          <div className="mt-2 flex justify-end"><Button size="sm" variant="secondary" icon={Play} loading={busy === 'custom'} disabled={!code.trim() || !configured || Boolean(busy)} onClick={() => call('custom')}>Run</Button></div>
+          <div className="mt-2 flex justify-end"><Button size="sm" variant="secondary" icon={Play} loading={busy === 'custom'} disabled={!code.trim() || !canTry || Boolean(busy)} onClick={() => call('custom')}>Run</Button></div>
         </div>
       )}
       {waiting && <p role="status" className="flex items-center gap-1.5 text-[13px] text-soft"><Clock className="size-3.5" aria-hidden="true" />{waiting}</p>}
       {error && <Alert tone="warn" title="Could not run"><CircleSlash className="mr-1 inline size-3.5" aria-hidden="true" />{error}</Alert>}
-      <div aria-live="polite"><TestResults result={result} /></div>
+      <div aria-live="polite">
+        <TestResults result={result} />
+        {result && ranHere && (
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-faint">
+            <span className="flex items-center gap-1.5"><MonitorSmartphone className="size-3.5" aria-hidden="true" />Run in your browser{canSubmit ? '. “Submit for checking” is what counts, and that runs on the server.' : '.'}</span>
+            {configured && <button type="button" className="font-medium text-brand underline-offset-2 hover:underline disabled:opacity-50" disabled={Boolean(busy)} onClick={() => call(ranHere, { onServer: true })}>Run on the server instead</button>}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

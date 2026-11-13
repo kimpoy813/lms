@@ -11,6 +11,7 @@ import { env } from './config/env.js';
 import { Prisma, prisma } from './db/prisma.js';
 import { runInBackground } from './lib/background.js';
 import { logger } from './lib/logger.js';
+import { webAppFileHeaders } from './lib/pythonSandbox.js';
 import { csrfProtection, loadSession } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -157,11 +158,9 @@ export function createApp({ prelude = [] } = {}) {
         express.static(env.frontendDist, {
           index: false,
           setHeaders(res, filePath) {
-            if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-              res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-            } else {
-              res.setHeader('Cache-Control', 'no-cache');
-            }
+            // Long caching for hashed files; the frame students' Python programs run in is shut
+            // off from the site (lib/pythonSandbox.js).
+            for (const [name, value] of Object.entries(webAppFileHeaders(path.relative(env.frontendDist, filePath), env.frameAncestors))) res.setHeader(name, value);
           },
         }),
       );

@@ -54,8 +54,9 @@ operates it. No independent security review has been done.
 | Location (attendance) | Coordinates are used once to compute a distance and are **not stored**. The distance, the reported accuracy and refused attempts are erased after the retention period (default 180 days). See [ATTENDANCE.md](ATTENDANCE.md) |
 | Quiz integrity signals | Leaving the tab during a quiz is recorded for the teacher and announced to the student beforehand. It is informational; nothing is decided automatically |
 | Accounts that leave | An administrator can deactivate an account, or anonymise it: name, e-mail, ID number and profile are replaced and notifications, tasks and bookmarks deleted, while grades and attendance stay for the institution's records. What the person wrote — submissions, messages, discussion posts — is kept as written and may still identify them |
-| AI | Only what a teacher types or attaches for a draft is sent to the AI provider. No AI feature sends student records. The key stays on the server |
-| Code judge | A program a student runs or submits is sent to the configured judge with the test inputs and the limits. Nothing that says whose it is goes with it: no name, no account, no class. The expected outputs are never sent; the API compares. See [Running students' programs](#running-students-programs) |
+| AI | Only what a teacher types, attaches or chooses for a draft is sent to the AI provider: a topic, a document, or the lesson text of a module of their own (shortened to about 24,000 characters). No AI feature sends student records. The key stays on the server. What the provider may do with the text depends on the provider and the plan; see [The AI service](#the-ai-service) |
+| Code judge | A program a student submits, or runs in a language other than Python, is sent to the configured judge with the test inputs and the limits. Nothing that says whose it is goes with it: no name, no account, no class. The expected outputs are never sent; the API compares. See [Running students' programs](#running-students-programs) |
+| Python tried in the browser | A Python program that is only being tried ("Run sample tests", "Try my own input") runs on the student's own device and is sent nowhere. See [Python in the browser](#python-in-the-browser) |
 | E-mail | Optional. Notifications by e-mail are off by default and each user opts in |
 | Notifications | Old notifications are removed by the maintenance job |
 
@@ -99,6 +100,54 @@ What remains:
   which project it is, and the identity token can then not be compared with it.
   `npm run smoke` says so.
 
+## Python in the browser
+
+A Python program that is only being tried runs in the browser of the person trying it
+(`frontend/src/lib/pyRunner/`, with [Pyodide](https://pyodide.org): CPython 3.14 as WebAssembly,
+served by the site itself). That saves the code runner's allowance and answers at once. It is
+still code the page did not write — a teacher's starter code runs in a student's browser — so it
+is kept apart from the site:
+
+| Risk | What stands against it |
+|---|---|
+| The program acts as the person signed in: reads their grades, posts in their name | It runs in a frame of its own (`/pyrunner/frame.html`) that the page embeds with `sandbox="allow-scripts"` and the server sends with `Content-Security-Policy: sandbox allow-scripts`. Either one gives the frame an origin of its own, also when somebody opens the frame's address directly: no cookies, no storage, no access to the page around it. A browser test opens it with a student's session and finds cookies and storage refused |
+| It sends something out, or fetches a solution | The frame's policy is `default-src 'none'; connect-src 'none'`: no requests at all, to the site or anywhere else. Python's own files are fetched by the page and handed in. The same browser test tries `fetch` from inside, to the API and to another site, and both are refused |
+| It reads the hidden tests or the expected answers | Hidden tests never reach the browser; only the sample tests a student may see anyway are run there. What counts is checked on the server |
+| A result made to look passed | The verdict for a submission is the server's alone. The browser's result is a preview and is labelled as one |
+| It freezes the page or fills the memory | It runs in a worker inside the frame, not in the page. A program that does not end is stopped by throwing the worker away (three times the problem's time limit, at most 30 seconds); output is cut at 64 KB as on the server |
+| The browser's Python is not the server's | Programs that use what differs (files, threads, sockets, packages outside Python's own library, the size of numbers on the machine) are not judged in the browser but handed to the server, and so is a failure that can be the browser's own (memory, deep recursion) and an answer that is wrong only by the order of a set or the last digits of a decimal number. 94 programs and about 240,000 results of mathematical functions were compared with CPython 3.14.4 on Linux |
+
+The frame's policy allows inline script, `eval` and WebAssembly *inside the frame*: that is what
+running Python in a browser consists of. The pages of the site keep their own policy, which
+allows none of these. On Vercel the two policies are in `vercel.json`; a test keeps them
+identical to what the API would send.
+
+Tried in Chromium only. An administrator can switch it off (**Settings → Programming**); every
+run then goes to the code runner.
+
+## The AI service
+
+| Risk | What stands against it |
+|---|---|
+| Student records reach an AI provider | No AI feature reads them. A draft is made from what the teacher typed, pasted or attached, or from the lessons of a module of the teacher's own classes; a module of another teacher is refused |
+| What a model writes reaches a class unread | Everything is stored as a draft. A teacher has to open, check and approve it; the output is sanitised like any other rich text |
+| The key leaks | It is read from the environment by the server and never sent to a browser. With Vercel's AI Gateway there is no key: the gateway is asked with the project's short-lived identity, which Vercel hands to each request |
+| That identity is sent to somebody else | It goes to Vercel's gateway (`https://ai-gateway.vercel.sh`) and nowhere else: when `AI_BASE_URL` points to another address and no key is set, nothing is sent and the administrator is told why. As for the code runner, a token issued to another project, or one whose time is over, is not used |
+| An error message of the service is shown to teachers, with whatever it contains | Teachers get one of a few fixed sentences. The service's own words go to the log and to the administrator's **Settings** page, as text. A link in them is made clickable only when it leads to `https://vercel.com/` |
+| The account's credit is used up | Each teacher has a daily number of requests (**Settings → AI**), and the rate limit for AI requests applies. Requests that failed are not counted. A spending limit can be set at the provider |
+
+What remains:
+
+- **The provider is a processor of what is sent**, and its plan decides what it may do with it.
+  On free plans in particular, a provider may keep prompts and use them to improve its models;
+  [DEPLOYMENT.md](DEPLOYMENT.md#the-ai-assistant) says what is known about the ones it names.
+  Do not paste personal data into a prompt.
+- **A model can be wrong.** A drafted answer key is a suggestion. That is why nothing is
+  published without a teacher.
+- **Text in a document can try to steer the model** ("ignore the instructions above"). The worst
+  outcome is a poor draft, which the teacher sees: the model has no tools, no access to records
+  and nothing to act on.
+
 ## What the operator must do
 
 - **Serve over HTTPS.** Cookies, geolocation and the camera depend on it.
@@ -115,7 +164,9 @@ What remains:
   A Piston server belongs on its own host or network with no access to the database. With Vercel
   Sandbox the machines are Vercel's, started with the identity of your Vercel project: whoever
   can deploy code to the project can start them, as they can do anything else in its name.
-- **Decide what may go to an AI provider** before enabling it, and tell teachers.
+- **Decide what may go to an AI provider** before enabling it, and tell teachers. Read the
+  provider's terms for the plan you use: on a free plan, the text of your lessons may be kept and
+  used by the provider.
 - **Check local law.** In the Philippines the Data Privacy Act of 2012 applies to student
   records and location data. EduSphere provides controls (retention, anonymising, an audit log,
   a privacy notice); it does not make an institution compliant by itself.

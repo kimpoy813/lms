@@ -28,7 +28,8 @@
     "lint": "eslint .",
     "docs:api": "npm run docs:api -w backend",
     "smoke": "node scripts/smoke.mjs",
-    "judge:check": "node scripts/judge-image.mjs --full"
+    "judge:check": "node scripts/judge-image.mjs --full",
+    "ai:check": "node scripts/ai-check.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
