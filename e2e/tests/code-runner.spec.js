@@ -54,7 +54,7 @@ test('a busy code checker is asked again by the page, and the student sees why i
 
   await page.getByRole('button', { name: 'Run sample tests' }).click();
   const waiting = page.getByRole('status').filter({ hasText: 'The code checker is busy' });
-  await expect(waiting).toContainText('Trying again in 1 seconds');
+  await expect(waiting).toContainText('The code checker is busy. Trying again in a second…');
   // Nothing else can be started while it waits.
   await expect(page.getByRole('button', { name: 'Submit for checking' })).toBeDisabled();
 

@@ -9,10 +9,11 @@
 // When no judge is configured the feature reports itself as unavailable; programming answers can
 // still be collected and are then graded by the teacher.
 import { env } from '../config/env.js';
-import { runInBackground } from '../lib/background.js';
+import { canFinishAfterResponse, runInBackground } from '../lib/background.js';
 import { AppError, unavailable } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
-import { JOB_DEADLINE_MS, JudgeUnavailable, createSandboxJudge, describeError, identitySource } from './judge/vercelSandbox.js';
+import { platformIdentityToken } from '../lib/vercel.js';
+import { JOB_DEADLINE_MS, JudgeUnavailable, createSandboxJudge, describeError, resolveIdentity } from './judge/vercelSandbox.js';
 
 export const LANGUAGES = {
   PYTHON: { label: 'Python 3', piston: 'python', file: 'main.py' },
@@ -61,19 +62,47 @@ export function setCodeRunnerTransport(fn) {
   transport = fn;
 }
 
+/**
+ * Who starts the machines, asked for every job: the access token of the configuration, or on
+ * Vercel the project's identity that came with the request in progress.
+ */
+function sandboxIdentity() {
+  const access = env.codeRunner.vercelAccess;
+  return resolveIdentity(access ? { accessToken: access.token, teamId: access.teamId, projectId: access.projectId } : { requestToken: platformIdentityToken() });
+}
+
 let sandboxJudge = null;
 /** The Vercel Sandbox judge of this installation (made on first use). */
 export function vercelSandboxJudge() {
   sandboxJudge ??= createSandboxJudge({
     region: env.codeRunner.region,
-    credentials: env.codeRunner.vercelAccess ? () => env.codeRunner.vercelAccess : undefined,
+    identity: sandboxIdentity,
     log: logger,
     background: runInBackground,
+    // Where the host freezes the process once the answer is out and cannot be asked to wait,
+    // the machine is removed first.
+    removeBeforeAnswering: () => !canFinishAfterResponse(),
   });
   return sandboxJudge;
 }
 
 const usesSandbox = () => !transport && env.codeRunner.provider === 'vercel-sandbox';
+
+/**
+ * Housekeeping on the Vercel account: delete the machines of single programs that were never
+ * removed (the request that started one was cut short). Each has long ended by itself, and Vercel
+ * drops them after two weeks anyway; this keeps the project's list of sandboxes short.
+ * @returns {Promise<{ removed: number, running: number } | null>} null when there is nothing to look at, or Vercel could not be asked
+ */
+export async function removeCodeRunnerLeftovers() {
+  if (!usesSandbox() || !env.codeRunner.configured) return null;
+  try {
+    return await vercelSandboxJudge().removeLeftoverMachines();
+  } catch (err) {
+    logger.warn({ detail: describeError(err) }, 'could not look for machines of the code runner that were left over');
+    return null;
+  }
+}
 
 /** For tests: forget what the judge remembers between requests (an image that was not ready, the last failure). */
 export function resetCodeRunner() {
@@ -163,8 +192,7 @@ export async function runCode({ language, code, stdin = '', timeLimitMs = 3000, 
 export async function checkCodeRunner() {
   if (!codeRunnerConfigured()) return { ok: false, provider: 'none', detail: 'No code runner is set up (CODE_RUNNER_PROVIDER).' };
   if (usesSandbox()) {
-    const access = env.codeRunner.vercelAccess;
-    const about = { provider: 'vercel-sandbox', region: env.codeRunner.region, identity: identitySource(access ? { accessToken: access.token, teamId: access.teamId, projectId: access.projectId } : {}) };
+    const about = { provider: 'vercel-sandbox', region: env.codeRunner.region, identity: sandboxIdentity().source };
     try {
       const check = await vercelSandboxJudge().selfTest();
       health.lastSuccessAt = new Date().toISOString();

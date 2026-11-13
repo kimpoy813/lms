@@ -93,7 +93,7 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
       const body = { language, code, ...(studentAnswerId ? { studentAnswerId } : {}), ...(kind === 'custom' ? { stdin } : {}) };
       // A busy checker is asked again by itself, a few seconds apart.
       const data = await askAgainWhileBusy(() => api.post(`/programming/problems/${problem.id}/${kind === 'submit' ? 'submit' : 'run'}`, body), {
-        onWait: (attempt, seconds) => setWaiting(`The code checker is busy. Trying again in ${seconds} seconds…`),
+        onWait: (attempt, seconds) => setWaiting(`The code checker is busy. Trying again in ${seconds === 1 ? 'a second' : `${seconds} seconds`}…`),
         stillWanted: () => shown.current,
       });
       if (!shown.current) return;

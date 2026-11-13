@@ -9,9 +9,9 @@
 //
 // The prepared machine ("image") is a sandbox that was set up once and then stopped; Vercel keeps
 // its disk as a snapshot. It is found by its name, which contains a fingerprint of the recipe, so
-// nothing about it has to be stored anywhere. When it is missing (first use, or the snapshot
-// expired after a month without use) it is prepared again, which takes a few minutes; in the
-// meantime programs are not checked and the caller is told so.
+// nothing about it has to be stored anywhere. When it is missing (first use, or somebody deleted
+// it) it is prepared again, which takes a few minutes; in the meantime programs are not checked
+// and the caller is told so.
 //
 // This file does not read the application's configuration: the API (services/codeRunner.js) and
 // the build step (scripts/judge-image.mjs) both use it and pass what they know.
@@ -46,22 +46,36 @@ printf '%s\\n' '${tag}' > ${IMAGE_MARKER_FILE}
 sync
 `;
 
-/** Changes whenever the recipe changes, so a new recipe gets a new machine. */
-export const IMAGE_TAG = createHash('sha256').update(`${BASE_IMAGE}\n${recipe('')}`).digest('hex').slice(0, 10);
+/**
+ * How Vercel keeps the image's disk. By default a snapshot is removed 30 days after it was last
+ * used — a long break between terms is enough for that. `snapshotExpiration: 0` keeps it until
+ * the image is deleted; one snapshot is all the image ever needs.
+ */
+const IMAGE_RETENTION = Object.freeze({ snapshotExpiration: 0, keepLastSnapshots: { count: 1 } });
+
+/** Changes whenever the recipe or the way the image is kept changes, so that a new one is made. */
+export const IMAGE_TAG = createHash('sha256').update(`${BASE_IMAGE}\n${recipe('')}\n${JSON.stringify(IMAGE_RETENTION)}`).digest('hex').slice(0, 10);
 export const imageScript = () => recipe(IMAGE_TAG);
 export const imageName = (region) => `edusphere-judge-${IMAGE_TAG}-${region}`;
 export const IMAGE_NAME_PREFIX = 'edusphere-judge-';
+/** How the machines of single jobs are marked on the account, so that leftovers can be found. */
+const RUN_TAGS = Object.freeze({ edusphere: 'judge-run' });
 
 const JOB_DIR = '/tmp/judge-job';
 /**
- * Compiling and running everything, inside the machine. Together with starting the machine and
- * uploading the job this has to stay below the time a request may take (120 s on Vercel, see
- * vercel.json): 25 s + 20 s + 50 s + 10 s.
+ * Compiling and running everything, inside the machine. Together with starting the machine,
+ * uploading the job and — where that cannot wait until after the answer — removing the machine,
+ * this has to stay below the time a request may take (120 s on Vercel, see vercel.json):
+ * 25 s + 20 s + 50 s + 10 s + 8 s + 3 s.
  */
 export const JOB_DEADLINE_MS = 50_000;
 const START_TIMEOUT_MS = 25_000;
 const UPLOAD_TIMEOUT_MS = 20_000;
 const COMMAND_GRACE_MS = 10_000;
+/** Stopping a machine takes about four seconds. An answer waits no longer than this for it; work after the answer may take its time. */
+const STOP_TIMEOUT_MS = 8_000;
+const STOP_TIMEOUT_AFTER_ANSWER_MS = 30_000;
+const DELETE_TIMEOUT_MS = 3_000;
 /** A machine that was not stopped for whatever reason ends itself after this long. */
 const MACHINE_LIFETIME_MS = 3 * 60_000;
 const PREPARE_LIFETIME_MS = 10 * 60_000;
@@ -119,29 +133,67 @@ function decodeClaims(token) {
   }
 }
 
-/**
- * Who starts the machines.
- *   - On Vercel the project's own short-lived identity token: Vercel hands it to a function with
- *     every request and to a build as VERCEL_OIDC_TOKEN. Nothing has to be configured or stored.
- *   - Anywhere else an access token with the team and project it belongs to.
- * Read again for every job: the token changes about every hour.
- */
-export function sandboxCredentials({ accessToken, teamId, projectId } = {}) {
-  if (accessToken && teamId && projectId) return { token: accessToken, teamId, projectId };
-  const fromRequest = globalThis[REQUEST_CONTEXT]?.get?.()?.headers?.['x-vercel-oidc-token'];
-  const token = (typeof fromRequest === 'string' && fromRequest) || process.env.VERCEL_OIDC_TOKEN || null;
-  const claims = token ? decodeClaims(token) : null;
-  if (!claims?.owner_id || !claims?.project_id) return null;
-  return { token, teamId: claims.owner_id, projectId: claims.project_id };
+const WITH_REQUEST = 'the project’s identity, handed to this request by Vercel';
+const FROM_ENVIRONMENT = 'the project’s identity, from the environment';
+
+/** One identity token → the credentials in it, or why it is not used. */
+function readIdentityToken(token) {
+  const claims = decodeClaims(token);
+  if (!claims?.owner_id || !claims?.project_id) return { problem: 'An identity token was found, but it does not name a team and a project.' };
+  const ownProject = process.env.VERCEL_PROJECT_ID || null;
+  if (ownProject && claims.project_id !== ownProject) return { problem: 'An identity token for another Vercel project was found; nothing is started with it.' };
+  // One that Vercel would turn down anyway, such as a token a build left behind.
+  if (Number.isFinite(claims.exp) && claims.exp * 1000 <= Date.now()) return { problem: 'An identity token was found, but it has expired.' };
+  return { credentials: { token, teamId: claims.owner_id, projectId: claims.project_id } };
 }
 
-/** For the administrator's check: which of the identities above this process would use right now. */
-export function identitySource({ accessToken, teamId, projectId } = {}) {
-  if (accessToken && teamId && projectId) return 'access token';
-  if (typeof globalThis[REQUEST_CONTEXT]?.get?.()?.headers?.['x-vercel-oidc-token'] === 'string') return 'the project’s identity, handed to this request by Vercel';
-  if (process.env.VERCEL_OIDC_TOKEN) return 'the project’s identity, from the environment';
-  return 'none';
+/**
+ * Who starts the machines.
+ *   - On Vercel the project's own short-lived identity token. Vercel hands it to a function with
+ *     every request (`requestToken`: the function's entry point notes it when the request arrives,
+ *     see lib/vercel.js) and to a build as VERCEL_OIDC_TOKEN. Nothing has to be configured or
+ *     stored.
+ *   - Anywhere else an access token with the team and project it belongs to.
+ * Asked again for every job: the token changes about every hour.
+ *
+ * An identity token is only used for the project it was issued to. Where Vercel names the project
+ * of the deployment (VERCEL_PROJECT_ID), a token for any other project is refused: machines are
+ * never started on an account that merely sent a token along. And a token that came with the
+ * request and cannot be used is not passed over in favour of another one. Vercel's SDK looks in
+ * the same place before every call it makes and uses what it finds there, whatever it was given,
+ * so the only safe thing to do then is nothing.
+ *
+ * @param {{ accessToken?: string, teamId?: string, projectId?: string, requestToken?: string | null }} [given]
+ * @returns {{ credentials: { token: string, teamId: string, projectId: string } | null, source: string, problem: string | null }}
+ *   `source` is for the administrator's check; `problem` says why a token that was there is not used.
+ */
+export function resolveIdentity({ accessToken, teamId, projectId, requestToken } = {}) {
+  if (accessToken && teamId && projectId) return { credentials: { token: accessToken, teamId, projectId }, source: 'access token', problem: null };
+  const none = (problem = null) => ({ credentials: null, source: 'none', problem });
+  const present = (token) => typeof token === 'string' && token !== '';
+
+  // What the platform says at this moment, then what was noted when the request arrived.
+  let asked;
+  try {
+    asked = globalThis[REQUEST_CONTEXT]?.get?.()?.headers?.['x-vercel-oidc-token'];
+  } catch {
+    asked = undefined;
+  }
+  const withRequest = [...new Set([asked, requestToken].filter(present))].map(readIdentityToken);
+  if (withRequest.length > 0) {
+    const refused = withRequest.find((read) => read.problem);
+    return refused ? none(refused.problem) : { credentials: withRequest[0].credentials, source: WITH_REQUEST, problem: null };
+  }
+  if (!present(process.env.VERCEL_OIDC_TOKEN)) return none();
+  const read = readIdentityToken(process.env.VERCEL_OIDC_TOKEN);
+  return read.problem ? none(read.problem) : { credentials: read.credentials, source: FROM_ENVIRONMENT, problem: null };
 }
+
+/** The credentials of resolveIdentity, or null. */
+export const sandboxCredentials = (given) => resolveIdentity(given).credentials;
+
+/** For the administrator's check: which of the identities above this process would use right now. */
+export const identitySource = (given) => resolveIdentity(given).source;
 
 let sdkOverride = null;
 /** Tests replace Vercel's SDK with a fake. Pass null to restore it. */
@@ -197,11 +249,13 @@ export function toRun(run, { memoryLimitKb }) {
 /**
  * @param {object} options
  * @param {string} options.region          Vercel region code of the machines, e.g. "sin1"
- * @param {() => ({ token, teamId, projectId } | null)} [options.credentials]
+ * @param {() => ({ credentials: { token, teamId, projectId } | null, problem?: string | null })} [options.identity] see resolveIdentity
  * @param {{ info: Function, warn: Function }} [options.log]
  * @param {(task: () => Promise<unknown>, label: string) => unknown} [options.background] runs work that may outlive the request
+ * @param {() => boolean} [options.removeBeforeAnswering] true where work cannot outlive the request: a job's machine is then
+ *        removed before the answer is given (a few seconds more) instead of after it
  */
-export function createSandboxJudge({ region, credentials = () => sandboxCredentials(), log = { info() {}, warn() {} }, background = (task) => task().catch(() => {}) }) {
+export function createSandboxJudge({ region, identity: resolve = () => resolveIdentity(), log = { info() {}, warn() {} }, background = (task) => task().catch(() => {}), removeBeforeAnswering = () => false }) {
   if (!region) throw new Error('createSandboxJudge needs the region the machines run in');
   const name = imageName(region);
   // While the image cannot be used, jobs are turned away with the same answer for a moment,
@@ -210,9 +264,11 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
   let looking = null;
 
   const identity = () => {
-    const creds = credentials();
-    if (!creds) throw new JudgeUnavailable('identity', 'This site has no Vercel identity to start machines with.', 'No OIDC token reached this process, and VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID are not all set.');
-    return creds;
+    const found = resolve();
+    if (!found?.credentials) {
+      throw new JudgeUnavailable('identity', 'This site has no Vercel identity to start machines with.', found?.problem ?? 'No identity token reached this process, and VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID are not all set.');
+    }
+    return found.credentials;
   };
 
   async function findBase(Sandbox, creds) {
@@ -225,7 +281,17 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
   }
 
   async function startBase(Sandbox, creds) {
-    const base = await Sandbox.create({ name, image: BASE_IMAGE, region, resources: { vcpus: 2 }, timeout: PREPARE_LIFETIME_MS, persistent: true, tags: { edusphere: 'judge-image' }, ...creds });
+    const params = { name, image: BASE_IMAGE, region, resources: { vcpus: 2 }, timeout: PREPARE_LIFETIME_MS, persistent: true, tags: { edusphere: 'judge-image' }, ...creds };
+    let base;
+    try {
+      base = await Sandbox.create({ ...params, ...IMAGE_RETENTION });
+    } catch (err) {
+      // "Not like this": an account that may not keep a snapshot for good still gets an image,
+      // kept the way Vercel keeps one by default. Anything else fails the same way a second time.
+      if (![400, 403, 422].includes(httpStatus(err))) throw err;
+      log.warn({ image: name, detail: describeError(err) }, 'the machine image cannot be kept for good on this account; Vercel will remove it after a month without use, and it is then prepared again');
+      base = await Sandbox.create(params);
+    }
     await base.writeFiles([{ path: IMAGE_SCRIPT_PATH, content: imageScript() }]);
     await base.runCommand({ cmd: 'bash', args: [IMAGE_SCRIPT_PATH], sudo: true, detached: true });
     log.info({ image: name }, 'preparing the machine image for running programs');
@@ -337,12 +403,12 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
     const started = Date.now();
     let machine;
     try {
-      machine = await Sandbox.fork({ sourceSandbox: name, region, resources: { vcpus: 1 }, timeout: MACHINE_LIFETIME_MS, persistent: false, networkPolicy: 'deny-all', signal: AbortSignal.timeout(START_TIMEOUT_MS), ...creds });
+      machine = await Sandbox.fork({ sourceSandbox: name, region, resources: { vcpus: 1 }, timeout: MACHINE_LIFETIME_MS, persistent: false, networkPolicy: 'deny-all', tags: RUN_TAGS, signal: AbortSignal.timeout(START_TIMEOUT_MS), ...creds });
     } catch (err) {
       const unavailable = classifyError(err, 'The machine for the program');
-      // "Not there" is ours to repair: the image was never prepared, or Vercel removed its
-      // snapshot after a month without use. Anything else (Vercel's side, the network, a request
-      // it did not like) is reported as it is, and the image is left alone.
+      // "Not there" is ours to repair: the image was never prepared, or its snapshot is gone
+      // (deleted, or removed by Vercel for not having been used). Anything else (Vercel's side,
+      // the network, a request it did not like) is reported as it is, and the image is left alone.
       const gone = httpStatus(err) === 404 || httpStatus(err) === 410 || /snapshot|not[_ ]found|expired/i.test(`${apiCode(err)} ${err?.json?.error?.message ?? ''}`);
       if (unavailable.kind !== 'failed' || !gone) throw unavailable;
       throw await imageNotUsable(unavailable.detail);
@@ -377,12 +443,16 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
     } catch (err) {
       throw classifyError(err);
     } finally {
-      // The answer does not wait for the machine to be gone. Stopping ends it; deleting removes
-      // its entry from the project's list of sandboxes.
-      background(async () => {
-        await machine.stop();
-        await machine.delete().catch(() => {});
-      }, 'removing a judge machine');
+      // Stopping ends the machine; deleting removes its entry from the project's list of
+      // sandboxes. The answer does not wait for that — unless nothing can be finished after the
+      // answer here: a machine that is left running is paid for until it ends itself, and counts
+      // against the number of machines that may run at once.
+      const remove = async (stopTimeoutMs) => {
+        await machine.stop({ signal: AbortSignal.timeout(stopTimeoutMs) });
+        await machine.delete({ signal: AbortSignal.timeout(DELETE_TIMEOUT_MS) }).catch(() => {});
+      };
+      if (removeBeforeAnswering()) await remove(STOP_TIMEOUT_MS).catch((err) => log.warn({ detail: describeError(err) }, 'a machine of the code runner could not be removed; it ends itself within minutes'));
+      else background(() => remove(STOP_TIMEOUT_AFTER_ANSWER_MS), 'removing a judge machine');
     }
   }
 
@@ -474,19 +544,55 @@ export function createSandboxJudge({ region, credentials = () => sandboxCredenti
     return removed;
   }
 
-  /** What this application keeps on the account: its images, and all snapshots of the project. */
+  const ENDED = new Set(['stopped', 'failed', 'aborted']);
+
+  /**
+   * Machines of single jobs that are still listed on the account. Normally there are none: each
+   * is removed when its job is done. One stays behind when the request that started it was cut
+   * short; it ends itself after a few minutes and is deleted here.
+   * @returns {Promise<{ removed: number, running: number }>} running: not ended yet (in use, or about to end by itself)
+   */
+  async function removeLeftoverMachines({ limit = 40 } = {}) {
+    const creds = identity();
+    const { Sandbox } = await loadSdk();
+    const listed = await Sandbox.list({ tags: RUN_TAGS, ...creds });
+    let removed = 0;
+    let running = 0;
+    for (const entry of listed.sandboxes ?? []) {
+      if (entry.name.startsWith(IMAGE_NAME_PREFIX)) continue; // an image is never a leftover
+      if (!ENDED.has(entry.status)) {
+        running += 1;
+        continue;
+      }
+      if (removed >= limit) continue;
+      const machine = await Sandbox.get({ name: entry.name, ...creds }).catch(() => null);
+      if (!machine) continue;
+      await machine.delete().catch(() => {});
+      removed += 1;
+    }
+    return { removed, running };
+  }
+
+  /**
+   * What this application keeps on the account: its images, and all snapshots of the project.
+   * `imageKeptUntil`: when Vercel removes the snapshot of the image in use unless it is used
+   * before; null when it is kept until deleted; undefined when that cannot be told.
+   */
   async function inventory() {
     const creds = identity();
     const { Sandbox, Snapshot } = await loadSdk();
     const listed = await Sandbox.list({ namePrefix: IMAGE_NAME_PREFIX, sortBy: 'name', ...creds });
     const snapshots = await Snapshot.list({ ...creds });
     const stored = (snapshots.snapshots ?? []).filter((snapshot) => snapshot.status === 'created');
+    const base = await findBase(Sandbox, creds).catch(() => null);
+    const own = base?.currentSnapshotId ? stored.find((snapshot) => snapshot.id === base.currentSnapshotId) : null;
     return {
       images: (listed.sandboxes ?? []).map((entry) => ({ name: entry.name, status: entry.status, current: entry.name === name })),
       snapshots: stored.length,
       snapshotBytes: stored.reduce((sum, snapshot) => sum + (snapshot.sizeBytes ?? 0), 0),
+      imageKeptUntil: own ? (Number.isFinite(own.expiresAt) ? new Date(own.expiresAt).toISOString() : null) : undefined,
     };
   }
 
-  return { name, region, runBatch, selfTest, advanceImage, ensureImage, removeOtherImages, inventory };
+  return { name, region, runBatch, selfTest, advanceImage, ensureImage, removeOtherImages, removeLeftoverMachines, inventory };
 }

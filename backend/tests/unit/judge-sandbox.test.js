@@ -3,12 +3,12 @@
 // the prepared image is missing, busy or broken. No machine is started and no program is run here;
 // the runner itself is tested in judge-runner.test.js, and both together against a real account by
 // scripts/judge-image.mjs.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { apiError, fakeSandboxAccount, okReport } from '../helpers/fakeSandbox.js';
 import { REPORT_PREFIX, RUNNER_MARKER, RUNNER_VERSION } from '../../src/services/judge/vmRunner.mjs';
 import {
   BASE_IMAGE, IMAGE_TAG, JOB_DEADLINE_MS, JudgeUnavailable, classifyError, createSandboxJudge, describeError, imageName, imageScript,
-  parseReport, sandboxCredentials, setSandboxSdk, toRun,
+  parseReport, resolveIdentity, sandboxCredentials, setSandboxSdk, toRun,
 } from '../../src/services/judge/vercelSandbox.js';
 
 const REGION = 'sin1';
@@ -21,7 +21,7 @@ function judgeFor(fake, options = {}) {
   const pending = [];
   const warnings = [];
   const judge = createSandboxJudge({
-    region: REGION, credentials: () => CREDS,
+    region: REGION, identity: () => ({ credentials: CREDS }),
     log: { info() {}, warn: (fields, message) => warnings.push([message, fields]) },
     background: (task) => pending.push(Promise.resolve().then(task)),
     ...options,
@@ -51,6 +51,8 @@ describe('checking a program', () => {
 
     const fork = fake.calls.find((c) => c[0] === 'fork')[1];
     expect(fork).toMatchObject({ sourceSandbox: NAME, region: REGION, networkPolicy: 'deny-all', persistent: false, resources: { vcpus: 1 }, ...CREDS });
+    // Marked, so that a machine that was never removed can be found on the account later.
+    expect(fork.tags).toEqual({ edusphere: 'judge-run' });
     expect(fork.timeout).toBeGreaterThanOrEqual(60_000);
     expect(fork.signal).toBeInstanceOf(AbortSignal);
     // One upload and one command as root; the answer is there while the machine is still being stopped.
@@ -60,6 +62,9 @@ describe('checking a program', () => {
     machineStopped();
     await settle();
     expect(fake.names().slice(3)).toEqual(['stop', 'delete']);
+    // Nobody waits for ever for a machine to stop: both steps give up after a few seconds.
+    expect(fake.machines[0].stopOptions.signal).toBeInstanceOf(AbortSignal);
+    expect(fake.calls.at(-1)[2].signal).toBeInstanceOf(AbortSignal);
   });
 
   it('sends the program, the inputs and the limits, and nothing else', async () => {
@@ -111,11 +116,43 @@ describe('checking a program', () => {
 
   it('cannot start anything without an identity, and says which one is missing', async () => {
     const fake = account();
-    const { judge } = judgeFor(fake, { credentials: () => null });
+    const { judge } = judgeFor(fake, { identity: () => ({ credentials: null, problem: null }) });
     const err = await unavailable(judge.runBatch(program));
     expect(err.kind).toBe('identity');
-    expect(err.detail).toMatch(/OIDC token.*VERCEL_TOKEN/);
+    expect(err.detail).toMatch(/No identity token.*VERCEL_TOKEN/);
+    // A token that was there and is not used is the better explanation.
+    const other = judgeFor(fake, { identity: () => ({ credentials: null, problem: 'An identity token for another Vercel project was found; nothing is started with it.' }) });
+    expect(await unavailable(other.judge.runBatch(program))).toMatchObject({ kind: 'identity', detail: 'An identity token for another Vercel project was found; nothing is started with it.' });
     expect(fake.calls).toEqual([]);
+  });
+
+  it('removes the machine before answering where nothing can be finished after the answer', async () => {
+    const fake = account();
+    let machineStopped;
+    fake.state.stopGate = new Promise((resolve) => { machineStopped = resolve; });
+    const inBackground = [];
+    const { judge } = judgeFor(fake, { removeBeforeAnswering: () => true, background: (task, label) => inBackground.push(label) });
+    let answered = false;
+    const answer = judge.runBatch(program).then((out) => {
+      answered = true;
+      return out;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The program has been checked, but the answer waits for the machine to be gone.
+    expect(fake.names()).toEqual(['fork', 'writeFiles', 'runCommand', 'stop']);
+    expect(answered).toBe(false);
+    machineStopped();
+    expect((await answer).runs.map((run) => run.stdout)).toEqual(['4\n', '10\n']);
+    expect(fake.names().slice(3)).toEqual(['stop', 'delete']);
+    expect(inBackground).toEqual([]);
+  });
+
+  it('still answers when the machine cannot be removed, and says so in the log', async () => {
+    const fake = account();
+    fake.state.stopError = apiError(500, 'internal', 'could not stop');
+    const { judge, warnings } = judgeFor(fake, { removeBeforeAnswering: () => true });
+    expect((await judge.runBatch(program)).runs).toHaveLength(2);
+    expect(warnings).toEqual([['a machine of the code runner could not be removed; it ends itself within minutes', { detail: 'HTTP 500 internal: could not stop' }]]);
   });
 });
 
@@ -212,6 +249,9 @@ describe('the prepared image', () => {
     await settle();
     const created = fake.calls.find((c) => c[0] === 'create')[1];
     expect(created).toMatchObject({ name: NAME, image: BASE_IMAGE, region: REGION, persistent: true, ...CREDS });
+    // Kept until it is deleted: Vercel's default removes a snapshot that was not used for 30 days, and a break between terms is longer.
+    expect(created).toMatchObject({ snapshotExpiration: 0, keepLastSnapshots: { count: 1 } });
+    expect(created.tags).toEqual({ edusphere: 'judge-image' });
     expect(created.networkPolicy).toBeUndefined(); // the installation needs the package mirrors
     expect(fake.calls.filter((c) => c[0] === 'writeFiles')[0][2]).toEqual(['/var/tmp/edusphere-judge-image.sh']);
     expect(fake.calls.find((c) => c[0] === 'runCommand')).toEqual(['runCommand', NAME, 'bash /var/tmp/edusphere-judge-image.sh', { sudo: true, detached: true, timeoutMs: undefined }]);
@@ -383,42 +423,167 @@ describe('the prepared image', () => {
     expect(await judge.removeOtherImages()).toEqual([old]);
     expect(fake.calls.find((c) => c[0] === 'list')[1]).toMatchObject({ namePrefix: 'edusphere-judge-', sortBy: 'name' });
     expect([...fake.bases.keys()].sort()).toEqual([NAME, 'somebody-elses-sandbox'].sort());
-    expect(await judge.inventory()).toEqual({ images: [{ name: NAME, status: 'stopped', current: true }, { name: 'somebody-elses-sandbox', status: 'stopped', current: false }], snapshots: 1, snapshotBytes: 1_103_000_000 });
+    const kept = { images: [{ name: NAME, status: 'stopped', current: true }, { name: 'somebody-elses-sandbox', status: 'stopped', current: false }], snapshots: 1, snapshotBytes: 1_103_000_000 };
+    // The snapshot of the image in use is kept until the image is deleted …
+    expect(await judge.inventory()).toEqual({ ...kept, imageKeptUntil: null });
+    // … and one that Vercel would remove for not being used is reported with its date.
+    fake.state.snapshotExpiresAt = Date.UTC(2026, 11, 12, 8);
+    expect(await judge.inventory()).toEqual({ ...kept, imageKeptUntil: '2026-12-12T08:00:00.000Z' });
+    // Without the image, or when its snapshot is not among those listed, nothing is claimed.
+    fake.bases.get(NAME).currentSnapshotId = 'snap_unknown';
+    expect((await judge.inventory()).imageKeptUntil).toBeUndefined();
+    fake.bases.delete(NAME);
+    expect(await judge.inventory()).toEqual({ images: [kept.images[1]], snapshots: 1, snapshotBytes: 1_103_000_000, imageKeptUntil: undefined });
+  });
+
+  it('is prepared the ordinary way on an account that may not keep a snapshot for good', async () => {
+    const fake = account({ image: 'missing' });
+    fake.state.createError = (params) => ('snapshotExpiration' in params || 'keepLastSnapshots' in params ? apiError(400, 'bad_request', 'snapshotExpiration is not available on this plan') : null);
+    const { judge, warnings } = judgeFor(fake);
+    expect(await judge.advanceImage()).toEqual({ state: 'preparing', detail: 'started' });
+    const [first, second] = fake.calls.filter((c) => c[0] === 'create').map((c) => c[1]);
+    expect(first).toMatchObject({ name: NAME, snapshotExpiration: 0 });
+    expect(second).toMatchObject({ name: NAME, image: BASE_IMAGE, persistent: true, ...CREDS });
+    expect(second).not.toHaveProperty('snapshotExpiration');
+    expect(second).not.toHaveProperty('keepLastSnapshots');
+    expect(warnings[0][0]).toMatch(/cannot be kept for good/);
+    expect(warnings[0][1].detail).toBe('HTTP 400 bad_request: snapshotExpiration is not available on this plan');
+    expect(fake.bases.has(NAME)).toBe(true);
+
+    // Reasons that have nothing to do with how the image is kept are not tried twice.
+    const paused = account({ image: 'missing' });
+    paused.state.createError = () => apiError(402, 'payment_required', 'Sandbox creation is paused');
+    const other = judgeFor(paused);
+    await expect(other.judge.advanceImage()).rejects.toMatchObject({ response: { status: 402 } });
+    expect(paused.calls.filter((c) => c[0] === 'create')).toHaveLength(1);
+  });
+
+  it('finds the machines of single programs that were never removed, and deletes those that have ended', async () => {
+    const fake = account();
+    // Nothing that should happen after the answer happens: the function was frozen each time.
+    const { judge } = judgeFor(fake, { background: () => {} });
+    await judge.runBatch(program);
+    await judge.runBatch(program);
+    await judge.runBatch(program);
+    const [first, second, third] = fake.machines;
+    expect(fake.machines.map((machine) => machine.status)).toEqual(['running', 'running', 'running']);
+    // Two of them have ended by themselves since; the third is still in its last minutes.
+    first.status = 'stopped';
+    second.status = 'failed';
+    expect(await judge.removeLeftoverMachines()).toEqual({ removed: 2, running: 1 });
+    expect(fake.calls.filter((c) => c[0] === 'list').pop()[1]).toMatchObject({ tags: { edusphere: 'judge-run' }, ...CREDS });
+    expect([first.deleted, second.deleted, third.deleted]).toEqual([true, true, false]);
+    // The image carries another mark and stays — and would stay with the wrong mark too.
+    expect([...fake.bases.keys()]).toEqual([NAME]);
+    fake.bases.get(NAME).tags = { edusphere: 'judge-run' };
+    expect(await judge.removeLeftoverMachines()).toEqual({ removed: 0, running: 1 });
+    expect([...fake.bases.keys()]).toEqual([NAME]);
+    // Not more than asked for in one go.
+    third.status = 'stopped';
+    expect(await judge.removeLeftoverMachines({ limit: 0 })).toEqual({ removed: 0, running: 0 });
+    expect(third.deleted).toBe(false);
   });
 });
 
 describe('who starts the machines', () => {
   const token = (claims) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
   const context = Symbol.for('@vercel/request-context');
-  const saved = { env: process.env.VERCEL_OIDC_TOKEN, context: globalThis[context] };
+  const saved = { token: process.env.VERCEL_OIDC_TOKEN, project: process.env.VERCEL_PROJECT_ID, context: globalThis[context] };
+  const restore = (name, value) => {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  };
+  beforeEach(() => {
+    delete process.env.VERCEL_OIDC_TOKEN;
+    delete process.env.VERCEL_PROJECT_ID;
+    globalThis[context] = undefined;
+  });
   afterEach(() => {
-    if (saved.env === undefined) delete process.env.VERCEL_OIDC_TOKEN;
-    else process.env.VERCEL_OIDC_TOKEN = saved.env;
+    restore('VERCEL_OIDC_TOKEN', saved.token);
+    restore('VERCEL_PROJECT_ID', saved.project);
     globalThis[context] = saved.context;
   });
+  const WITH_REQUEST = 'the project’s identity, handed to this request by Vercel';
 
-  it('uses the token Vercel hands to the request, before the one a build gets', () => {
+  it('uses the token that came with the request, before the one a build gets', () => {
     process.env.VERCEL_OIDC_TOKEN = token({ owner_id: 'team_build', project_id: 'prj_build' });
     expect(sandboxCredentials()).toEqual({ token: process.env.VERCEL_OIDC_TOKEN, teamId: 'team_build', projectId: 'prj_build' });
-    const fromRequest = token({ owner_id: 'team_fn', project_id: 'prj_fn' });
-    globalThis[context] = { get: () => ({ headers: { 'x-vercel-oidc-token': fromRequest } }) };
-    expect(sandboxCredentials()).toEqual({ token: fromRequest, teamId: 'team_fn', projectId: 'prj_fn' });
+    expect(resolveIdentity()).toMatchObject({ source: 'the project’s identity, from the environment', problem: null });
+
+    // What the function's entry point noted when the request arrived …
+    const noted = token({ owner_id: 'team_fn', project_id: 'prj_fn', nonce: 'noted' });
+    expect(resolveIdentity({ requestToken: noted })).toEqual({ credentials: { token: noted, teamId: 'team_fn', projectId: 'prj_fn' }, source: WITH_REQUEST, problem: null });
+
+    // … and what the platform answers when asked at this moment, which is what Vercel's SDK would use in any case.
+    const asked = token({ owner_id: 'team_fn', project_id: 'prj_fn', nonce: 'asked' });
+    globalThis[context] = { get: () => ({ headers: { 'x-vercel-oidc-token': asked } }) };
+    expect(resolveIdentity()).toEqual({ credentials: { token: asked, teamId: 'team_fn', projectId: 'prj_fn' }, source: WITH_REQUEST, problem: null });
+    expect(resolveIdentity({ requestToken: noted }).credentials.token).toBe(asked);
+    expect(resolveIdentity({ requestToken: null }).credentials.token).toBe(asked);
+
+    // A platform that cannot be asked is no platform.
+    globalThis[context] = { get: () => { throw new Error('not in a request'); } };
+    expect(resolveIdentity({ requestToken: noted }).credentials.token).toBe(noted);
   });
 
   it('uses an access token when one is configured in full', () => {
     process.env.VERCEL_OIDC_TOKEN = token({ owner_id: 'team_build', project_id: 'prj_build' });
-    expect(sandboxCredentials({ accessToken: 'vcp_x', teamId: 'team_a', projectId: 'prj_a' })).toEqual({ token: 'vcp_x', teamId: 'team_a', projectId: 'prj_a' });
+    const full = { accessToken: 'vcp_x', teamId: 'team_a', projectId: 'prj_a' };
+    expect(sandboxCredentials(full)).toEqual({ token: 'vcp_x', teamId: 'team_a', projectId: 'prj_a' });
+    // Whatever came with a request plays no part then.
+    expect(resolveIdentity({ ...full, requestToken: token({ owner_id: 'team_fn', project_id: 'prj_fn' }) })).toEqual({ credentials: { token: 'vcp_x', teamId: 'team_a', projectId: 'prj_a' }, source: 'access token', problem: null });
     expect(sandboxCredentials({ accessToken: 'vcp_x', teamId: 'team_a' }).teamId).toBe('team_build');
   });
 
-  it('has nothing to offer without a readable token', () => {
-    delete process.env.VERCEL_OIDC_TOKEN;
+  it('only uses a token for the project Vercel names as the deployment’s own', () => {
+    process.env.VERCEL_PROJECT_ID = 'prj_site';
+    const own = token({ owner_id: 'team_site', project_id: 'prj_site' });
+    const foreign = token({ owner_id: 'team_somebody', project_id: 'prj_somebody' });
+    const refused = { credentials: null, source: 'none', problem: 'An identity token for another Vercel project was found; nothing is started with it.' };
+    expect(resolveIdentity({ requestToken: own })).toMatchObject({ credentials: { token: own, teamId: 'team_site', projectId: 'prj_site' }, source: WITH_REQUEST });
+
+    // A token of another project: machines would be started on, and answers taken from, somebody else's account.
+    expect(resolveIdentity({ requestToken: foreign })).toEqual(refused);
+    process.env.VERCEL_OIDC_TOKEN = foreign;
+    expect(resolveIdentity()).toEqual(refused);
+
+    // One that came with the request is not passed over for a good one from elsewhere: Vercel's SDK
+    // would find it in the same place and use it, whatever it was given.
+    process.env.VERCEL_OIDC_TOKEN = own;
+    expect(resolveIdentity({ requestToken: foreign })).toEqual(refused);
+    globalThis[context] = { get: () => ({ headers: { 'x-vercel-oidc-token': foreign } }) };
+    expect(resolveIdentity({ requestToken: own })).toEqual(refused);
+    expect(resolveIdentity()).toEqual(refused);
     globalThis[context] = undefined;
+    expect(resolveIdentity().credentials.token).toBe(own);
+
+    // Where the project is not named there is nothing to compare with.
+    delete process.env.VERCEL_PROJECT_ID;
+    expect(resolveIdentity({ requestToken: foreign }).credentials).toMatchObject({ teamId: 'team_somebody', projectId: 'prj_somebody' });
+  });
+
+  it('has nothing to offer without a readable token', () => {
+    expect(resolveIdentity()).toEqual({ credentials: null, source: 'none', problem: null });
     expect(sandboxCredentials()).toBeNull();
     process.env.VERCEL_OIDC_TOKEN = 'not-a-token';
-    expect(sandboxCredentials()).toBeNull();
+    expect(resolveIdentity()).toEqual({ credentials: null, source: 'none', problem: 'An identity token was found, but it does not name a team and a project.' });
     process.env.VERCEL_OIDC_TOKEN = token({ sub: 'no ids in here' });
     expect(sandboxCredentials()).toBeNull();
+    expect(resolveIdentity({ requestToken: 'a.b' }).credentials).toBeNull();
+    expect(resolveIdentity({ requestToken: 42 }).credentials).toBeNull();
+  });
+
+  it('leaves aside a token whose time is over, such as one a build left behind', () => {
+    const seconds = (fromNow) => Math.floor(Date.now() / 1000) + fromNow;
+    const stale = token({ owner_id: 'team_site', project_id: 'prj_site', exp: seconds(-60) });
+    const fresh = token({ owner_id: 'team_site', project_id: 'prj_site', exp: seconds(3600) });
+    process.env.VERCEL_OIDC_TOKEN = stale;
+    expect(resolveIdentity()).toEqual({ credentials: null, source: 'none', problem: 'An identity token was found, but it has expired.' });
+    expect(resolveIdentity({ requestToken: fresh })).toMatchObject({ credentials: { token: fresh }, source: WITH_REQUEST, problem: null });
+    // The request's own token counts, also when it is of no use.
+    process.env.VERCEL_OIDC_TOKEN = fresh;
+    expect(resolveIdentity({ requestToken: stale })).toEqual({ credentials: null, source: 'none', problem: 'An identity token was found, but it has expired.' });
+    expect(resolveIdentity().credentials.token).toBe(fresh);
   });
 });
 

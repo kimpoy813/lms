@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BASE_IMAGE, IMAGE_TAG, createSandboxJudge, describeError, sandboxCredentials } from '../backend/src/services/judge/vercelSandbox.js';
+import { BASE_IMAGE, IMAGE_TAG, createSandboxJudge, describeError, resolveIdentity } from '../backend/src/services/judge/vercelSandbox.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const full = process.argv.includes('--full') || process.env.JUDGE_CHECK === 'full';
@@ -38,11 +38,12 @@ function regionOfTheSite() {
 
 const access = { accessToken: process.env.VERCEL_TOKEN, teamId: process.env.VERCEL_TEAM_ID, projectId: process.env.VERCEL_PROJECT_ID };
 const background = [];
+/** A script has no "after the response": the work is remembered, and finished before counting what is left and before leaving. */
+const settle = () => Promise.allSettled(background.splice(0));
 const judge = createSandboxJudge({
   region: regionOfTheSite(),
-  credentials: () => sandboxCredentials(access),
+  identity: () => resolveIdentity(access),
   log: { info: () => {}, warn: (fields, message) => say(`! ${message}${fields?.detail ? `: ${fields.detail}` : ''}`) },
-  // A script has no "after the response": remember the work and finish it before leaving.
   background: (task) => background.push(Promise.resolve().then(task).catch(() => {})),
 });
 
@@ -154,7 +155,7 @@ const SUITE = [
     ['processes\n', (r) => (/few/.test(r.stdout) ? null : `not held: ${r.stdout.trim() || r.stderr.trim()}`), 'process bomb is held'],
     ['flood\n', (r) => (/Output limit/.test(r.stderr) ? null : 'not cut'), 'endless output is cut'],
     ['snoop\n', (r) => (/nothing reachable/.test(r.stdout) && !/uid 0 /.test(r.stdout) ? null : `REACHED: ${r.stdout.trim()}`), 'tests, job, system files, sudo and network are out of reach'],
-    ['trace\n', (r) => (r.exitCode === 1 && /ValueError: boom/.test(r.stderr) && /File "main\.py"/.test(r.stderr) ? null : 'trace not as expected'), 'error trace is readable'],
+    ['trace\n', (r) => (r.exitCode === 1 && /ValueError: boom/.test(r.stderr) && /File "main\.py"/.test(r.stderr) ? null : 'trace not as expected'), 'a crash is explained with its line'],
     ['double\n4\n', (r) => (r.exitCode === 0 && r.stdout.trim() === '8' ? null : 'a later test was disturbed by the earlier ones'), 'the next test is not disturbed'],
   ]],
   ['C', C, { timeLimitMs: 2000, memoryLimitKb: 65536 }, [
@@ -184,11 +185,14 @@ const SUITE = [
 const LABEL = { PYTHON: 'Python', JAVASCRIPT: 'JavaScript', C: 'C', CPP: 'C++', JAVA: 'Java' };
 
 async function main() {
-  if (!sandboxCredentials(access)) {
-    say('✗ No Vercel identity: VERCEL_OIDC_TOKEN is not set, and neither are VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.');
+  const who = resolveIdentity(access);
+  if (!who.credentials) {
+    say(`✗ No Vercel identity. ${who.problem ?? 'VERCEL_OIDC_TOKEN is not set, and neither are VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.'}`);
     return false;
   }
   say(`image ${judge.name} (recipe ${IMAGE_TAG}, from ${BASE_IMAGE}, region ${judge.region})`);
+  // A token is only used for the project Vercel names as the deployment's own; say whether it could be compared.
+  say(`started with ${who.source}${who.source === 'access token' ? '' : process.env.VERCEL_PROJECT_ID ? ', which is for this project' : ' (the environment does not name the project to compare it with)'}`);
   const started = Date.now();
   const image = await judge.ensureImage({ onProgress: (line) => say(`· ${line}`) });
   if (!image.check) {
@@ -213,12 +217,6 @@ async function main() {
   }
 
   if (full) {
-    try {
-      const kept = await judge.inventory();
-      say(`on the account: ${kept.images.map((image) => `${image.name} (${image.status}${image.current ? ', in use' : ''})`).join(', ') || 'no image'}; ${kept.snapshots} snapshot(s), ${Math.round(kept.snapshotBytes / 1e6)} MB`);
-    } catch (err) {
-      say(`! Could not list what is kept on the account: ${describeError(err)}`);
-    }
     say('');
     say('What a judge has to withstand:');
     for (const [language, source, limits, tests] of SUITE) {
@@ -261,11 +259,30 @@ async function main() {
       const bad = await judge.runBatch({ language: 'JAVA', code: 'public class Main { public static void main(String[] a) { int x = "text"; } }', inputs: [''], timeLimitMs: 2000, memoryLimitKb: 65536 });
       const fine = Boolean(bad.compileError) && /incompatible types/.test(bad.compileError) && !bad.compileError.includes('/judge/');
       if (!fine) ok = false;
-      say(`${fine ? '✓' : '✗'} a compile error is reported in the compiler's words${fine ? '' : `: ${JSON.stringify(bad.compileError)}`}`);
+      say(`${fine ? '✓' : '✗'} a program that does not compile is answered in the compiler's words${fine ? '' : `: ${JSON.stringify(bad.compileError)}`}`);
     } catch (err) {
-      say(`✗ compile error case: ${describeError(err)}`);
+      say(`✗ a program that does not compile: ${describeError(err)}`);
       ok = false;
     }
+    say('');
+  }
+
+  // What is left on the account when all of the above is over.
+  await settle();
+  try {
+    const kept = await judge.inventory();
+    const images = kept.images.map((image) => `${image.name} (${image.status}${image.current ? ', in use' : ''})`).join(', ') || 'no image';
+    say(`on the account: ${images}; ${kept.snapshots} snapshot(s), ${Math.round(kept.snapshotBytes / 1e6)} MB`);
+    if (kept.imageKeptUntil === null) say('the image in use is kept until it is deleted');
+    else if (kept.imageKeptUntil) say(`! the image in use is removed by Vercel on ${kept.imageKeptUntil.slice(0, 10)} unless a program is checked before; it is then prepared again`);
+  } catch (err) {
+    say(`! Could not list what is kept on the account: ${describeError(err)}`);
+  }
+  try {
+    const left = await judge.removeLeftoverMachines();
+    say(`machines of single programs: ${left.running === 0 && left.removed === 0 ? 'none left over' : `${left.running} not ended yet, ${left.removed} ended earlier and removed now`}`);
+  } catch (err) {
+    say(`! Could not look for machines that were left over: ${describeError(err)}`);
   }
   return ok;
 }
@@ -276,6 +293,6 @@ try {
 } catch (err) {
   say(`✗ ${describeError(err)}`);
 }
-await Promise.allSettled(background);
+await settle();
 say(ok ? '✓ Programs can be checked.' : '✗ Programs cannot be checked yet. See above.');
 process.exit(ok ? 0 : 1);

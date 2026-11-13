@@ -76,6 +76,8 @@ host. What happens instead, with `CODE_RUNNER_PROVIDER=vercel-sandbox`
 | It changes the compiled program, the report or the runner between tests | After compiling, the build folder belongs to root and is read-only for the program. The report is written by the runner when nothing of the program is running any more, into a folder the program cannot write to |
 | It uses up the machine: endless loop, memory, processes, output | Every compilation and every test has its own limits: time (the problem's limit; 50 s for all tests together), memory (kernel control group, with the problem's limit plus room for the language's runtime), 64 processes, 64 KB of output, files of at most 32 MB. Whatever a test leaves running is ended before the next one starts. Where control groups are not available the runner falls back to per-process limits, with approximate memory limits for Java and JavaScript |
 | A program made to look like it passed | The verdict is made by the API from what the program printed, against outputs the program never saw |
+| The site is made to use machines on somebody else's Vercel account, prepared to report whatever suits them | On Vercel the machines are started with the project's identity token, which Vercel sends along with each request. EduSphere uses a token only when it was issued to the project Vercel names as the deployment's own (`VERCEL_PROJECT_ID`); any other token that arrives with a request stops the check instead of being used or passed over. It does not rely on Vercel removing such a header when a visitor sends one, which Vercel's documentation does not promise |
+| The identity token ends up in a log, an error report or an answer | The function's entry point takes it out of the request before the application sees the request, and hands it to the code runner only. It is valid for about an hour and never stored |
 | The site's Vercel account is used up | Each user may start 20 runs a minute. Vercel's plan limits what all of them can use together; see [DEPLOYMENT.md](DEPLOYMENT.md#what-the-free-plans-allow) |
 
 What remains:
@@ -92,6 +94,10 @@ What remains:
   without `CRON_SECRET` it does not exist.
 - **Vercel is a processor of what is sent**: the program and the test inputs. See its terms
   before using this with real students.
+- **A project that hides its system variables** (*Settings → Environment Variables →
+  Automatically expose System Environment Variables* switched off) does not tell the function
+  which project it is, and the identity token can then not be compared with it.
+  `npm run smoke` says so.
 
 ## What the operator must do
 

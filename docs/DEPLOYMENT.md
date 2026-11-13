@@ -239,7 +239,9 @@ Vercel can also run the programs students write for coding problems, in
 *Production* and *Preview* and deploy. There is nothing else to set and no key to keep: the
 machines are started with the project's own short-lived identity, which Vercel hands to the
 function with every request. (*Settings → Security → Secure backend access with OIDC federation*
-has to stay enabled, as it is by default.)
+has to stay enabled, as it is by default.) EduSphere uses that identity only when it was issued
+to the project the site is deployed to, and keeps it out of everything the application logs or
+answers ([SECURITY.md](SECURITY.md#running-students-programs)).
 
 How one program is checked:
 
@@ -249,7 +251,10 @@ How one program is checked:
    starts the runner (`backend/src/services/judge/vmRunner.mjs`) in the machine.
 3. The runner compiles the program once and runs it once per test, as a user without rights and
    inside the limits of the problem, and reports what each run printed.
-4. The API compares with the expected outputs. The machine is stopped and deleted.
+4. The API compares with the expected outputs. The machine is stopped and deleted — after the
+   answer has gone out, which saves the student four seconds, or before it where Vercel gives
+   the function no way to keep running after a response. A machine that was not removed for any
+   reason ends itself within three minutes; a daily job deletes what is left of it.
 
 Measured from a Vercel build on 2026-11-12, in `sin1`: about a second for the machine, a second
 for the upload and under a second before the runner starts, so **about three seconds plus what
@@ -266,9 +271,13 @@ stopped; Vercel keeps its disk as a snapshot of about 1.1 GB. It is called
 - The build makes sure of it ("Machine image for checking students' programs" in the build log)
   and then runs a small program in every language, so the log of each deployment says whether
   every language works.
-- Vercel deletes a snapshot 30 days after it was last used. When the image is missing — after a
-  long holiday, or because somebody deleted it — the first program finds out; the API prepares
-  it again by itself, which takes a few minutes, and tells students to try again shortly.
+- It is kept until somebody deletes it. (By default Vercel removes a snapshot 30 days after it
+  was last used, which a break between terms would be enough for; the image is created with
+  that rule switched off. The build log says "kept until it is deleted", or the date when it is
+  not.)
+- When the image is missing — somebody deleted it, or it could not be kept after all — the first
+  program finds out; the API prepares it again by itself, which takes a few minutes, and tells
+  students to try again shortly.
 - A later version of EduSphere with another recipe gets another image. Production builds remove
   the ones no longer in use.
 
@@ -288,7 +297,9 @@ the reason is shown to the administrator and written to the function's log.
 
 - **Administration → Settings → Server → Code runner → Check now** runs a small program in every
   language and shows the versions, or the reason in full. It starts one machine.
-- `CRON_SECRET=… npm run smoke -- https://<your-site>` does the same from outside.
+- `CRON_SECRET=… npm run smoke -- https://<your-site>` does the same from outside, and says
+  whether Vercel hands the function the project's identity and lets it finish work after a
+  response.
 - `npm run judge:check`, on a computer with `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and
   `VERCEL_PROJECT_ID` (or the token from `vercel env pull`), also runs the programs a judge has
   to withstand: endless loops, memory and process bombs, attempts to read the tests or to reach

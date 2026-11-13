@@ -7,10 +7,32 @@
 import { logger } from './logger.js';
 
 let keepAlive = null;
+let canKeepAlive = null;
 
-/** @param {((promise: Promise<unknown>) => void) | null} hook */
-export function setBackgroundRunner(hook) {
+/**
+ * @param {((promise: Promise<unknown>) => void) | null} hook asks the platform to stay awake
+ *        until the promise settles
+ * @param {{ available?: (() => boolean) | null }} [options] `available` tells whether the platform
+ *        can be asked at this moment; without it, a hook is taken to work whenever it is called
+ */
+export function setBackgroundRunner(hook, { available = null } = {}) {
   keepAlive = hook;
+  canKeepAlive = hook ? available : null;
+}
+
+/**
+ * Will work that is started now be finished, even when the response goes out first?
+ * A server process simply keeps running. On a function platform it depends on whether the
+ * platform can be asked to stay awake; where it cannot, work that must not be cut short is better
+ * done before the response.
+ */
+export function canFinishAfterResponse() {
+  if (!canKeepAlive) return true;
+  try {
+    return canKeepAlive() !== false;
+  } catch {
+    return false;
+  }
 }
 
 /**

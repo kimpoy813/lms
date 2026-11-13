@@ -28,11 +28,13 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
   const bases = new Map();
   const machines = [];
   // installations: what the installation of each newly prepared image does, in order; after that, `installation`.
-  const state = { report, forkError, output, installation, installations: [], reportFile: null, stopGate: null };
+  // snapshotExpiresAt: when Vercel would remove the image's snapshot (milliseconds), or undefined for "never".
+  // createError: what Vercel answers to a request for a new image, given its parameters (or null to accept it).
+  const state = { report, forkError, output, installation, installations: [], reportFile: null, stopGate: null, stopError: null, snapshotExpiresAt: undefined, createError: null };
 
   class Machine {
     constructor(name, isBase, status = 'running') {
-      Object.assign(this, { name, isBase, status, files: {}, createdAt: new Date(), installation: null });
+      Object.assign(this, { name, isBase, status, files: {}, createdAt: new Date(), installation: null, tags: {}, deleted: false, currentSnapshotId: isBase ? 'snap_1' : undefined });
     }
     async writeFiles(files) {
       calls.push(['writeFiles', this.name, files.map((f) => f.path)]);
@@ -55,14 +57,17 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
       calls.push(['readFile', this.name, path]);
       return state.reportFile ? Buffer.from(state.reportFile) : null;
     }
-    async stop() {
+    async stop(options) {
       calls.push(['stop', this.name]);
+      this.stopOptions = options ?? null;
       await state.stopGate;
+      if (state.stopError) throw state.stopError;
       this.status = 'stopped';
       return { status: 'stopped', snapshot: this.isBase ? { sizeBytes: 1_103_000_000 } : undefined };
     }
     async delete(options) {
       calls.push(['delete', this.name, options ?? null]);
+      this.deleted = true;
       bases.delete(this.name);
     }
   }
@@ -72,13 +77,17 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
   const Sandbox = {
     async get({ name }) {
       calls.push(['get', name]);
-      if (!bases.has(name)) throw apiError(404, 'not_found', 'Sandbox not found');
-      return bases.get(name);
+      const found = bases.get(name) ?? machines.find((machine) => machine.name === name && !machine.deleted);
+      if (!found) throw apiError(404, 'not_found', 'Sandbox not found');
+      return found;
     },
     async create(params) {
       calls.push(['create', params]);
+      const refused = state.createError?.(params);
+      if (refused) throw refused;
       if (bases.has(params.name)) throw apiError(409, 'conflict', 'already exists');
       const base = new Machine(params.name, true);
+      base.tags = params.tags ?? {};
       base.installation = state.installations.shift() ?? null;
       bases.set(params.name, base);
       return base;
@@ -89,15 +98,27 @@ export function fakeSandboxAccount(name, { report = okReport, image = 'ready', f
       const source = bases.get(params.sourceSandbox);
       if (!source) throw apiError(404, 'not_found', 'Sandbox not found');
       const machine = new Machine(`job-${machines.length + 1}`, false);
+      machine.tags = params.tags ?? {};
       machine.madeFrom = source;
       machines.push(machine);
       return machine;
     },
     async list(params) {
       calls.push(['list', params]);
-      return { sandboxes: [...bases.values()].map((b) => ({ name: b.name, status: b.status })) };
+      // By tag: everything on the account that carries it. Otherwise: the images.
+      const all = params.tags
+        ? [...bases.values(), ...machines.filter((machine) => !machine.deleted)].filter((entry) => Object.entries(params.tags).every(([key, value]) => entry.tags[key] === value))
+        : [...bases.values()];
+      return { sandboxes: all.map((entry) => ({ name: entry.name, status: entry.status })) };
     },
   };
-  const Snapshot = { list: async () => ({ snapshots: [{ id: 'snap_1', status: 'created', sizeBytes: 1_103_000_000 }, { id: 'snap_0', status: 'deleted', sizeBytes: 5 }] }) };
+  const Snapshot = {
+    list: async () => ({
+      snapshots: [
+        { id: 'snap_1', status: 'created', sizeBytes: 1_103_000_000, ...(state.snapshotExpiresAt === undefined ? {} : { expiresAt: state.snapshotExpiresAt }) },
+        { id: 'snap_0', status: 'deleted', sizeBytes: 5, expiresAt: 1 },
+      ],
+    }),
+  };
   return { Sandbox, Snapshot, calls, bases, machines, state, Machine, names: () => calls.map((c) => c[0]) };
 }

@@ -16,7 +16,7 @@
 //
 // So only a helper without dependencies is imported here, and the application is brought in by
 // `load` below, where a failure is caught and reported (see createFunctionHandler).
-import { closeIdleConnectionsBeforeFreeze, createFunctionHandler, keepAliveUntil, restoreRequestUrl } from '../backend/src/lib/vercel.js';
+import { canKeepAlive, closeIdleConnectionsBeforeFreeze, createFunctionHandler, keepAliveUntil, restoreRequestUrl } from '../backend/src/lib/vercel.js';
 
 // For the start-up report: Node's synchronous loader on the stack means this file came in through require().
 const loadedWith = /ModuleJobSync|importSyncForRequire|loadESMFromCJS/.test(new Error().stack ?? '') ? 'require()' : 'import()';
@@ -33,13 +33,18 @@ async function load() {
   // instance cannot notice that the database dropped one, and would fail its next request with it.
   closeIdleConnectionsBeforeFreeze(pool);
 
-  // Work that finishes after the response (background jobs, e-mail copies) keeps the instance awake.
+  // Work that finishes after the response (background jobs, e-mail copies) keeps the instance
+  // awake. Whoever cannot afford to be cut short asks first whether that is possible, and does the
+  // work before the response when it is not (the code runner, for removing its machine).
   let warned = false;
-  setBackgroundRunner((promise) => {
-    if (keepAliveUntil(promise) || warned) return;
-    warned = true;
-    logger.warn('the platform offers no way to finish work after a response; background jobs and e-mail copies may be cut short');
-  });
+  setBackgroundRunner(
+    (promise) => {
+      if (keepAliveUntil(promise) || warned) return;
+      warned = true;
+      logger.warn('the platform offers no way to finish work after a response; background jobs and e-mail copies may be cut short');
+    },
+    { available: canKeepAlive },
+  );
 
   return createApp({
     prelude: [
