@@ -21,6 +21,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
+    "@vercel/sandbox": "^3.9.1",
     "compression": "^1.8.2",
     "docx": "^9.15.3",
     "express": "^5.3.0",

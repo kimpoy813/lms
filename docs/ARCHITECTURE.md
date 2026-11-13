@@ -44,7 +44,14 @@ in the features:
 
 Work that may finish after the response (a job triggered by a request, e-mail copies of
 notifications) goes through `lib/background.js`, which tells the platform to keep the instance
-alive until it is done.
+alive until it is done. Work that must not be cut short asks first whether the platform can do
+that (`canFinishAfterResponse`), and is done before the response when it cannot.
+
+Vercel tells a function two things with each request: how to stay awake after the response, and
+the project's short-lived identity token. The entry point notes both as the request arrives
+(`notePlatformRequest` in `lib/vercel.js`), takes the token out of the request, and keeps them
+for everything the request starts (`AsyncLocalStorage`). Nothing else in the application reads
+Vercel's request.
 
 ## Repository
 
@@ -125,6 +132,7 @@ is handled. The jobs tidy up and send notifications.
 | `attendance.autoClose` | 1 min | Closes attendance sessions after their end time and marks the remaining students absent |
 | `publishing` | 1 min | Publishes scheduled items, sends their notifications and deadline reminders |
 | `maintenance` | 1 h | Removes expired sessions and tokens, orphaned uploads, location data past its retention period, and old notifications |
+| `codeRunner.leftovers` | 1 day | With Vercel Sandbox: deletes machines of single programs that were never removed. Does nothing otherwise |
 
 Set `SCHEDULER_ENABLED=false` to run an instance without jobs. Where no process stays up, the
 jobs are driven by requests instead of timers (see above).
@@ -152,7 +160,15 @@ Each one sits behind a small service with a replaceable transport, which is how 
 |---|---|---|
 | E-mail (SMTP) | `services/mail.js` | Messages are kept in a development mailbox; nothing is sent |
 | AI provider | `services/ai.js` | `503 AI_UNAVAILABLE` |
-| Code judge | `services/codeRunner.js` | `503 CODE_RUNNER_UNAVAILABLE`; programs in quizzes go to manual grading |
+| Code judge | `services/codeRunner.js`, with `services/judge/` for Vercel Sandbox | `503 CODE_RUNNER_UNAVAILABLE`; programs in quizzes go to manual grading |
+
+The code judge has two kinds of back-end. A Piston server is asked once per test. Vercel Sandbox
+gets a whole submission at once: `services/judge/vercelSandbox.js` forks a machine from a prepared
+image, uploads the job and `services/judge/vmRunner.mjs`, and reads the runner's report; the
+runner is a file of its own because it runs inside that machine, not in the API. A judge that is
+busy or still being prepared answers `503 CODE_RUNNER_BUSY` or `503 CODE_RUNNER_PREPARING`, which
+the web app treats as "ask again", not as "broken". See
+[DEPLOYMENT.md](DEPLOYMENT.md#checking-students-programs) and [SECURITY.md](SECURITY.md#running-students-programs).
 
 ## Web app
 

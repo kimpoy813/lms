@@ -160,4 +160,14 @@ if (!migrate) {
   run('Role permissions, default grading scale, first administrator', ['prisma/seed.js'], { cwd: backend, env });
 }
 
+// Students' programs are checked in Vercel Sandbox machines made from a prepared image. Making
+// sure of it here means the first program after a deployment is checked at once, and the log says
+// whether every language works. A failure is not a reason to stop: the site is fine without it,
+// and the image is prepared again when the first program arrives.
+if (process.env.CODE_RUNNER_PROVIDER?.trim() === 'vercel-sandbox') {
+  console.log("\n▸ Machine image for checking students' programs");
+  const result = spawnSync(process.execPath, ['scripts/judge-image.mjs'], { cwd: root, stdio: 'inherit', timeout: 20 * 60_000 });
+  if (result.status !== 0) console.warn('\n! Programs cannot be checked automatically yet (see above). The deployment continues.');
+}
+
 console.log('\n✓ Build finished.');

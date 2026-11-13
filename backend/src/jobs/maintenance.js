@@ -1,6 +1,8 @@
-// Housekeeping: expired sessions and tokens, abandoned uploads, and location-data retention.
+// Housekeeping: expired sessions and tokens, abandoned uploads, location-data retention, and what
+// the code runner left on the Vercel account.
 import { prisma } from '../db/prisma.js';
 import { logger } from '../lib/logger.js';
+import { removeCodeRunnerLeftovers } from '../services/codeRunner.js';
 import { registerJob } from '../services/scheduler.js';
 import { getSetting } from '../services/settings.js';
 import { purgeOrphanFiles } from '../services/storage.js';
@@ -46,4 +48,10 @@ registerJob('maintenance', 60 * 60 * 1000, async () => {
   const location = await applyLocationRetention();
   const notifications = await purgeOldNotifications();
   logger.debug({ auth, files, location, notifications }, 'maintenance job finished');
+});
+
+// Once a day; does nothing unless programs are checked in Vercel Sandbox machines.
+registerJob('codeRunner.leftovers', DAY, async () => {
+  const left = await removeCodeRunnerLeftovers();
+  if (left?.removed) logger.info(left, 'removed machines of the code runner that had been left on the Vercel account');
 });

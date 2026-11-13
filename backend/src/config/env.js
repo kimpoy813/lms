@@ -127,10 +127,16 @@ const schema = z.object({
   AI_INPUT_COST_PER_1K: z.coerce.number().min(0).default(0),
   AI_OUTPUT_COST_PER_1K: z.coerce.number().min(0).default(0),
 
-  CODE_RUNNER_PROVIDER: z.enum(['none', 'piston']).default('none'),
+  CODE_RUNNER_PROVIDER: z.enum(['none', 'piston', 'vercel-sandbox']).default('none'),
   CODE_RUNNER_URL: optionalString,
   CODE_RUNNER_API_KEY: optionalString,
   CODE_RUNNER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  // vercel-sandbox: where the machines run. On Vercel the region of the function is used.
+  CODE_RUNNER_REGION: z.string().regex(/^[a-z]{3}\d$/, 'a Vercel region code such as sin1').optional(),
+  // vercel-sandbox from a server that is not on Vercel: an access token and what it belongs to.
+  VERCEL_TOKEN: optionalString,
+  VERCEL_TEAM_ID: optionalString,
+  VERCEL_PROJECT_ID: optionalString,
 });
 
 /**
@@ -181,6 +187,15 @@ function parseTrustProxy(value) {
 
 if (isProduction && raw.COOKIE_SAMESITE === 'none' && raw.COOKIE_SECURE === 'false') {
   refuse('COOKIE_SAMESITE=none requires COOKIE_SECURE=true.');
+}
+
+// Programs checked in Vercel Sandbox machines. On Vercel the project's own identity starts them and
+// they run where the function runs; elsewhere an access token and a region have to be given.
+const vercelAccess = raw.VERCEL_TOKEN && raw.VERCEL_TEAM_ID && raw.VERCEL_PROJECT_ID ? Object.freeze({ token: raw.VERCEL_TOKEN, teamId: raw.VERCEL_TEAM_ID, projectId: raw.VERCEL_PROJECT_ID }) : null;
+const vercelRegion = /^[a-z]{3}\d$/.test(process.env.VERCEL_REGION ?? '') ? process.env.VERCEL_REGION : undefined;
+const sandboxRegion = raw.CODE_RUNNER_REGION ?? (onVercel ? vercelRegion : undefined) ?? 'iad1';
+if (raw.CODE_RUNNER_PROVIDER === 'vercel-sandbox' && !onVercel && !vercelAccess) {
+  console.warn('CODE_RUNNER_PROVIDER=vercel-sandbox needs VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID when the server does not run on Vercel. Programs will not be run.');
 }
 
 export const env = Object.freeze({
@@ -267,6 +282,9 @@ export const env = Object.freeze({
     url: raw.CODE_RUNNER_URL?.replace(/\/+$/, ''),
     apiKey: raw.CODE_RUNNER_API_KEY,
     timeoutMs: raw.CODE_RUNNER_TIMEOUT_MS,
-    configured: raw.CODE_RUNNER_PROVIDER !== 'none' && Boolean(raw.CODE_RUNNER_URL),
+    region: sandboxRegion,
+    /** Only outside Vercel; on Vercel the project's own identity is used and nothing is stored. */
+    vercelAccess,
+    configured: raw.CODE_RUNNER_PROVIDER === 'piston' ? Boolean(raw.CODE_RUNNER_URL) : raw.CODE_RUNNER_PROVIDER === 'vercel-sandbox' ? onVercel || Boolean(vercelAccess) : false,
   },
 });

@@ -2,12 +2,13 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 338 tests in 19 files, about a minute | Nothing: starts its own PostgreSQL |
-| Web-app unit tests | `npm run test:frontend` | 31 tests in 5 files, a few seconds | Nothing |
+| API and unit tests | `npm run test:backend` | 435 tests in 23 files, about a minute | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
+| Web-app unit tests | `npm run test:frontend` | 40 tests in 6 files, a few seconds | Nothing |
 | Both of the above | `npm test` | | |
-| Browser tests | `npm run test:e2e` | 33 tests, about three minutes | A Chromium browser and the demo data |
+| Browser tests | `npm run test:e2e` | 37 tests in 9 files, about three and a half minutes | A Chromium browser and the demo data |
 | Lint | `npm run lint` | | |
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
+| The code runner on a real Vercel account | `npm run judge:check` | 29 checks, about a minute | Vercel credentials; starts eight machines ([below](#the-code-runner-against-a-real-account)) |
 
 ## API and unit tests
 
@@ -32,7 +33,9 @@ HTTP requests to the application against a real PostgreSQL database, one file pe
 | `first-day.test.js` | A new installation: the administrator's set-up guide, and a site without an e-mail server (what it tells people, what it refuses to promise, which settings it will not switch on) |
 | `migrations.test.js` | Migrations through the adapter production uses: a file is applied whole (a semicolon in a comment ends nothing) and completely or not at all; a failed one is found, explained and can be let through again; what the data-only migrations change |
 | `programming-ai.test.js` | Coding problems, programs inside quizzes, AI drafts and their review |
-| `serverless.test.js` | The application as it runs on a function platform: files kept in the database (whole and partial downloads, quota, clean-up), background jobs claimed by requests and by the scheduled call, work that outlives a response, the Vercel entry point |
+| `code-runner.test.js` | The API with programs checked in Vercel Sandbox machines, Vercel's SDK replaced by a pretend account: one machine per submission, only the inputs uploaded, a verdict per test, a judge that is busy, being prepared or out of its allowance (what a student is told, what the administrator is told), the checks for the administrator and for the operator, a quiz handed in while the judge is busy |
+| `code-runner-vercel.test.js` | The same judge inside a Vercel Function, through the function's real entry point, with Vercel's part played by the test: the machines are started with the identity token that came with the request (also when the request's body arrives late, and without mixing several requests at once); a token of another project starts nothing; the token never shows in an answer; the machine is removed after the answer where the platform keeps the function awake, and before it where it does not; machines that were never removed are deleted by the daily job |
+| `serverless.test.js` | The application as it runs on a function platform: files kept in the database (whole and partial downloads, quota, clean-up), background jobs claimed by requests and by the scheduled call, work that outlives a response, the Vercel entry point and what it notes about each request |
 
 `backend/tests/unit/hosting.test.js` covers what is easy to break without noticing: how a
 database address turns into connection options (TLS on, certificate checked), which failures
@@ -57,9 +60,30 @@ The whole suite can be pointed at another way of running:
 | `TEST_DATABASE_URL='postgresql://…?sslmode=require' npm run test:backend` | Against a server that only accepts encrypted connections (with `NODE_EXTRA_CA_CERTS` for a private certificate authority) |
 
 The AI provider and the code judge are replaced by fakes inside the tests
-(`setAiTransport`, `setCodeRunnerTransport`), so those tests prove how EduSphere handles the
-answers — not that a real provider or judge works. Rate limits are off in tests unless a test
+(`setAiTransport`, `setCodeRunnerTransport`, `setSandboxSdk`), so those tests prove how EduSphere
+handles the answers — not that a real provider or judge works. For the Vercel Sandbox judge that
+proof is a separate run against a real account
+([below](#the-code-runner-against-a-real-account)). Rate limits are off in tests unless a test
 sends the header `x-test-rate-limit: 1`.
+
+Two unit files belong to the code runner:
+
+- `judge-sandbox.test.js` drives `services/judge/vercelSandbox.js` against the pretend account
+  (`tests/helpers/fakeSandbox.js`): which machine it asks for, what it uploads, how it reads the
+  answer, and everything about the prepared image — missing, being installed, failed, expired,
+  incomplete — including that a request never replaces a young image and a deployment replaces
+  it only once. Also whose identity starts the machines: which token is used when several are
+  around, and that one of another project, or one whose time is over, stops everything.
+- `judge-runner.test.js` runs the program that works inside the machine
+  (`services/judge/vmRunner.mjs`) **for real**: Python and C programs are compiled and started on
+  the computer the tests run on (tests are skipped where `python3` or `gcc` is missing). By
+  default that happens without root, in a temporary folder. The part that needs root — the
+  program gets a user without rights and kernel limits — creates a user called `judge-run` and
+  the folder `/judge` on that computer, so it runs only on request:
+
+  ```bash
+  cd backend && JUDGE_TEST_ISOLATED=1 npx vitest run tests/unit/judge-runner.test.js   # needs sudo without a password
+  ```
 
 Run one file with `cd backend && npx vitest run tests/api/quizzes.test.js`.
 
@@ -84,6 +108,7 @@ Playwright drives the real web app with the demo accounts (`e2e/tests/`):
 | `smoke.spec.js` | Every main page and class tab opens for each role without errors or sideways scrolling; the sign-in page on a phone-sized screen |
 | `live.spec.js` | A new message appears in an open conversation and a check-in on the teacher's attendance monitor without reloading — pushed over a socket, or fetched on a timer when the server cannot push |
 | `documents.spec.js` | An uploaded file comes back byte for byte (whole and in part), an oversized one is refused, the gradebook and attendance export as PDF and spreadsheet, a test paper in PDF form is read into questions |
+| `code-runner.spec.js` | The three screens of the code runner, with the server's answers replaced on their way to the page (the development server has no judge): a busy checker is asked again by the page, the student sees why it takes longer, and a limit that was hit is told in words; one that stays busy is given up after three more tries, and one that is being prepared is explained at once; the administrator's "Check now" shows every language with its version, the language that failed, or the reason in full; the problem editor says when a slow program cannot get through all tests |
 | `first-day.spec.js` | What a new school meets first: the set-up guide ticks a step when the thing is done; replacing a temporary password leads to the dashboard, and a refused password names the word to leave out; a module and an assignment are created with every date left empty; a meeting that takes only a code opens check-in on the code; "forgot password" on a site without e-mail; a photo as a phone stores it arrives smaller and upright, a long screenshot untouched |
 
 First time:
@@ -154,14 +179,59 @@ between requests, several instances at once, and Neon. Those need a real deploym
 `CRON_SECRET=… npm run smoke -- https://<your-site>` also reports how Vercel loaded the function,
 which address it passed on and whether it left request bodies alone.
 
+## The code runner against a real account
+
+`scripts/judge-image.mjs` uses the real service: it makes sure the machine image exists and runs
+a small program in every language (the Vercel build does that on every deployment that has
+`CODE_RUNNER_PROVIDER=vercel-sandbox`). With `--full` (`npm run judge:check`) it also runs, in
+real machines, what a judge has to withstand, and fails when a single check does:
+
+| Language | Checked |
+|---|---|
+| Python | runs; an endless loop is stopped at the time limit; 400 MB with a 64 MB limit is refused; a process bomb is held; endless output is cut; **the tests, the job, system files, `sudo` and the network are out of reach**; a crash is explained with its line; the next test is not disturbed |
+| C | runs; a segmentation fault and a division by zero are named; the exit code is passed on |
+| C++ | runs; sorts two million numbers in time; 600 MB with a 128 MB limit is refused |
+| Java | runs with a class that is not called `Main`; heap beyond the limit is refused; deep recursion has room; non-English characters are printed |
+| JavaScript | runs; heap beyond the limit is refused; an endless loop is stopped |
+| | the limits also hold without kernel control groups; a program that does not compile is answered in the compiler's words |
+
+At the end it lists what is left on the account — the images, their snapshots and whether the
+image in use is kept for good — and deletes machines of single programs that an earlier run or
+the site left behind.
+
+It needs to be somebody on the Vercel account: inside a Vercel build that is the build itself;
+elsewhere set `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`, or `VERCEL_OIDC_TOKEN`
+from `vercel env pull`. It starts eight machines for a few seconds each.
+
+**What was run.** On 2026-11-12 and 2026-11-13, in preview builds of the branch that introduced
+the judge, on a free-plan account, region `sin1`: the image was prepared in 44 to 50 seconds
+(1.0 to 1.1 GB as a snapshot), every check above passed, limits were enforced by kernel control
+groups, and a check of five languages took 5.1 seconds from start to answer. The account agreed
+to keep the image until it is deleted, the build's identity was the one of the project Vercel
+named, and no machine was left on the account afterwards.
+
+**What that run does not show.**
+
+- *The deployed function.* A build has its identity in its environment; a function gets it with
+  each request. How the function takes it from the request is tested with Vercel's part played
+  by the test (`code-runner-vercel.test.js`) and was tried in the built function behind the local
+  stand-in; that Vercel sends it shows only on a live site.
+  `CRON_SECRET=… npm run smoke -- https://<your-site>` has the live site start a machine and
+  reports which identity it used; "Check now" under Administration → Settings does the same for
+  an administrator.
+- *Many students at once*, against the limits of the plan.
+- *An image that went missing*: what Vercel answers then is taken from its SDK, and the repair
+  was only exercised against the pretend account.
+
 ## What is not tested
 
-- A real AI provider, a real code judge, a real SMTP server and real map tiles.
+- A real AI provider, a real Piston server, a real SMTP server and real map tiles.
 - Scanning a QR code with a camera. The browser tests check in by code and location.
 - Browsers other than Chromium; real phones. This includes making photos smaller: a picture
   drawn in Chromium with a phone's orientation note was used, not a file from a camera, and
   Safari on an iPhone was never tried. A browser that cannot redraw a picture sends it as it is.
 - Windows and macOS.
-- Load and concurrency beyond a few simultaneous requests.
+- Load and concurrency beyond a few simultaneous requests. For the code runner that includes a
+  class pressing "Run" at the same time.
 - Vercel and Neon under real use (see above for what was checked instead).
 - Accessibility with a screen reader. Form controls have labels, and menus, dialogs and tabs work from the keyboard, but no audit was done.

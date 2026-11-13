@@ -7,8 +7,10 @@ import { conflict, fieldErrors, notFound } from '../../lib/errors.js';
 import { sendCsv, toCsv } from '../../lib/csv.js';
 import { fullName, ok, pageMeta, pageQuery, paging, zDateTime, zId } from '../../lib/http.js';
 import { requireRole } from '../../middleware/auth.js';
+import { codeRunLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
+import { checkCodeRunner, codeRunnerConfigured, codeRunnerHealth } from '../../services/codeRunner.js';
 import { mailAvailable, mailConfigured } from '../../services/mail.js';
 import { notify } from '../../services/notifications.js';
 import { permissionMatrix, setRolePermission } from '../../services/permissions.js';
@@ -57,7 +59,12 @@ adminSystemRouter.get('/status', async (req, res) => {
     mailConfigured: mailConfigured(),
     mailAvailable: mailAvailable(),
     ai: { configured: env.ai.configured, provider: env.ai.provider, model: env.ai.configured ? env.ai.model : null },
-    codeRunner: { configured: env.codeRunner.configured, provider: env.codeRunner.provider },
+    codeRunner: {
+      configured: codeRunnerConfigured(), provider: env.codeRunner.provider,
+      region: env.codeRunner.provider === 'vercel-sandbox' ? env.codeRunner.region : null,
+      // What this instance of the API saw last. Each instance of a hosted function has its own view.
+      ...codeRunnerHealth(),
+    },
     maxUploadBytes: env.maxUploadBytes,
     reducePhotosOverBytes: env.reducePhotosOverBytes,
     // How the API is hosted, and what follows from it.
@@ -66,6 +73,14 @@ adminSystemRouter.get('/status', async (req, res) => {
     realtime: env.realtime,
     storage: await storageUsage(),
   });
+});
+
+/**
+ * Is the code runner in working order? Runs a small program in every language and says how long
+ * it took, or why it could not. With Vercel Sandbox this starts one machine.
+ */
+adminSystemRouter.post('/code-runner/check', codeRunLimiter, async (req, res) => {
+  ok(res, await checkCodeRunner());
 });
 
 // ── Role permissions ──────────────────────────────────────────────────────────

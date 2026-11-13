@@ -3,8 +3,9 @@ import { Router } from 'express';
 import { env } from './config/env.js';
 import { notFound, unauthorized } from './lib/errors.js';
 import { ok } from './lib/http.js';
-import { safeEqual } from './lib/tokens.js';
+import { operatorToken, safeEqual } from './lib/tokens.js';
 import { requireAuth } from './middleware/auth.js';
+import { checkCodeRunner } from './services/codeRunner.js';
 import { clearDevOutbox, devOutbox } from './services/mail.js';
 import { runDueJobs } from './services/scheduler.js';
 import { adminSystemRouter } from './modules/admin/system.js';
@@ -48,6 +49,18 @@ apiRouter.get('/internal/cron', async (req, res) => {
   const trusted = Boolean(env.cronSecret) && safeEqual(given, env.cronSecret);
   if (env.cronSecret && !trusted) throw unauthorized();
   ok(res, { ran: env.jobsAllowed ? await runDueJobs({ force: trusted }) : [] });
+});
+
+// For whoever operates the site, without signing in: is the code runner in working order? Runs a
+// small program in every language, exactly as "Check now" does for an administrator (with Vercel
+// Sandbox that starts one machine). Opened by a value derived from CRON_SECRET; `npm run smoke`
+// uses it and prints the address. Without that secret, or with another value, the address does
+// not exist.
+export const CODE_RUNNER_CHECK = 'code runner check';
+apiRouter.get('/internal/code-runner-check', async (req, res) => {
+  const given = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!env.cronSecret || !given || !safeEqual(given, operatorToken(env.cronSecret, CODE_RUNNER_CHECK))) throw notFound('Page');
+  ok(res, await checkCodeRunner());
 });
 
 apiRouter.use('/auth', authRouter);

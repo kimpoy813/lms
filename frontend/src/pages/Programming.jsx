@@ -8,6 +8,7 @@ import LazyCodeEditor from '../components/LazyCodeEditor.jsx';
 import LazyEditor from '../components/LazyEditor.jsx';
 import { Alert, Badge, Button, Card, Checkbox, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, ModalActions, PageHeader, PageLoader, QueryState, SearchInput, Select, Switch, Textarea, useDebounced } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
+import { totalTimeHint } from '../lib/codeRunner.js';
 import { formatPercent, plural, relativeTime } from '../lib/format.js';
 import { useAction } from '../lib/query.js';
 import { classLabel } from './classes/useClass.js';
@@ -82,6 +83,7 @@ export function ProblemDialog({ problemId, languages, onClose }) {
 
 function ProblemForm({ problem, languages, onClose }) {
   const navigate = useNavigate();
+  const runner = useQuery({ queryKey: ['programming', 'status'], queryFn: () => api.get('/programming/status'), staleTime: 300_000 });
   const classes = useQuery({ queryKey: ['classes', { status: 'ACTIVE', term: '' }], queryFn: () => api.get('/classes', { status: 'ACTIVE' }) });
   const [v, setV] = useState(() => ({
     title: problem?.title ?? '', statementHtml: problem?.statementHtml ?? '', classId: problem?.classId ?? '', allowedLanguages: problem?.allowedLanguages ?? ['PYTHON'],
@@ -123,7 +125,7 @@ function ProblemForm({ problem, languages, onClose }) {
           </div>
           {v.allowedLanguages.length === 0 && <p className="mt-1.5 text-[13px] text-bad">Choose at least one language.</p>}
         </fieldset>
-        <Field label="Time limit per test (seconds)" error={errors.timeLimitMs}><Input type="number" min="0.5" max="15" step="0.5" value={v.timeLimitMs / 1000} onChange={(e) => set('timeLimitMs', Math.round(Number(e.target.value) * 1000))} /></Field>
+        <Field label="Time limit per test (seconds)" error={errors.timeLimitMs} hint={totalTimeHint(runner.data?.totalTimeLimitMs, v.testCases.length, v.timeLimitMs)}><Input type="number" min="0.5" max="15" step="0.5" value={v.timeLimitMs / 1000} onChange={(e) => set('timeLimitMs', Math.round(Number(e.target.value) * 1000))} /></Field>
       </div>
 
       {v.allowedLanguages.length > 0 && (

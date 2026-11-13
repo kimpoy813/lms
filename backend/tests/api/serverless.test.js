@@ -18,8 +18,9 @@ vi.hoisted(() => {
 
 const { actor, anonymous, classroom, minutesFromNow, prepare, prisma } = await import('../helpers/index.js');
 const { env } = await import('../../src/config/env.js');
-const { runInBackground, setBackgroundRunner } = await import('../../src/lib/background.js');
-const { closeIdleConnectionsBeforeFreeze, createFunctionHandler, keepAliveUntil, restoreRequestUrl, startupReportToken } = await import('../../src/lib/vercel.js');
+const { canFinishAfterResponse, runInBackground, setBackgroundRunner } = await import('../../src/lib/background.js');
+const { canKeepAlive, closeIdleConnectionsBeforeFreeze, createFunctionHandler, keepAliveUntil, notePlatformRequest, platformIdentityToken, restoreRequestUrl, startupReportToken, withPlatformRequest } =
+  await import('../../src/lib/vercel.js');
 const { pgOptionsFromUrl } = await import('../../src/db/connection.js');
 const { default: pg } = await import('pg');
 const { checkDueJobs, jobNames, resetDueCheck, runDueJobs } = await import('../../src/services/scheduler.js');
@@ -221,6 +222,27 @@ describe('work that outlives the response', () => {
       setBackgroundRunner(null);
     }
   });
+
+  it('can be counted on by a server, and on a platform only while the platform can be asked', () => {
+    // A server process keeps running.
+    expect(canFinishAfterResponse()).toBe(true);
+    try {
+      // A platform that is simply told, and never says no.
+      setBackgroundRunner(() => {});
+      expect(canFinishAfterResponse()).toBe(true);
+      // One that can say whether it is listening.
+      let listening = false;
+      setBackgroundRunner(() => {}, { available: () => listening });
+      expect(canFinishAfterResponse()).toBe(false);
+      listening = true;
+      expect(canFinishAfterResponse()).toBe(true);
+      setBackgroundRunner(() => {}, { available: () => { throw new Error('no platform here'); } });
+      expect(canFinishAfterResponse()).toBe(false);
+    } finally {
+      setBackgroundRunner(null);
+    }
+    expect(canFinishAfterResponse()).toBe(true);
+  });
 });
 
 describe('the Vercel entry point', () => {
@@ -234,6 +256,85 @@ describe('the Vercel entry point', () => {
     try {
       expect(keepAliveUntil(work)).toBe(true);
       expect(kept).toEqual([work]);
+    } finally {
+      delete globalThis[symbol];
+    }
+  });
+
+  it('notes what the platform says about a request when it arrives, and takes the identity token out of it', async () => {
+    const symbol = Symbol.for('@vercel/request-context');
+    const incoming = (headers) => ({ headers: { ...headers }, rawHeaders: Object.entries(headers).flatMap(([name, value]) => [name === 'x-vercel-oidc-token' ? 'X-Vercel-Oidc-Token' : name, value]) });
+
+    // Outside Vercel there is nothing to note, and nothing to remove.
+    const plain = incoming({ host: 'school.example', cookie: 'sid=1' });
+    expect(notePlatformRequest(plain)).toEqual({ waitUntil: null, identityToken: null, seen: { requestContext: false, waitUntil: false, identityHeader: false, identityInContext: false } });
+    expect(plain.headers).toEqual({ host: 'school.example', cookie: 'sid=1' });
+    expect(plain.rawHeaders).toEqual(['host', 'school.example', 'cookie', 'sid=1']);
+
+    // The token comes as a header: it is kept aside and no longer part of the request.
+    const req = incoming({ host: 'school.example', 'x-vercel-oidc-token': 'token-of-request-a', cookie: 'sid=1' });
+    const noted = notePlatformRequest(req);
+    expect(noted).toMatchObject({ identityToken: 'token-of-request-a', waitUntil: null, seen: { requestContext: false, waitUntil: false, identityHeader: true, identityInContext: false } });
+    expect(req.headers).toEqual({ host: 'school.example', cookie: 'sid=1' });
+    expect(req.rawHeaders).toEqual(['host', 'school.example', 'cookie', 'sid=1']);
+    expect(JSON.stringify(noted.seen)).not.toContain('token-of-request-a');
+
+    // It is known to everything the request starts — later, after waiting, from timers — and to nothing else.
+    expect(platformIdentityToken()).toBeNull();
+    const later = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const seenBy = async (request, ms) => withPlatformRequest(notePlatformRequest(request), async () => {
+      await later(ms);
+      const fromTimer = await new Promise((resolve) => setTimeout(() => resolve(platformIdentityToken()), 1));
+      return [platformIdentityToken(), fromTimer];
+    });
+    const [a, b, none] = await Promise.all([
+      seenBy(incoming({ 'x-vercel-oidc-token': 'token-of-request-a' }), 15),
+      seenBy(incoming({ 'x-vercel-oidc-token': 'token-of-request-b' }), 5),
+      seenBy(incoming({ host: 'school.example' }), 10),
+    ]);
+    expect([a, b, none]).toEqual([['token-of-request-a', 'token-of-request-a'], ['token-of-request-b', 'token-of-request-b'], [null, null]]);
+    expect(platformIdentityToken()).toBeNull();
+
+    // The other way Vercel has of telling: the request it publishes as being in progress.
+    const kept = [];
+    globalThis[symbol] = { get: () => ({ waitUntil: (promise) => kept.push(promise), headers: { 'x-vercel-oidc-token': 'token-from-the-platform' } }) };
+    try {
+      const published = notePlatformRequest(incoming({ host: 'school.example' }));
+      expect(published).toMatchObject({ identityToken: 'token-from-the-platform', seen: { requestContext: true, waitUntil: true, identityHeader: false, identityInContext: true } });
+      // The platform's own word comes first when both are there; the header is removed all the same.
+      const both = incoming({ 'x-vercel-oidc-token': 'token-of-request-a' });
+      expect(notePlatformRequest(both)).toMatchObject({ identityToken: 'token-from-the-platform', seen: { identityHeader: true, identityInContext: true } });
+      expect(both.headers).toEqual({});
+
+      // Headers that are the very object the platform publishes are the platform's: Vercel's own
+      // packages read the token there, so nothing is taken out of them.
+      const shared = incoming({ host: 'school.example', 'x-vercel-oidc-token': 'token-of-request-a' });
+      globalThis[symbol] = { get: () => ({ waitUntil: (promise) => kept.push(promise), headers: shared.headers }) };
+      expect(notePlatformRequest(shared).identityToken).toBe('token-of-request-a');
+      expect(shared.headers['x-vercel-oidc-token']).toBe('token-of-request-a');
+      expect(shared.rawHeaders).toContain('X-Vercel-Oidc-Token');
+      globalThis[symbol] = { get: () => ({ waitUntil: (promise) => kept.push(promise), headers: { 'x-vercel-oidc-token': 'token-from-the-platform' } }) };
+
+      // Should the platform stop answering for a request that is still at work, what was noted is used.
+      delete globalThis[symbol];
+      const work = Promise.resolve();
+      expect(canKeepAlive()).toBe(false);
+      expect(keepAliveUntil(work)).toBe(false);
+      await withPlatformRequest(published, async () => {
+        await later(1);
+        expect(canKeepAlive()).toBe(true);
+        expect(keepAliveUntil(work)).toBe(true);
+      });
+      expect(kept).toEqual([work]);
+    } finally {
+      delete globalThis[symbol];
+    }
+
+    // A platform whose published request cannot be read is treated as none at all.
+    globalThis[symbol] = { get: () => { throw new Error('not in a request'); } };
+    try {
+      expect(notePlatformRequest(incoming({})).seen.requestContext).toBe(false);
+      expect(keepAliveUntil(Promise.resolve())).toBe(false);
     } finally {
       delete globalThis[symbol];
     }
@@ -331,7 +432,17 @@ describe('the Vercel entry point', () => {
     const report = await request(handler).get(`/healthz?startup-report=${startupReportToken('the-cron-secret')}`);
     expect(report.body.data).toMatchObject({ started: true, loadedWith: 'import()', platformHelpers: false });
     expect(report.body.data.reason).toBeUndefined();
+    // What the platform told about the request that asked: here, nothing.
+    expect(report.body.data.request).toEqual({ requestContext: false, waitUntil: false, identityHeader: false, identityInContext: false });
+    expect(report.body.data.projectKnown).toBe(Boolean(process.env.VERCEL_PROJECT_ID));
     expect(loads).toBe(1);
+
+    // The application never sees the identity token among the headers of a request.
+    const echo = createFunctionHandler({ load: async () => (req, res) => res.end(JSON.stringify({ headers: req.headers, raw: req.rawHeaders, known: platformIdentityToken() })) });
+    const seen = JSON.parse((await request(echo).get('/api/anything').set('X-Vercel-OIDC-Token', 'the-projects-token').set('X-Other', 'stays')).text);
+    expect(seen.known).toBe('the-projects-token');
+    expect(seen.headers['x-other']).toBe('stays');
+    expect(JSON.stringify([seen.headers, seen.raw])).not.toMatch(/oidc|the-projects-token/i);
 
     // Vercel leaves the request untouched only for an export that can listen like a server.
     const server = handler.listen(0, '127.0.0.1');

@@ -108,7 +108,8 @@ audit log.
 `npm run smoke -- https://lms.example.edu` checks a running production site from outside: pages,
 security headers, the API, the database, and that the development helpers are closed. With
 `SMOKE_EMAIL` and `SMOKE_PASSWORD` of an administrator it also signs in and stores, reads and
-deletes a small file.
+deletes a small file. With `CRON_SECRET` it asks the site to check its code runner, and prints
+an address at which that check can be repeated from a browser.
 
 ### Web app on a separate host
 
@@ -156,7 +157,8 @@ setup, so the Vercel project needs no build settings.
    | `SEED_ADMIN_PASSWORD` | A temporary password of at least 10 characters. It must be changed at the first sign-in |
    | `CRON_SECRET` | A long random text. Vercel sends it with the daily call, which then runs every job; without it the call only runs what is due |
    | `NODEJS_HELPERS` | `0`, for *Production* and *Preview*. Tells Vercel to hand requests to the application as they are, instead of reading their bodies first |
-   | `NODE_OPTIONS` | `--experimental-require-module`, for *Production* and *Preview*. **Without it the API does not start.** Vercel's Node.js runtime refuses to load an ES module with `require()` unless this is set, and a dependency does exactly that (`sanitize-html` requires `htmlparser2`). The build stops and says so when the variable is missing |
+   | `NODE_OPTIONS` | `--experimental-require-module`, for *Production* and *Preview*. **Without it the API does not start.** Vercel's Node.js runtime refuses to load an ES module with `require()` unless this is set, and a dependency does exactly that (`sanitize-html` requires `htmlparser2`). The build stops and says so when the variable is missing. Its list also names `@vercel/sandbox`, which ships a second copy of itself for `require()`; the API loads the other copy, so that one alone would not need the variable |
+   | `CODE_RUNNER_PROVIDER` | Optional: `vercel-sandbox`, for *Production* and *Preview*, to have students' programs run and checked. See [Checking students' programs](#checking-students-programs) |
    | `APP_URL` | Only with a custom domain: its full address, for example `https://lms.example.edu` |
 
    The optional services ([below](#optional-services)) are configured the same way.
@@ -165,7 +167,9 @@ setup, so the Vercel project needs no build settings.
    production deployments only — creates or updates the tables and makes sure the role
    permissions, the default grading scale and the first administrator exist. If the database
    step fails, the build fails and the previous deployment stays live
-   ([If a migration fails](#if-a-migration-fails)).
+   ([If a migration fails](#if-a-migration-fails)). With `CODE_RUNNER_PROVIDER=vercel-sandbox` it
+   then makes sure the machine image for checking programs exists and runs a small program in
+   every language; that step never stops a deployment.
 5. **Check**: `https://<your-site>/readyz` answers `{"status":"ready"}`. Sign in, choose a new
    password, then delete `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from the project. The new
    password may not contain the account's name or the first part of its e-mail address; for the
@@ -173,6 +177,7 @@ setup, so the Vercel project needs no build settings.
    "system" and "administrator". The message names the word to leave out.
 
 `npm run smoke -- https://<your-site>` checks more from your own computer ([above](#health-checks)).
+With `CRON_SECRET` it also has the live site run a small program in every language.
 
 ### If the API does not answer
 
@@ -224,12 +229,94 @@ production data, so open them with care. A preview whose code expects newer tabl
 - `MIGRATE_ON_BUILD=true` on an environment makes its builds migrate anyway (for previews with
   a database of their own); `MIGRATE_ON_BUILD=false` stops production builds from migrating.
 - `SCHEDULER_ENABLED=true` lets a preview run the background jobs.
+- With `CODE_RUNNER_PROVIDER=vercel-sandbox` set for *Preview*, previews check programs too, and
+  their builds make sure of the machine image. They share it with production, and its allowance.
+
+### Checking students' programs
+
+Vercel can also run the programs students write for coding problems, in
+[Vercel Sandbox](https://vercel.com/docs/sandbox). Set `CODE_RUNNER_PROVIDER=vercel-sandbox` for
+*Production* and *Preview* and deploy. There is nothing else to set and no key to keep: the
+machines are started with the project's own short-lived identity, which Vercel hands to the
+function with every request. (*Settings → Security → Secure backend access with OIDC federation*
+has to stay enabled, as it is by default.) EduSphere uses that identity only when it was issued
+to the project the site is deployed to, and keeps it out of everything the application logs or
+answers ([SECURITY.md](SECURITY.md#running-students-programs)).
+
+How one program is checked:
+
+1. The API asks Vercel for a fresh machine: a copy of a prepared one (the "image", below) in the
+   region of the function, **without any network access**.
+2. It uploads the program, the test inputs and the limits — never the expected outputs — and
+   starts the runner (`backend/src/services/judge/vmRunner.mjs`) in the machine.
+3. The runner compiles the program once and runs it once per test, as a user without rights and
+   inside the limits of the problem, and reports what each run printed.
+4. The API compares with the expected outputs. The machine is stopped and deleted — after the
+   answer has gone out, which saves the student four seconds, or before it where Vercel gives
+   the function no way to keep running after a response. A machine that was not removed for any
+   reason ends itself within three minutes; a daily job deletes what is left of it.
+
+Measured from a Vercel build on 2026-11-12, in `sin1`: about a second for the machine, a second
+for the upload and under a second before the runner starts, so **about three seconds plus what
+the program itself needs** (a Java program takes a second longer to compile).
+
+**Languages**, as Ubuntu 26.04 packaged them when the image was prepared: Python 3.14, Java 25,
+C and C++ (GCC 15), JavaScript (Node.js 22).
+
+**The image** is a sandbox that was set up once (compilers installed, about a minute) and then
+stopped; Vercel keeps its disk as a snapshot of about 1 GB. It is called
+`edusphere-judge-<fingerprint of the recipe>-<region>` and is listed under the project's
+*Sandboxes*.
+
+- The build makes sure of it ("Machine image for checking students' programs" in the build log)
+  and then runs a small program in every language, so the log of each deployment says whether
+  every language works.
+- It is kept until somebody deletes it. (By default Vercel removes a snapshot 30 days after it
+  was last used, which a break between terms would be enough for; the image is created with
+  that rule switched off. The build log says "kept until it is deleted", or the date when it is
+  not.)
+- When the image is missing — somebody deleted it, or it could not be kept after all — the first
+  program finds out; the API prepares it again by itself, which takes a few minutes, and tells
+  students to try again shortly.
+- A later version of EduSphere with another recipe gets another image. Production builds remove
+  the ones no longer in use.
+
+**Limits for a program**: the time per test and the memory set in the problem (the memory is for
+the program's own data; a language's runtime gets room on top), 64 processes, 64 KB of output per
+test, and 50 seconds for all tests of one program together, compiling included. Tests a slow
+program does not reach count as too slow; the problem editor says so when the numbers allow it.
+
+**When Vercel says no.** The plan limits how many machines may start per minute and run at the
+same time ([below](#what-the-free-plans-allow)). Then the API answers "busy": the page waits a
+few seconds and asks again by itself, up to three times; a quiz that is being handed in waits
+briefly, and otherwise leaves the program for the teacher to mark, as it does without a code
+runner. When the monthly allowance is used up, students are told that checking is not available;
+the reason is shown to the administrator and written to the function's log.
+
+**Is it working?**
+
+- **Administration → Settings → Server → Code runner → Check now** runs a small program in every
+  language and shows the versions, or the reason in full. It starts one machine.
+- `CRON_SECRET=… npm run smoke -- https://<your-site>` does the same from outside, and says
+  whether Vercel hands the function the project's identity and lets it finish work after a
+  response.
+- `npm run judge:check`, on a computer with `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and
+  `VERCEL_PROJECT_ID` (or the token from `vercel env pull`), also runs the programs a judge has
+  to withstand: endless loops, memory and process bombs, attempts to read the tests or to reach
+  the network. Eight machines. See [TESTING.md](TESTING.md#the-code-runner-against-a-real-account).
+
+Outside Vercel the same judge can be used with an access token (`VERCEL_TOKEN`, `VERCEL_TEAM_ID`,
+`VERCEL_PROJECT_ID`, `CODE_RUNNER_REGION`); the machines still run on Vercel. The same works on
+Vercel, should a check ever report that no identity reached the function: an access token
+(*Account Settings → Tokens*) in `VERCEL_TOKEN` and the team's ID in `VERCEL_TEAM_ID` take the
+place of the project's identity. They are then a secret to look after, which the project's
+identity is not.
 
 ### What the free plans allow
 
-Figures from the providers' plan pages on 2026-11-11
-([Vercel Hobby](https://vercel.com/docs/plans/hobby), [Neon](https://neon.com/docs/introduction/plans)).
-They change; check them.
+Figures from the providers' plan pages on 2026-11-11, those for Sandbox on 2026-11-12
+([Vercel Hobby](https://vercel.com/docs/plans/hobby), [Vercel Sandbox](https://vercel.com/docs/sandbox/pricing),
+[Neon](https://neon.com/docs/introduction/plans)). They change; check them.
 
 | Allowance per month | Free plan | What uses it |
 |---|---|---|
@@ -238,9 +325,20 @@ They change; check them.
 | Neon: database running time | 100 compute-hours, about 400 hours at the smallest size | The database runs while the site is in use and pauses after 5 minutes without queries. The first request after a pause takes a second or two longer |
 | Neon: storage | 1 GB | All records and all uploaded files |
 | Neon: data sent to the API | 5 GB | Every query result, and every download of an uploaded file |
+| Vercel Sandbox: machines started | 5,000 | One for every program that is run or checked, however many tests it has; one for every "Check now"; one per deployment |
+| Vercel Sandbox: processor time | 5 hours | Measured: 2 to 6 seconds for a small program, most of it the machine itself. Together with the line above: **some 3,000 to 5,000 programs a month** |
+| Vercel Sandbox: memory | 420 GB-hours | A machine has 2 GB and is counted for at least a minute: 12,000 programs |
+
+Vercel Sandbox has limits that are not monthly as well: on the free plan **10 machines at the same
+time**, and **20 new machines a minute**, rising to 40 while they keep coming. A machine is in
+use for seven to ten seconds per program. A class of forty pressing "Run" within the same few
+seconds therefore sees "busy" for some of them, and the page asks again by itself. Snapshots may
+take up to 15 GB, which Vercel's table calls "lifetime" without saying whether that is a ceiling
+or a budget that is used up; the image takes about 1 GB of it.
 
 Nothing is charged on these plans, so a used-up allowance means **the site stops**: Vercel
-suspends the feature concerned for up to 30 days, and Neon's free plan has no paid overage
+suspends the feature concerned for up to 30 days (for Sandbox: no new machines, so programs are
+not checked, while the rest of the site goes on), and Neon's free plan has no paid overage
 either. Vercel's free plan is for personal, non-commercial use, runs the scheduled call at most
 once a day and keeps the function's logs for one hour.
 
@@ -279,10 +377,12 @@ Set these when you want the features (see `backend/.env.example` for all variabl
 |---|---|---|
 | E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Needed for password-reset links, e-mail verification and e-mail notifications. See [Without an e-mail server](#without-an-e-mail-server) |
 | AI authoring | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | A daily limit per teacher is set in **Settings** |
-| Code judge | `CODE_RUNNER_PROVIDER=piston`, `CODE_RUNNER_URL`, `CODE_RUNNER_API_KEY` | Run the judge isolated from the database and the API host |
+| Code judge | `CODE_RUNNER_PROVIDER=vercel-sandbox` (on Vercel nothing else), or `CODE_RUNNER_PROVIDER=piston` with `CODE_RUNNER_URL`, `CODE_RUNNER_API_KEY` | Vercel Sandbox: a machine per program on your Vercel account, see [Checking students' programs](#checking-students-programs). Piston: a server you run; keep it isolated from the database and the API host |
 | Map tiles | `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` | The default is OpenStreetMap's public tile server; check its usage policy or use your own provider |
 
-None of these was exercised against a real service during development.
+E-mail, AI authoring, a Piston server and map tiles were never exercised against a real service
+during development. The Vercel Sandbox judge was, from a Vercel build; see
+[TESTING.md](TESTING.md#the-code-runner-against-a-real-account) for what that covers.
 
 ### Without an e-mail server
 

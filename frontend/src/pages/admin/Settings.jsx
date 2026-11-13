@@ -1,6 +1,6 @@
 // Administration → Settings: institution-wide options, and the state of optional services.
 import { useQuery } from '@tanstack/react-query';
-import { Bot, CheckCircle2, CircleDashed, Code2, Mail, RotateCcw, Save, ServerCog } from 'lucide-react';
+import { Bot, CheckCircle2, CircleDashed, Code2, Mail, PlayCircle, RotateCcw, Save, ServerCog, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, PageHeader, QueryState, Switch } from '../../components/ui.jsx';
@@ -84,7 +84,9 @@ export default function AdminSettings() {
                 <ul className="space-y-3 text-sm">
                   <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText={s.mailAvailable === false ? 'Not configured. Nothing is e-mailed: when someone forgets a password, open the account under Users and choose “Reset password”.' : 'Not configured. Messages are kept in the development mailbox instead of being sent.'} />
                   <Service icon={Bot} name="AI drafting" on={s.ai.configured} onText={`Provider: ${s.ai.provider}${s.ai.model ? ` · ${s.ai.model}` : ''}`} offText="Not configured. The AI studio shows a notice and generates nothing." />
-                  <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={`Provider: ${s.codeRunner.provider}`} offText="Not configured. Code is not run: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be checked." />
+                  <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={RUNNER_TEXT[s.codeRunner.provider]?.(s.codeRunner) ?? `Provider: ${s.codeRunner.provider}`} offText="Not configured. Code is not run: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be checked.">
+                    {s.codeRunner.configured && <CodeRunnerCheck provider={s.codeRunner.provider} />}
+                  </Service>
                   <li className="border-t border-line pt-3 text-[13px] text-soft">
                     <p>Environment: <span className="font-medium text-ink">{s.environment}</span></p>
                     <p>Largest upload: <span className="font-medium text-ink">{formatBytes(s.maxUploadBytes)}</span></p>
@@ -109,14 +111,76 @@ export default function AdminSettings() {
   );
 }
 
-function Service({ icon: Icon, name, on, onText, offText }) {
+function Service({ icon: Icon, name, on, onText, offText, children }) {
   return (
     <li className="flex gap-3">
       <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${on ? 'bg-ok-soft text-ok' : 'bg-raised text-faint'}`}><Icon className="size-[18px]" aria-hidden="true" /></span>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 font-medium text-ink">{name}{on ? <CheckCircle2 className="size-4 text-ok" aria-label="configured" /> : <CircleDashed className="size-4 text-faint" aria-label="not configured" />}</p>
         <p className="text-[13px] text-soft">{on ? onText : offText}</p>
+        {children}
       </div>
     </li>
+  );
+}
+
+const RUNNER_TEXT = {
+  'vercel-sandbox': (runner) => `Every program runs in a machine of its own on this site’s Vercel account${runner.region ? ` (region ${runner.region})` : ''}, without network access, and the machine is thrown away afterwards.`,
+  piston: () => 'Programs are sent to the Piston server this site was given.',
+};
+
+const LANGUAGE_NAMES = { PYTHON: 'Python', JAVASCRIPT: 'JavaScript', C: 'C', CPP: 'C++', JAVA: 'Java' };
+
+/** "Is it working?" — runs a tiny program in every language and shows what came back. */
+function CodeRunnerCheck({ provider }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [failure, setFailure] = useState(null);
+  const run = async () => {
+    setBusy(true);
+    setFailure(null);
+    try {
+      setResult(await api.post('/admin/code-runner/check', {}));
+    } catch (err) {
+      setResult(null);
+      setFailure(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const languages = Object.entries(result?.languages ?? {});
+  return (
+    <div className="mt-2">
+      <Button size="sm" variant="secondary" icon={PlayCircle} loading={busy} onClick={run}>{busy ? 'Checking…' : 'Check now'}</Button>
+      {provider === 'vercel-sandbox' && !result && !failure && <p className="mt-1 text-xs text-faint">Starts one machine and runs a small program in each language. Takes a few seconds.</p>}
+      <div aria-live="polite">
+        {failure && <p className="mt-2 text-[13px] text-bad">{failure}</p>}
+        {result && (
+          <div className="mt-2 rounded-xl border border-line p-3 text-[13px]">
+            <p className={`flex items-center gap-1.5 font-medium ${result.ok ? 'text-ok' : 'text-bad'}`}>
+              {result.ok ? <CheckCircle2 className="size-4" aria-hidden="true" /> : <XCircle className="size-4" aria-hidden="true" />}
+              {result.ok ? 'Programs are being checked.' : 'Programs cannot be checked right now.'}
+              {result.timings?.totalMs ? <span className="ml-auto whitespace-nowrap font-normal text-faint">{(result.timings.totalMs / 1000).toFixed(1)} s</span> : null}
+            </p>
+            {languages.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {languages.map(([id, l]) => (
+                  <li key={id} className="flex flex-wrap items-baseline gap-x-2">
+                    <span className={l.ok ? 'text-ok' : 'text-bad'} aria-hidden="true">{l.ok ? '✓' : '✗'}</span>
+                    <span className="font-medium text-ink">{LANGUAGE_NAMES[id] ?? id}</span>
+                    <span className="sr-only">{l.ok ? 'works' : 'does not work'}</span>
+                    {result.versions?.[id] && <span className="text-faint">{result.versions[id]}</span>}
+                    {!l.ok && l.detail && <span className="w-full break-words text-bad">{l.detail}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {result.detail && <p className="mt-2 break-words text-soft">{result.detail}</p>}
+            {result.identity && <p className="mt-2 text-faint">Machines are started with: {result.identity}.</p>}
+            {result.limits === 'rlimit' && <p className="mt-2 text-faint">Memory limits are approximate on this machine (kernel control groups are not available).</p>}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

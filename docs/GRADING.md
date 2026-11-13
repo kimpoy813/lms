@@ -89,7 +89,8 @@ unless the class sets another value. Excused sessions are left out.
 - **Programming questions** take the best result among the programs the student had checked
   during the attempt (*tests passed, by weight*, or all-or-nothing if the problem says so). A
   program that was saved but never checked is checked once when the quiz is handed in. If it does
-  not compile, or no code judge is reachable, the answer waits for the teacher.
+  not compile, or the code judge cannot be reached or stays busy for more than a few seconds, the
+  answer waits for the teacher.
 - With several attempts allowed, the quiz counts the **highest**, the **latest** or the
   **average** attempt, as chosen by the teacher.
 - The answer key is never sent to the browser while an attempt is open. Time limits are kept by

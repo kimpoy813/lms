@@ -17,6 +17,7 @@
 // started, and — when the API could not start — why:
 //
 //   CRON_SECRET=… npm run smoke -- https://your-site.example
+import { operatorToken } from '../backend/src/lib/tokens.js';
 import { STARTUP_REPORT_PARAM, startupReportToken } from '../backend/src/lib/vercel.js';
 
 const base = (process.argv[2] ?? 'http://localhost:3900').replace(/\/+$/, '');
@@ -90,12 +91,31 @@ if (process.env.CRON_SECRET) {
   if (report && typeof report.started === 'boolean') {
     const how = `loaded with ${report.loadedWith} on Node.js ${report.node}${report.region ? ` in ${report.region}` : ''}; the function is given the URL ${report.url?.startsWith('/api?') ? 'the rewrite points to' : 'the browser asked for'}`;
     check('the function leaves request bodies to the application', report.platformHelpers === false, 'Vercel added its request helpers: set NODEJS_HELPERS=0 in the project and deploy again', how);
+    // What Vercel tells the function with each request (reported by deployments that note it).
+    if (report.request) {
+      check('the function may finish work after its response', report.request.waitUntil === true, 'Vercel gave the function no way to stay awake: e-mail copies and background jobs may be cut short, and the code runner removes its machine before it answers');
+      const identity = report.request.identityInContext || report.request.identityHeader;
+      console.log(`       (the project's identity ${identity ? 'comes' : 'does not come'} with each request${identity ? '' : ': programs cannot be checked in Vercel Sandbox machines'}${identity && !report.projectKnown ? '; Vercel does not name the project, so the identity cannot be compared with it' : ''})`);
+    }
     if (!report.started) console.log(`\n       The API could not start:\n${[report.reason?.message, ...(report.reason?.stack ?? []).slice(1, 6)].join('\n').replace(/^/gm, '         ')}\n`);
   } else {
     console.log('       (no start-up report: the site is not a function, or CRON_SECRET is not the one it was deployed with)');
   }
 } else if (health.json?.error?.code === 'STARTUP_FAILED') {
   console.log('       (the reason is in the function log; with CRON_SECRET set, this check prints it)');
+}
+if (process.env.CRON_SECRET) {
+  // Starts one machine when the site checks programs with Vercel Sandbox.
+  const checkPath = `/api/internal/code-runner-check?token=${operatorToken(process.env.CRON_SECRET, 'code runner check')}`;
+  const runner = (await call('GET', checkPath)).json?.data;
+  if (!runner) console.log('       (no answer about the code runner: CRON_SECRET is not the one the site was deployed with)');
+  else if (runner.provider === 'none') console.log('       (no code runner is set up: programs are not run, teachers mark them by hand)');
+  else {
+    const languages = Object.entries(runner.languages ?? {});
+    const broken = languages.filter(([, l]) => !l.ok).map(([id, l]) => `${id}: ${l.detail}`);
+    check(`programs are checked (${runner.provider})`, runner.ok === true, runner.detail ?? broken.join('; '), runner.ok ? `${languages.length} language${languages.length === 1 ? '' : 's'} in ${((runner.timings?.totalMs ?? 0) / 1000).toFixed(1)} s${runner.identity ? `, started with ${runner.identity}` : ''}${runner.limits === 'rlimit' ? ', memory limits approximate' : ''}` : '');
+    console.log(`       (to repeat this check in a browser: ${base}${checkPath})`);
+  }
 }
 const ready = await call('GET', '/readyz');
 check('the API reaches the database and finds its tables', ready.json?.status === 'ready', `status ${ready.status}: ${ready.text.slice(0, 120)}`, ready.json?.status === 'ready' ? `round trip ${ready.json.databaseMs} ms` : '');
