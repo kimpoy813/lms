@@ -258,7 +258,7 @@ describe('a program in a quiz that was never checked', () => {
     const quiz = (await made.teacher.post(`/api/classes/${made.cls.id}/quizzes`, { title: 'Coding quiz', resultVisibility: 'IMMEDIATE', answerVisibility: 'RESPONSES' })).body.data;
     expect((await made.teacher.post(`/api/quizzes/${quiz.id}/questions`, { question: { type: 'PROGRAMMING', points: 10, text: '<p>Double the number.</p>', programmingProblemId: made.problemId } })).status).toBe(201);
     expect((await made.teacher.patch(`/api/quizzes/${quiz.id}`, { status: 'PUBLISHED' })).status).toBe(200);
-    const started = await made.student.post(`/api/quizzes/${quiz.id}/attempts`);
+    const started = await made.student.post(`/api/quizzes/${quiz.id}/attempts`, { acceptRules: true });
     expect(started.status).toBe(201);
     const attempt = (await made.student.get(`/api/attempts/${started.body.data.attemptId}`)).body.data;
     expect((await made.student.put(`/api/attempts/${attempt.id}/answers/0`, { response: double })).status).toBe(200);

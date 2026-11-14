@@ -1,6 +1,6 @@
 // Quizzes tab.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Clock, Copy, FileQuestion, Hourglass, MoreHorizontal, PlayCircle, Plus, Settings2, Timer, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Copy, FileQuestion, Hourglass, MoreHorizontal, PlayCircle, Plus, RotateCcw, Settings2, ShieldAlert, Timer, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { StatusBadge } from '../../components/Publish.jsx';
@@ -45,20 +45,25 @@ export default function Quizzes() {
   );
 }
 
-const meta = (q) => [QUIZ_KINDS[q.kind]?.split(' ')[0], plural(q.questionCount, 'question'), `${formatScore(q.totalPoints)} points`, q.timeLimitMinutes ? `${q.timeLimitMinutes} min` : null].filter(Boolean).join(' · ');
+const meta = (q) => [QUIZ_KINDS[q.kind]?.split(' ')[0], plural(q.questionCount, 'question'), `${formatScore(q.totalPoints)} points`, q.timeLimitMinutes ? `${q.timeLimitMinutes} min` : null, q.strictMode ? 'strict rules' : null].filter(Boolean).join(' · ');
 
 function StudentRow({ q }) {
   const { base } = useClass();
   const inProgress = Boolean(q.inProgressAttemptId);
+  // Ended for a rule violation and waiting for the teacher; or given back by the teacher.
+  const ended = q.myStatus === 'TERMINATED';
+  const reopened = inProgress && Boolean(q.reopened);
   return (
     <Link to={`${base}/quizzes/${q.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface p-4 shadow-card transition-colors hover:border-line-strong">
-      <span className={cn('grid size-10 shrink-0 place-items-center rounded-xl', q.myStatus === 'MISSING' ? 'bg-bad-soft text-bad' : q.submitted ? 'bg-ok-soft text-ok' : 'bg-brand-soft text-brand')}><FileQuestion className="size-5" aria-hidden="true" /></span>
+      <span className={cn('grid size-10 shrink-0 place-items-center rounded-xl', q.myStatus === 'MISSING' || ended ? 'bg-bad-soft text-bad' : q.submitted ? 'bg-ok-soft text-ok' : 'bg-brand-soft text-brand')}><FileQuestion className="size-5" aria-hidden="true" /></span>
       <span className="min-w-0 flex-1 basis-56">
         <span className="block truncate font-semibold text-ink">{q.title}</span>
         <span className="block truncate text-[13px] text-faint">{meta(q)} · {windowText(q)}</span>
       </span>
       <span className="flex shrink-0 items-center gap-2">
-        {inProgress ? <Badge tone="warn" icon={Hourglass}>In progress — resume</Badge>
+        {reopened ? <Badge tone="info" icon={RotateCcw}>Reopened — continue</Badge>
+          : inProgress ? <Badge tone="warn" icon={Hourglass}>In progress — resume</Badge>
+            : ended ? <Badge tone="bad" icon={ShieldAlert}>Ended: rule violation</Badge>
           : q.submitted ? (
             q.awaitingGrading ? <Badge tone="info" icon={Clock}>Waiting for grading</Badge>
               : q.resultsVisible && q.score != null ? <span className="text-right"><span className="block text-base font-bold tabular-nums text-ink">{formatScore(q.score)}<span className="text-sm font-medium text-faint"> / {formatScore(q.totalPoints)}</span></span><span className={cn('block text-xs font-semibold', q.passed === false ? 'text-bad' : 'text-ok')}>{formatPercent(q.percent, 0)}{q.passed === true ? ' · passed' : q.passed === false ? ' · below passing' : ''}</span></span>
@@ -92,10 +97,11 @@ function TeacherRow({ q, readOnly }) {
           <div><dd className="text-base font-bold tabular-nums text-ink">{s.submitted}<span className="text-sm font-medium text-faint">/{s.enrolled}</span></dd><dt>Submitted</dt></div>
           <div><dd className={cn('text-base font-bold tabular-nums', s.toGrade > 0 ? 'text-info' : 'text-ink')}>{s.toGrade}</dd><dt>To grade</dt></div>
           <div><dd className={cn('text-base font-bold tabular-nums', s.inProgress > 0 ? 'text-warn' : 'text-ink')}>{s.inProgress}</dd><dt>In progress</dt></div>
+          {s.violations > 0 && <div><dd className="text-base font-bold tabular-nums text-bad">{s.violations}</dd><dt>Ended</dt></div>}
         </dl>
       )}
       <div className="flex shrink-0 items-center gap-1.5">
-        {q.status === 'PUBLISHED' ? <Button size="sm" variant={s.toGrade > 0 ? 'primary' : 'secondary'} to={`${base}/quizzes/${q.id}/results`}>{s.toGrade > 0 ? 'Grade' : 'Results'}</Button> : <Button size="sm" variant="soft" to={`${base}/quizzes/${q.id}`}>Edit questions</Button>}
+        {q.status === 'PUBLISHED' ? <Button size="sm" variant={s.toGrade > 0 || s.violations > 0 ? 'primary' : 'secondary'} to={`${base}/quizzes/${q.id}/results`}>{s.violations > 0 ? 'Decide' : s.toGrade > 0 ? 'Grade' : 'Results'}</Button> : <Button size="sm" variant="soft" to={`${base}/quizzes/${q.id}`}>Edit questions</Button>}
         <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} size="sm" label={`Actions for ${q.title}`} onClick={toggle} {...props} />}>
           {!readOnly && <MenuItem icon={Settings2} onClick={() => setSettings(true)}>Settings</MenuItem>}
           <MenuItem icon={Copy} onClick={() => copy.mutate()}>Duplicate as draft</MenuItem>

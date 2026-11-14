@@ -185,7 +185,7 @@ describe('programs inside a quiz', () => {
     return { quiz, problemId };
   }
   async function start(student, quizId) {
-    const started = await student.post(`/api/quizzes/${quizId}/attempts`);
+    const started = await student.post(`/api/quizzes/${quizId}/attempts`, { acceptRules: true });
     expect(started.status).toBe(201);
     return (await student.get(`/api/attempts/${started.body.data.attemptId}`)).body.data;
   }

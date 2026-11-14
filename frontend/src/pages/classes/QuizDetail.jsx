@@ -1,6 +1,6 @@
 // One quiz. Teachers build it here (questions, points, random pools); students start or resume it.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarClock, Check, CheckCircle2, ChevronLeft, Clock, Dices, FileQuestion, Library, Lock, Pencil, PlayCircle, Plus, Repeat, Settings2, Timer, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarClock, Check, CheckCircle2, ChevronLeft, Clock, Dices, FileQuestion, Library, Lock, Pencil, PlayCircle, Plus, Repeat, Settings2, ShieldAlert, Timer, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { StatusBadge } from '../../components/Publish.jsx';
@@ -8,12 +8,13 @@ import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
 import { Alert, Badge, Button, Card, CardHeader, cn, ConfirmDialog, DescriptionList, EmptyState, Field, IconButton, Input, Modal, QueryState, Select, Spinner } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
-import { formatDateTime, formatPercent, formatScore, plural } from '../../lib/format.js';
+import { formatDateTime, formatPercent, formatScore, formatSpan, plural } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import QuestionEditor from './quiz/QuestionEditor.jsx';
 import { DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './quiz/QuestionParts.jsx';
 import QuizDialog, { ANSWER_VISIBILITY, QUIZ_KINDS, RESULT_VISIBILITY } from './QuizDialog.jsx';
 import { windowText } from './Quizzes.jsx';
+import { RulesForStudents, rulesSummary } from './quiz/Rules.jsx';
 import { useClass } from './useClass.js';
 
 export default function QuizDetail() {
@@ -37,17 +38,43 @@ function StudentView({ quiz }) {
   const { cls, base } = useClass();
   const navigate = useNavigate();
   const [confirm, setConfirm] = useState(false);
-  const start = useAction(() => api.post(`/quizzes/${quiz.id}/attempts`), {
+  // Starting says that the rules were read; the server refuses a strict quiz without it.
+  const start = useAction(() => api.post(`/quizzes/${quiz.id}/attempts`, { acceptRules: true }), {
     invalidate: [['class', cls.id, 'quizzes'], ['class', cls.id, 'quiz', quiz.id], ['dashboard']],
     onSuccess: (r) => navigate(`${base}/quizzes/${quiz.id}/attempt/${r.attemptId}`),
     onError: () => setConfirm(false),
   });
   const attemptsLeft = quiz.maxAttempts - quiz.attemptsUsed;
   const resume = quiz.start.ok && quiz.start.resume;
+  const strict = quiz.strictMode;
+  const noun = quiz.kind === 'EXAM' ? 'examination' : 'quiz';
+  // Reopened by the teacher, and the student has not continued yet: the clock starts when they do.
+  const waiting = resume && quiz.reopened && quiz.reopened.seconds != null ? quiz.reopened : null;
+  // Reopened and already open again (or reopened without a timer).
+  const reopened = resume && quiz.reopened && !waiting ? quiz.reopened : null;
+  const ended = quiz.myStatus === 'TERMINATED' ? quiz.terminated : null;
+  // Resuming costs time, so it is not held up by a question. Everything else is asked first.
+  const ask = waiting || (!resume && (strict || quiz.timeLimitMinutes));
+  const label = waiting ? 'Continue' : resume ? 'Resume' : quiz.attemptsUsed > 0 ? 'Try again' : 'Start';
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className="min-w-0 space-y-5 lg:col-span-2">
+        {ended && (
+          <Alert tone="bad" title="Your attempt was ended">
+            On {formatDateTime(ended.at)} it was recorded that you <strong className="font-semibold">{ended.text}</strong>. Under the rules of this {noun} the attempt is marked as failed, with 0 points. Only your teacher can reopen it: if something outside your control caused this, tell them what happened. The answers you had given are kept.
+          </Alert>
+        )}
+        {waiting && (
+          <Alert tone="info" title="Your teacher reopened your attempt">
+            You continue with the answers you had already given. You have <strong className="font-semibold">{formatSpan(waiting.seconds)}</strong> from the moment you continue.{waiting.deadlineAt ? <> Continue before <strong className="font-semibold">{formatDateTime(waiting.deadlineAt)}</strong>: after that the attempt is handed in with the answers it has.</> : null}
+          </Alert>
+        )}
+        {reopened && (
+          <Alert tone="info" title="Your teacher reopened your attempt">
+            You continue with the answers you had already given.{reopened.deadlineAt ? <> Finish before <strong className="font-semibold">{formatDateTime(reopened.deadlineAt)}</strong>.</> : null}
+          </Alert>
+        )}
         <Card>
           <p className="text-xs font-semibold uppercase tracking-wide text-brand">{QUIZ_KINDS[quiz.kind]}</p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink text-balance">{quiz.title}</h1>
@@ -56,24 +83,39 @@ function StudentView({ quiz }) {
             <li className="flex items-center gap-1.5"><Timer className="size-4 text-faint" aria-hidden="true" />{quiz.timeLimitMinutes ? `${quiz.timeLimitMinutes} minutes` : 'No time limit'}</li>
             <li className="flex items-center gap-1.5"><Repeat className="size-4 text-faint" aria-hidden="true" />{quiz.maxAttempts === 1 ? 'One attempt' : `${quiz.maxAttempts} attempts`}</li>
             <li className="flex items-center gap-1.5"><CalendarClock className="size-4 text-faint" aria-hidden="true" />{windowText(quiz)}</li>
+            {strict && <li className="flex items-center gap-1.5 font-medium text-ink"><ShieldAlert className="size-4 text-warn" aria-hidden="true" />Strict rules</li>}
           </ul>
           {quiz.instructionsHtml && <div className="mt-5 border-t border-line pt-5"><RichText html={quiz.instructionsHtml} /></div>}
 
-          <div className="mt-6 rounded-xl bg-raised p-4">
+          {/* An ended attempt is explained above, in full: not said a second time here. */}
+          {!ended && <div className="mt-6 rounded-xl bg-raised p-4">
             {quiz.start.ok ? (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 text-sm text-soft">
-                  {resume ? <p className="font-semibold text-warn">You have an attempt in progress.{quiz.timeLimitMinutes ? ' The timer is still running.' : ' Your answers so far are saved.'}</p>
-                    : <p><span className="font-semibold text-ink">{attemptsLeft === 1 ? 'You have one attempt.' : `You have ${attemptsLeft} attempts left.`}</span>{quiz.timeLimitMinutes ? ` Once you start, you have ${quiz.timeLimitMinutes} minutes and the timer cannot be paused.` : ''}</p>}
-                  <p className="mt-0.5 text-[13px] text-faint">Your answers are saved as you go. If your connection drops, reopen this page to continue.</p>
+                  {waiting ? <p className="font-semibold text-ink">Your attempt is waiting for you. The timer starts when you continue.</p>
+                    : resume ? <p className="font-semibold text-warn">You have an attempt in progress.{quiz.timeLimitMinutes || quiz.reopened?.deadlineAt ? ' The timer is still running.' : ' Your answers so far are saved.'}</p>
+                      : <p><span className="font-semibold text-ink">{attemptsLeft === 1 ? 'You have one attempt.' : `You have ${attemptsLeft} attempts left.`}</span>{quiz.timeLimitMinutes ? ` Once you start, you have ${quiz.timeLimitMinutes} minutes and the timer cannot be paused.` : ''}</p>}
+                  <p className="mt-0.5 text-[13px] text-faint">{strict
+                    ? waiting ? 'The same rules apply as before: stay on the quiz page until you submit.'
+                      : reopened ? 'The same rules apply as before: stay on the quiz page until you submit.'
+                        : resume ? 'Closing or leaving the quiz page counts as a violation. Stay on it from here until you submit.'
+                          : 'Your answers are saved as you go. If your connection drops, stay on the quiz page: they are sent when it returns.'
+                    : 'Your answers are saved as you go. If your connection drops, reopen this page to continue.'}</p>
                 </div>
-                <Button size="lg" icon={PlayCircle} loading={start.isPending} onClick={() => (resume || !quiz.timeLimitMinutes ? start.mutate() : setConfirm(true))}>{resume ? 'Resume' : quiz.attemptsUsed > 0 ? 'Try again' : 'Start'}</Button>
+                <Button size="lg" icon={PlayCircle} loading={start.isPending} onClick={() => (ask ? setConfirm(true) : start.mutate())}>{label}</Button>
               </div>
             ) : (
-              <p className="flex items-center gap-2 text-sm font-medium text-soft"><Lock className="size-4 text-faint" aria-hidden="true" />{quiz.start.reason}</p>
+              <p className="flex items-center gap-2 text-sm font-medium text-soft"><Lock className="size-4 shrink-0 text-faint" aria-hidden="true" />{quiz.start.reason}</p>
             )}
-          </div>
+          </div>}
         </Card>
+
+        {strict && !quiz.submitted && !ended && (
+          <Card>
+            <CardHeader title={`Rules of this ${noun}`} icon={ShieldAlert} />
+            <RulesForStudents warnings={quiz.violationWarnings} noun={noun} />
+          </Card>
+        )}
 
         {quiz.attempts.length > 0 && (
           <Card>
@@ -83,14 +125,15 @@ function StudentView({ quiz }) {
                 <li key={a.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
                   <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-raised text-sm font-bold text-soft">{a.attemptNumber}</span>
                   <span className="min-w-0 flex-1 basis-40 text-sm">
-                    <span className="block font-medium text-ink">{a.status === 'IN_PROGRESS' ? 'In progress' : `Submitted ${formatDateTime(a.submittedAt)}`}</span>
+                    <span className="block font-medium text-ink">{a.status === 'IN_PROGRESS' ? (a.reopened ? 'Reopened by your teacher' : 'In progress') : a.status === 'TERMINATED' ? `Ended ${formatDateTime(a.terminated.at)}: you ${a.terminated.text}` : `Submitted ${formatDateTime(a.submittedAt)}`}</span>
                     <span className="block text-xs text-faint">Started {formatDateTime(a.startedAt)}</span>
                   </span>
-                  {a.status === 'IN_PROGRESS' ? <Badge tone="warn">In progress</Badge>
-                    : a.awaitingGrading ? <Badge tone="info" icon={Clock}>Waiting for grading</Badge>
-                      : a.score != null ? <span className="text-base font-bold tabular-nums text-ink">{formatScore(a.score)}<span className="text-sm font-medium text-faint"> / {formatScore(a.maxScore)}</span></span>
-                        : <Badge>Score not released</Badge>}
-                  {a.status !== 'IN_PROGRESS' && <Button size="sm" variant="secondary" to={`${base}/quizzes/${quiz.id}/attempt/${a.id}`}>Review</Button>}
+                  {a.status === 'IN_PROGRESS' ? <Badge tone={a.reopened ? 'info' : 'warn'}>{a.reopened ? 'Reopened' : 'In progress'}</Badge>
+                    : a.status === 'TERMINATED' ? <Badge tone="bad" icon={ShieldAlert}>Failed · 0 points</Badge>
+                      : a.awaitingGrading ? <Badge tone="info" icon={Clock}>Waiting for grading</Badge>
+                        : a.score != null ? <span className="text-base font-bold tabular-nums text-ink">{formatScore(a.score)}<span className="text-sm font-medium text-faint"> / {formatScore(a.maxScore)}</span></span>
+                          : <Badge>Score not released</Badge>}
+                  {a.status === 'SUBMITTED' && <Button size="sm" variant="secondary" to={`${base}/quizzes/${quiz.id}/attempt/${a.id}`}>Review</Button>}
                 </li>
               ))}
             </ul>
@@ -99,9 +142,15 @@ function StudentView({ quiz }) {
       </div>
 
       <div className="min-w-0 space-y-5">
-        <Card className={cn(quiz.submitted && quiz.resultsVisible && quiz.score != null && 'border-ok/40')}>
+        <Card className={cn(ended ? 'border-bad/40' : quiz.submitted && quiz.resultsVisible && quiz.score != null && 'border-ok/40')}>
           <CardHeader title="Your result" />
-          {!quiz.submitted ? <p className="text-sm text-soft">{quiz.myStatus === 'MISSING' ? 'You did not take this quiz before it closed.' : 'Not taken yet.'}</p>
+          {ended ? (
+            <>
+              <p className="text-4xl font-bold tabular-nums text-ink">0<span className="text-xl font-semibold text-faint"> / {formatScore(quiz.totalPoints)}</span></p>
+              <p className="mt-1 text-sm font-semibold text-bad">Failed: the attempt was ended for a rule violation</p>
+              <p className="mt-2 text-xs text-faint">This stands until your teacher reopens the attempt or decides to count your answers.</p>
+            </>
+          ) : !quiz.submitted ? <p className="text-sm text-soft">{quiz.myStatus === 'MISSING' ? 'You did not take this quiz before it closed.' : quiz.myStatus === 'IN_PROGRESS' ? 'In progress.' : 'Not taken yet.'}</p>
             : quiz.awaitingGrading ? <p className="text-sm text-soft">Submitted. Some answers are being graded by your teacher.</p>
               : quiz.resultsVisible && quiz.score != null ? (
                 <>
@@ -123,9 +172,19 @@ function StudentView({ quiz }) {
         </Card>
       </div>
 
-      <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={() => start.mutate()} loading={start.isPending} tone="primary" title="Start the quiz now?" confirmLabel="Start">
-        You will have <strong className="text-ink">{quiz.timeLimitMinutes} minutes</strong>. The timer keeps running even if you close the page, and the quiz is submitted automatically when time is up.
-      </ConfirmDialog>
+      {strict ? (
+        <Modal open={confirm} onClose={start.isPending ? undefined : () => setConfirm(false)} size="lg" title={waiting ? `Continue the ${noun}` : `Before you start the ${noun}`}
+          footer={<><Button variant="secondary" onClick={() => setConfirm(false)} disabled={start.isPending}>Not now</Button><Button icon={PlayCircle} loading={start.isPending} onClick={() => start.mutate()}>{waiting ? 'I understand, continue' : 'I understand, start'}</Button></>}>
+          {waiting
+            ? <p className="mb-4 text-sm text-soft">You will have <strong className="text-ink">{formatSpan(waiting.seconds)}</strong> from the moment you continue. The timer cannot be paused, and the same rules apply as before.</p>
+            : quiz.timeLimitMinutes ? <p className="mb-4 text-sm text-soft">You will have <strong className="text-ink">{quiz.timeLimitMinutes} minutes</strong>. The timer cannot be paused, and the {noun} is submitted automatically when time is up.</p> : null}
+          <RulesForStudents warnings={quiz.violationWarnings} noun={noun} />
+        </Modal>
+      ) : (
+        <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={() => start.mutate()} loading={start.isPending} tone="primary" title="Start the quiz now?" confirmLabel="Start">
+          You will have <strong className="text-ink">{quiz.timeLimitMinutes} minutes</strong>. The timer keeps running even if you close the page, and the quiz is submitted automatically when time is up.
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
@@ -256,6 +315,7 @@ function Builder({ quiz }) {
             ['Attempts', quiz.maxAttempts === 1 ? 'One' : `${quiz.maxAttempts} (${quiz.attemptScoring.toLowerCase()} counts)`],
             quiz.passingPercent != null && ['Passing score', `${quiz.passingPercent}%`],
             ['Shuffle', [quiz.shuffleQuestions && 'questions', quiz.shuffleChoices && 'choices'].filter(Boolean).join(' and ') || 'Off'],
+            ['Strict rules', rulesSummary(quiz)],
             ['Scores shown', RESULT_VISIBILITY[quiz.resultVisibility]],
             ['Review shows', ANSWER_VISIBILITY[quiz.answerVisibility]],
             ['Gradebook', quiz.gradeCategory ? `${quiz.gradeCategory.period} › ${quiz.gradeCategory.name}` : 'Not graded'],

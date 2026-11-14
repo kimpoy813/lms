@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dateKeyOf, dueLabel, formatBytes, formatClock, formatDuration, formatScore, fromLocalInput, initials, plural, relativeTime, setTimeZone, toLocalInput } from './format.js';
+import { dateKeyOf, dueLabel, formatBytes, formatClock, formatDuration, formatScore, formatSpan, formatTime, formatTimeExact, fromLocalInput, initials, plural, relativeTime, setTimeZone, toLocalInput } from './format.js';
 
 describe('time zone aware formatting', () => {
   it('shows institution time, not device time', () => {
@@ -21,6 +21,25 @@ describe('time zone aware formatting', () => {
   it('ignores an unknown time zone', () => {
     setTimeZone('Mars/Olympus');
     expect(dateKeyOf('2026-11-11T16:30:00Z')).toBe('2026-11-12');
+  });
+});
+
+describe('a length of time in words', () => {
+  it.each([
+    [0, '0 seconds'], [1, '1 second'], [59, '59 seconds'], [60, '1 minute'], [89, '1 minute'], [90, '2 minutes'], [2700, '45 minutes'],
+    [3600, '1 hour'], [3900, '1 hour 5 minutes'], [7260, '2 hours 1 minute'], [-5, '0 seconds'], [44.6, '45 seconds'],
+  ])('%d seconds → %s', (seconds, text) => {
+    expect(formatSpan(seconds)).toBe(text);
+  });
+});
+
+describe('the time of day', () => {
+  it('can be shown to the second, where two things in one minute must be told apart', () => {
+    setTimeZone('Asia/Manila');
+    expect(formatTime('2026-11-13T07:47:05Z')).toMatch(/^3:47\sPM$/);
+    expect(formatTimeExact('2026-11-13T07:47:05Z')).toMatch(/^3:47:05\sPM$/);
+    expect(formatTimeExact(null)).toBe('—');
+    expect(formatTimeExact('not a date')).toBe('—');
   });
 });
 

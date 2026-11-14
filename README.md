@@ -7,7 +7,7 @@ administrators, teachers and students.
 - **Backend** — Node.js 22 or newer, Express 5, PostgreSQL through Prisma, Socket.IO
 - **Web app** — React 19, React Router 7, TanStack Query, Tailwind CSS 4 (installable, works on phones)
 - **Hosting** — one Node.js server, or Vercel with a Neon database ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md))
-- **Tests** — 487 API and unit tests, 230 web-app unit tests, 47 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
+- **Tests** — 539 API and unit tests, 312 web-app unit tests, 59 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
 
 ## Quick start
 
@@ -59,6 +59,7 @@ administrator, who must change the password at first sign-in.
 | Learning content | Modules and lessons with a rich-text editor, attachments, video embeds, prerequisites, scheduled publishing, progress tracking, bookmarks, class library |
 | Assignments | Text and file submissions (photos from a phone are made smaller before they are sent), due dates, late penalties, attempts, rubrics, feedback, returning grades, bulk download |
 | Quizzes | 12 question types, question banks and random pools, import from PDF/Word/text, time limits enforced by the server, autosave, automatic and manual scoring, item analysis |
+| Strict rules in quizzes and examinations | Leaving the quiz page, copying, pasting, a screenshot key or printing ends the attempt as failed with 0 points; the teacher sees what was recorded and can reopen it, count its answers or remove it. On for quizzes and examinations, off for practice; up to five warnings can be allowed first. What a web page can and cannot notice: [docs/QUIZ-RULES.md](docs/QUIZ-RULES.md) |
 | Attendance | Sessions by code, rotating QR code and GPS geofence; manual marking, correction requests, summaries, exports. See [docs/ATTENDANCE.md](docs/ATTENDANCE.md) |
 | Grades | Grading periods and weighted categories, grading scales, transmutation, overrides with reasons, history, appeals, publishing, exports. See [docs/GRADING.md](docs/GRADING.md) |
 | Communication | Announcements, direct messages, class discussions, notifications (in-app, real time; e-mail optional), calendar, consultation booking |
@@ -129,7 +130,7 @@ frontend/    Web app: src/pages, src/components, src/lib, src/layout
 api/         The API as a Vercel Function (entry point only)
 e2e/         Browser tests (Playwright); vercel/serve.mjs runs a Vercel build locally
 scripts/     dev.mjs (one-command launcher), embedded-postgres.mjs, vercel-build.mjs, smoke.mjs, ai-check.mjs
-docs/        Architecture, deployment, security and privacy, attendance, grading, testing, API reference
+docs/        Architecture, deployment, security and privacy, attendance, grading, quiz rules, testing, API reference
 vercel.json  Build, routing and security headers on Vercel
 ```
 
@@ -140,6 +141,7 @@ vercel.json  Build, routing and security headers on Vercel
 - [Security and privacy](docs/SECURITY.md)
 - [QR + GPS attendance](docs/ATTENDANCE.md)
 - [Grading](docs/GRADING.md)
+- [Strict rules in quizzes and examinations](docs/QUIZ-RULES.md)
 - [Testing](docs/TESTING.md)
 - [API reference](docs/API.md) (generated)
 
@@ -189,6 +191,13 @@ Read this before relying on EduSphere for real classes.
   to stay exact: send that as a PDF, or raise `REDUCE_PHOTOS_OVER_MB`. Tried in Chromium only.
 - **GPS attendance is a deterrent, not proof.** A student who fakes the phone's location can
   pass the geofence. See [docs/ATTENDANCE.md](docs/ATTENDANCE.md) for what is and is not prevented.
+- **The strict rules of a quiz are a deterrent, not a locked room.** They are checked by the
+  student's own browser: a second device, a photo of the screen and most ways of taking a
+  screenshot are invisible to a web page, a phone tells a page less than a computer does, and a
+  student who knows how can switch the checks off. A pop-up or a call can end an honest
+  student's attempt, which is why the teacher can allow warnings and reopen attempts. Tried in
+  Chromium on a desktop only, never on a real phone.
+  See [docs/QUIZ-RULES.md](docs/QUIZ-RULES.md#limits-you-should-know).
 - **Not included:** single sign-on, two-factor authentication, integration with a student
   information system, video conferencing, plagiarism detection, a native mobile app,
   translations (English only).

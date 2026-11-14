@@ -21,6 +21,8 @@ export const ANSWER_VISIBILITY = { SCORE_ONLY: 'Score only', RESPONSES: 'Their o
 const blank = {
   title: '', instructionsHtml: '', kind: 'QUIZ', status: 'DRAFT', publishAt: null, availableFrom: null, availableUntil: null, timeLimitMinutes: '', maxAttempts: 1,
   attemptScoring: 'HIGHEST', passingPercent: '', shuffleQuestions: false, shuffleChoices: false, resultVisibility: 'MANUAL', answerVisibility: 'SCORE_ONLY', moduleId: '', categoryId: '',
+  // Strict rules while answering. `null` = not chosen yet: on for quizzes and examinations, off for practice.
+  strictMode: null, violationWarnings: 0,
 };
 
 export default function QuizDialog({ quiz, onClose, onSaved }) {
@@ -30,6 +32,7 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
   const [v, setV] = useState(() => quiz ? { ...blank, ...quiz, timeLimitMinutes: quiz.timeLimitMinutes ?? '', passingPercent: quiz.passingPercent ?? '', moduleId: quiz.module?.id ?? '', categoryId: quiz.gradeCategory?.id ?? '' } : blank);
   const [errors, setErrors] = useState({});
   const set = (name, value) => setV((s) => ({ ...s, [name]: value }));
+  const strict = v.strictMode ?? v.kind !== 'PRACTICE';
 
   const save = useAction(() => {
     const body = {
@@ -37,6 +40,8 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
       timeLimitMinutes: v.timeLimitMinutes === '' ? null : Number(v.timeLimitMinutes), maxAttempts: Number(v.maxAttempts) || 1, attemptScoring: v.attemptScoring,
       passingPercent: v.passingPercent === '' ? null : Number(v.passingPercent), shuffleQuestions: v.shuffleQuestions, shuffleChoices: v.shuffleChoices,
       resultVisibility: v.resultVisibility, answerVisibility: v.answerVisibility, moduleId: v.moduleId || null, categoryId: v.kind === 'PRACTICE' ? null : v.categoryId || null,
+      // Left out until the teacher chooses, so that a new quiz follows its kind.
+      ...(v.strictMode === null ? {} : { strictMode: v.strictMode }), violationWarnings: Number(v.violationWarnings) || 0,
       // A new quiz starts as a draft: it can only be published once it has questions.
       ...(quiz ? { status: v.status, publishAt: v.publishAt } : {}),
     };
@@ -80,7 +85,26 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
             <Switch checked={v.shuffleQuestions} onChange={(on) => set('shuffleQuestions', on)} label="Shuffle the questions" description="Each student gets a different order." />
             <Switch checked={v.shuffleChoices} onChange={(on) => set('shuffleChoices', on)} label="Shuffle the choices" description="For multiple-choice questions." />
           </div>
-          <p className="text-[13px] text-faint">The timer runs on the server. Leaving the tab is recorded and shown to you in the results, but students are not blocked or accused automatically.</p>
+          <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
+            <Switch checked={strict} onChange={(on) => set('strictMode', on)} label="Strict rules while answering" error={errors.strictMode}
+              description="A student who leaves the quiz page, copies from it, pastes into it, presses a screenshot key or prints it fails the attempt. Only you can reopen it." />
+            {strict && (
+              <Field label="Warnings before an attempt is ended" error={errors.violationWarnings} hint={Number(v.violationWarnings) > 0 ? 'Each violation is recorded. The one after the last warning ends the attempt.' : 'The first violation ends the attempt — also when a pop-up from another program takes over the screen. One or two warnings spare you from reopening attempts for that.'}>
+                <Select value={String(v.violationWarnings)} onChange={(e) => set('violationWarnings', Number(e.target.value))}>
+                  {[0, 1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n === 0 ? 'None' : n === 1 ? '1 warning' : `${n} warnings`}</option>)}
+                </Select>
+              </Field>
+            )}
+          </div>
+          {strict ? (
+            <div className="space-y-1.5 text-[13px] text-faint">
+              <p>Students read the rules and agree to them before they start. An attempt that is ended scores 0 and keeps its answers; you are notified, and in the results you can reopen it, count its answers or remove it.</p>
+              <p>A web page can notice that it was left, closed or reloaded, copying and pasting, printing, and the Print Screen key. It cannot notice a screenshot taken another way (a phone’s buttons, a Mac’s shortcuts), a second device or a photo of the screen. For those, the student’s name is printed faintly across the questions, so that a picture shows whose screen it was.</p>
+              {quiz?.locked && <p>Attempts that are open now stay as they were started: switching the rules on does not bind them, and switching them off releases them.</p>}
+            </div>
+          ) : (
+            <p className="text-[13px] text-faint">The timer runs on the server. Leaving the tab is recorded and shown to you in the results, but students are not blocked or accused automatically.</p>
+          )}
         </fieldset>
 
         <fieldset className="grid gap-4 rounded-xl border border-line p-4 sm:grid-cols-2">

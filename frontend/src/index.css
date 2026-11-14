@@ -173,7 +173,17 @@
   .leaflet-control-attribution { font-size: 10px; background: color-mix(in srgb, var(--surface) 80%, transparent) !important; color: var(--faint) !important; }
   .leaflet-control-attribution a { color: var(--soft) !important; }
   .leaflet-bar a { background: var(--surface) !important; color: var(--ink) !important; border-color: var(--line) !important; }
+
+  /* A quiz with strict rules (lib/quizGuard.js). The text of the quiz cannot be selected or
+     dragged out; what the student writes stays selectable (said explicitly: some browsers would
+     otherwise make the answer fields impossible to type in). */
+  .quiz-guarded { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .quiz-guarded input, .quiz-guarded textarea, .quiz-guarded [contenteditable] { -webkit-user-select: text; user-select: text; }
+  .quiz-guarded img { -webkit-user-drag: none; }
 }
+
+/* While such a quiz is open: pulling the page down on a phone would reload it. */
+html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
 
 @utility scroll-shadow {
   background:
@@ -189,4 +199,7 @@
 @media print {
   .no-print { display: none !important; }
   body { background: #fff; }
+  /* A quiz with strict rules is not printed (nor saved as a PDF, which is the same thing). */
+  html.quiz-guard body > * { display: none !important; }
+  html.quiz-guard body::after { content: "A quiz cannot be printed while it is being answered."; display: block; padding: 2rem; font: 600 1rem/1.5 system-ui, sans-serif; color: #000; }
 }

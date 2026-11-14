@@ -2,10 +2,10 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 487 tests in 26 files, about a minute and a half | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
-| Web-app unit tests | `npm run test:frontend` | 230 tests in 10 files, about ten seconds | Nothing |
+| API and unit tests | `npm run test:backend` | 539 tests in 28 files, about a minute and a half | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
+| Web-app unit tests | `npm run test:frontend` | 312 tests in 11 files, about ten seconds | Nothing |
 | Both of the above | `npm test` | | |
-| Browser tests | `npm run test:e2e` | 47 tests in 11 files, about four minutes | A Chromium browser and the demo data |
+| Browser tests | `npm run test:e2e` | 59 tests in 12 files, about six minutes | A Chromium browser and the demo data |
 | Lint | `npm run lint` | | |
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
 | The code runner on a real Vercel account | `npm run judge:check` | 29 checks, about a minute | Vercel credentials; starts eight machines ([below](#the-code-runner-against-a-real-account)) |
@@ -13,7 +13,8 @@
 ## API and unit tests
 
 `backend/tests/unit/` tests the pure rules — grade computation, late penalties, quiz scoring and
-question validation, the geofence, password hashing, time-zone helpers, upload type checks and
+question validation, the strict rules of a quiz (what a violation leads to, the clock of a
+reopened attempt), the geofence, password hashing, time-zone helpers, upload type checks and
 HTML sanitising. `backend/tests/api/` sends real
 HTTP requests to the application against a real PostgreSQL database, one file per area:
 
@@ -25,6 +26,7 @@ HTTP requests to the application against a real PostgreSQL database, one file pe
 | `content.test.js` | Modules and lessons, resources and file access, announcements, notifications |
 | `assignments.test.js` | The submission window (server clock), submitting, grading and returning |
 | `quizzes.test.js` | Question types, attempts, server-kept time, scoring, results, item analysis |
+| `quiz-rules.test.js` | [Strict rules](QUIZ-RULES.md): an attempt starts only with the rules accepted; a violation draws the warnings the quiz allows and then ends the attempt with 0 points and its answers unmarked; a report sent twice, sent late, or from before a reopening; the quiz page opened a second time; what the student and the teacher are shown and told; reopening (the time left, the time by which to continue, the clock that starts with Continue), counting the answers, the gradebook, the audit log, who may do what |
 | `attendance.test.js` | Sessions, QR tokens, the geofence, refused attempts, corrections, exports |
 | `gradebook.test.js` | Structure, computation, overrides, publishing, locking, finalising, appeals |
 | `communication.test.js` | Direct messages, class discussions, calendar, consultations, tasks, search |
@@ -105,7 +107,15 @@ making photos smaller (which files, to what size, what the person is told — th
 needs a browser and is in the browser tests), when a program is run in the browser and what the
 student is told about it (`codeRunner.test.js`), and the service worker with a pretend browser
 around it (`serviceWorker.test.js`: what it keeps, and that it leaves the API and the frame for
-Python programs alone). Screens are covered by the browser tests, not by component tests.
+Python programs alone). `quizGuard.test.js` drives the watcher of a quiz with
+[strict rules](QUIZ-RULES.md) with a pretend browser window: what is counted (leaving, losing
+the focus for a second, closing, copying, pasting, the screenshot and print keys), what is only
+stopped (reload, Back, shortcuts, the right-click menu, links), what is left alone (the
+student's own text, the file chooser, the list of a drop-down on a touch screen, a short loss
+of focus, a device that slept, a browser that does not say where the focus is), that one act is
+counted once, that the screen is kept on or the student told when it cannot be, and that a
+report is kept until the server has it. Screens are covered by the
+browser tests, not by component tests.
 
 `frontend/src/lib/pyRunner/` has the tests of [Python in the browser](#python-in-the-browser).
 
@@ -119,6 +129,7 @@ Playwright drives the real web app with the demo accounts (`e2e/tests/`):
 | `attendance.spec.js` | A session that requires location: a student inside the radius is checked in with the typed code, one far away and one without a location are refused; the teacher sees the attempts |
 | `announcements.spec.js` | A teacher posts to a class; a student in it sees the post, a student outside does not |
 | `quiz.spec.js` | A student takes a quiz and sees the score; the answer key is not sent while the attempt is open |
+| `quiz-rules.spec.js` | [Strict rules](QUIZ-RULES.md) from both sides. The student reads the rules before starting; leaving the page ends the attempt, and the questions and the score are gone; the teacher sees what was recorded and reopens; the student continues with the answers already given and the time that was left. Pasting from outside draws the warning the quiz allows and a screenshot key then ends the attempt, while reload and Back are only stopped; reloading for real and a second browser; another page of the site; the file chooser; a programming question, where the student's own code is cut, pasted and run in the browser and code from elsewhere is counted; the same question when the code editor cannot be downloaded, answered in a plain text box without a reload; a quiz without the rules; a phone-sized screen; the teacher's settings. Leaving a tab and losing the focus are produced the way the page sees them (headless Chromium has one tab that always has the focus); keys, the clipboard, reloading, Back, the second browser, the file chooser and Python are real |
 | `smoke.spec.js` | Every main page and class tab opens for each role without errors or sideways scrolling; the sign-in page on a phone-sized screen |
 | `live.spec.js` | A new message appears in an open conversation and a check-in on the teacher's attendance monitor without reloading — pushed over a socket, or fetched on a timer when the server cannot push |
 | `documents.spec.js` | An uploaded file comes back byte for byte (whole and in part), an oversized one is refused, the gradebook and attendance export as PDF and spreadsheet, a test paper in PDF form is read into questions |
@@ -307,6 +318,11 @@ removed the image of the earlier recipe.
 - Browsers other than Chromium; real phones. This includes making photos smaller: a picture
   drawn in Chromium with a phone's orientation note was used, not a file from a camera, and
   Safari on an iPhone was never tried. A browser that cannot redraw a picture sends it as it is.
+- The strict rules of a quiz on a real phone, in Safari or Firefox, or in the browser inside a
+  chat app; a person really switching tabs or windows; a real screenshot tool or print dialog.
+  What a page is told differs between browsers and systems, which is why the
+  [limits](QUIZ-RULES.md#limits-you-should-know) say to try a short quiz on your own devices
+  first.
 - Windows and macOS.
 - Load and concurrency beyond a few simultaneous requests. For the code runner that includes a
   class pressing "Run" at the same time.

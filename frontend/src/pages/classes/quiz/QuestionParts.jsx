@@ -48,7 +48,7 @@ function Option({ type, checked, onChange, disabled, children, name }) {
  * The control a student answers with. `response` has the shape the API stores
  * ({ choiceId } / { choiceIds } / { text } / { blanks } / { pairs } / { order } / { fileIds }); null = unanswered.
  */
-export function AnswerInput({ question: q, response, onChange, disabled, name, files = [], onFiles }) {
+export function AnswerInput({ question: q, response, onChange, disabled, name, files = [], onFiles, onBrowse }) {
   const r = response ?? {};
   switch (q.type) {
     case 'MULTIPLE_CHOICE':
@@ -149,7 +149,7 @@ export function AnswerInput({ question: q, response, onChange, disabled, name, f
       );
     }
     case 'FILE_UPLOAD':
-      return <FileUpload value={files} disabled={disabled} max={5} onChange={(list) => { onFiles?.(list); onChange(list.length ? { fileIds: list.map((f) => f.id) } : null); }} label="Upload your answer" hint="Up to 5 files" />;
+      return <FileUpload value={files} disabled={disabled} max={5} onBrowse={onBrowse} onChange={(list) => { onFiles?.(list); onChange(list.length ? { fileIds: list.map((f) => f.id) } : null); }} label="Upload your answer" hint="Up to 5 files" />;
     // PROGRAMMING answers are edited in the code workbench (components/CodeWorkbench.jsx), not here.
     default:
       return <p className="text-sm text-faint">This question type cannot be answered here.</p>;

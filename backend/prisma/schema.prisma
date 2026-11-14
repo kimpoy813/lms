@@ -394,6 +394,7 @@ model User {
   quizzesCreated         Quiz[]
   quizAttempts           QuizAttempt[]                 @relation("AttemptStudent")
   quizAttemptsGraded     QuizAttempt[]                 @relation("AttemptGrader")
+  quizAttemptsReopened   QuizAttempt[]                 @relation("AttemptReopener")
   answersGraded          StudentAnswer[]
   programmingProblems    ProgrammingProblem[]
   programmingSubmissions ProgrammingSubmission[]
@@ -1300,6 +1301,11 @@ model Quiz {
   shuffleQuestions   Boolean          @default(false)
   shuffleChoices     Boolean          @default(false)
   allowResume        Boolean          @default(true)
+  /// Strict rules while answering: leaving the page, copying, pasting or a screenshot key is a
+  /// violation, and violations end the attempt as failed (docs/QUIZ-RULES.md).
+  strictMode         Boolean          @default(true)
+  /// How many violations are answered with a warning before the attempt is ended (0 = none).
+  violationWarnings  Int              @default(0)
   resultVisibility   ResultVisibility @default(MANUAL)
   answerVisibility   AnswerVisibility @default(SCORE_ONLY)
   /// Set by the teacher's "Publish results" action (used when resultVisibility = MANUAL).
@@ -1375,14 +1381,36 @@ model QuizAttempt {
   needsManualGrading Boolean       @default(false)
   gradedById         String?
   gradedAt           DateTime?     @db.Timestamptz(3)
+  /// When the student accepted the quiz's strict rules by starting. Null = the rules do not bind
+  /// this attempt (the quiz had none then, or it was started before they existed).
+  rulesAcceptedAt    DateTime?     @db.Timestamptz(3)
+  /// Violations counted since the attempt was started or last reopened.
+  violationCount     Int           @default(0)
+  /// Set while the attempt stands as "failed for a rule violation": it is closed, scores 0 and
+  /// its answers are kept unmarked. Cleared when a teacher reopens it or counts its answers.
+  terminatedAt       DateTime?     @db.Timestamptz(3)
+  /// The kind of violation that ended it (LEFT_PAGE, COPY, …).
+  terminationKind    String?
+  reopenedAt         DateTime?     @db.Timestamptz(3)
+  reopenedById       String?
+  /// After a reopening: the seconds the student gets from the moment they continue. Until then
+  /// `deadlineAt` is the time by which they must continue. Null once the clock runs (or none was given).
+  resumeSeconds      Int?
+  /// Under strict rules: when the quiz page last opened this attempt. Opening it a second time
+  /// means the page was closed or reloaded in between — a violation, unless leaving was already
+  /// counted (`awaySince`). Null until the first opening after the start or a reopening.
+  pageOpenedAt       DateTime?     @db.Timestamptz(3)
+  /// Set when leaving the page was counted and the student has not been seen back on it since.
+  awaySince          DateTime?     @db.Timestamptz(3)
   createdAt          DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime      @updatedAt @db.Timestamptz(3)
 
-  quiz     Quiz               @relation(fields: [quizId], references: [id], onDelete: Restrict)
-  student  User               @relation("AttemptStudent", fields: [studentId], references: [id], onDelete: Restrict)
-  gradedBy User?              @relation("AttemptGrader", fields: [gradedById], references: [id], onDelete: SetNull)
-  answers  StudentAnswer[]
-  events   QuizAttemptEvent[]
+  quiz       Quiz               @relation(fields: [quizId], references: [id], onDelete: Restrict)
+  student    User               @relation("AttemptStudent", fields: [studentId], references: [id], onDelete: Restrict)
+  gradedBy   User?              @relation("AttemptGrader", fields: [gradedById], references: [id], onDelete: SetNull)
+  reopenedBy User?              @relation("AttemptReopener", fields: [reopenedById], references: [id], onDelete: SetNull)
+  answers    StudentAnswer[]
+  events     QuizAttemptEvent[]
 
   @@unique([quizId, studentId, attemptNumber])
   @@index([studentId, status])
@@ -1426,10 +1454,14 @@ model QuizAttemptEvent {
   attemptId String
   type      String
   meta      Json?
+  /// Chosen by the browser for a report it may have to send twice (a violation noticed while
+  /// offline is kept and sent again), so that it is counted once.
+  clientKey String?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   attempt QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
 
+  @@unique([attemptId, clientKey])
   @@index([attemptId, createdAt])
 }
 

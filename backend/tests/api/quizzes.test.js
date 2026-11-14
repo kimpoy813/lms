@@ -26,7 +26,8 @@ async function quizWith(room, questions, settings = {}) {
 }
 
 async function start(student, quizId) {
-  const res = await student.post(`/api/quizzes/${quizId}/attempts`);
+  // Quizzes have strict rules unless the teacher switches them off; starting accepts them.
+  const res = await student.post(`/api/quizzes/${quizId}/attempts`, { acceptRules: true });
   expect([200, 201]).toContain(res.status);
   const attempt = (await student.get(`/api/attempts/${res.body.data.attemptId}`)).body.data;
   return attempt;
@@ -226,7 +227,7 @@ describe('taking a quiz', () => {
   it('starts one attempt only, even on a double click', async () => {
     const room = await classroom(1);
     const quiz = await quizWith(room, [TF]);
-    const results = await Promise.all(Array.from({ length: 5 }, () => room.students[0].post(`/api/quizzes/${quiz.id}/attempts`)));
+    const results = await Promise.all(Array.from({ length: 5 }, () => room.students[0].post(`/api/quizzes/${quiz.id}/attempts`, { acceptRules: true })));
     expect(new Set(results.map((r) => r.body.data.attemptId)).size).toBe(1);
     expect(results.filter((r) => r.status === 201)).toHaveLength(1);
     expect(await prisma.quizAttempt.count({ where: { quizId: quiz.id } })).toBe(1);

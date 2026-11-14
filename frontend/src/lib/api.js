@@ -72,13 +72,15 @@ async function parseError(res) {
   return new ApiError(res.status, 'ERROR', `The request failed (${res.status}).`);
 }
 
-async function send(method, path, { body, query, signal, form } = {}, retried = false) {
+// `keepalive` lets a small request finish although the page is being closed (a quiz reporting that
+// its page was left). The request needs the CSRF header, which is why it is not a beacon.
+async function send(method, path, { body, query, signal, form, keepalive } = {}, retried = false) {
   const headers = { Accept: 'application/json' };
   if (method !== 'GET' && csrfToken) headers['X-CSRF-Token'] = csrfToken;
   if (body !== undefined && !form) headers['Content-Type'] = 'application/json';
   let res;
   try {
-    res = await fetch(buildUrl(path, query), { method, headers, credentials: 'same-origin', signal, body: form ?? (body !== undefined ? JSON.stringify(body) : undefined) });
+    res = await fetch(buildUrl(path, query), { method, headers, credentials: 'same-origin', signal, body: form ?? (body !== undefined ? JSON.stringify(body) : undefined), ...(keepalive ? { keepalive: true } : {}) });
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     throw new ApiError(0, 'NETWORK', navigator.onLine === false ? 'You are offline. Check your connection and try again.' : 'Could not reach the server. Check your connection and try again.');
@@ -90,7 +92,7 @@ async function send(method, path, { body, query, signal, form } = {}, retried = 
     try {
       const session = await send('GET', '/auth/session');
       csrfToken = (await session.json()).data.csrfToken;
-      return send(method, path, { body, query, signal, form }, true);
+      return send(method, path, { body, query, signal, form, keepalive }, true);
     } catch {
       /* fall through to the original error */
     }

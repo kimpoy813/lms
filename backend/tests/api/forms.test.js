@@ -82,7 +82,7 @@ describe('a date left empty in a form', () => {
     expect(published.status).toBe(200);
     expect(published.body.data).toMatchObject({ status: 'PUBLISHED', availableFrom: null, availableUntil: null });
 
-    const attempt = await students[0].post(`/api/quizzes/${id}/attempts`);
+    const attempt = await students[0].post(`/api/quizzes/${id}/attempts`, { acceptRules: true });
     expect([200, 201]).toContain(attempt.status);
   });
 
