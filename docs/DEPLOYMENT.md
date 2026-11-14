@@ -439,9 +439,13 @@ development, apart from Vercel's refusal described below.
 - The monthly credit covers [a part of the models](https://vercel.com/ai-gateway/models?freeTier=true),
   with lower limits on requests per minute. On that day the small models of Anthropic, Google and
   OpenAI were not among them. EduSphere asks `meta/muse-ember` unless `AI_MODEL` names another
-  one: it was on the list, cost $0.10 per million tokens read and $0.50 written — about a fifth
-  of a cent for a quiz drafted from a whole module, so the $5 are some 2,500 drafts — and every
-  provider behind it was listed as neither keeping what it is sent nor training on it.
+  one. That choice rests on what the lists said, not on an answer: the model was on the list,
+  the catalogue priced it at $0.10 per million tokens read and $0.50 written, and named every
+  provider behind it as neither keeping what it is sent nor training on it. By those prices a
+  quiz drafted from a whole module would cost about a fifth of a cent, and $5 would pay for some
+  2,500 drafts. That is arithmetic from the price list: no model has answered this project yet,
+  so nothing was measured — neither a cost, nor that the free credit pays for this model when
+  it is asked.
 - **Buying credit ends the monthly free credit**, Vercel writes. To stay free, add the card and
   buy nothing. A budget can be set in the dashboard (*AI Gateway → Budgets*).
 - When the month's credit is used up, or a model is not covered, teachers are told that the

@@ -16,14 +16,16 @@ export const VERCEL_AI_GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1';
 export const VERCEL_FREE_TIER_MODELS = 'https://vercel.com/ai-gateway/models?freeTier=true';
 
 /**
- * The model asked through the gateway unless AI_MODEL names another one. As things stood on
- * 2026-11-13:
- *   - it is on Vercel's list of models the free credit covers (the address above); the small
+ * The model asked through the gateway unless AI_MODEL names another one. Chosen from what
+ * Vercel's lists said on 2026-11-13 — no model has answered this project yet (Vercel refuses
+ * every request until a payment card is on the account), so none of this was seen at work:
+ *   - it was on Vercel's list of models the free credit covers (the address above); the small
  *     models of Anthropic, Google and OpenAI were not;
- *   - the gateway's catalogue gives $0.10 per million tokens in and $0.50 out, so a quiz drafted
- *     from a whole module costs about a fifth of a cent of the monthly $5;
- *   - room for a million tokens of material, answers as JSON;
- *   - the catalogue lists every provider behind it as neither keeping what it is sent nor
+ *   - the gateway's catalogue gave $0.10 per million tokens in and $0.50 out, by which a quiz
+ *     drafted from a whole module would cost about a fifth of a cent of the monthly $5 (an
+ *     estimate from the price list, not a measured cost);
+ *   - the catalogue gave it room for a million tokens of material and answers as JSON;
+ *   - the catalogue listed every provider behind it as neither keeping what it is sent nor
  *     training on it (zdr: all, no_training: all).
  * Lists and prices change: `npm run ai:check -- --models` shows the catalogue as it is and tries
  * the likely models, and "Check now" under Administration → Settings says whether this one answers.
