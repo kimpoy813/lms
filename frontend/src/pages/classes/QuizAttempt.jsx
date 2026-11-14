@@ -4,22 +4,43 @@
 //  • every answer is saved to the server a moment after it changes, and retried if the network fails;
 //  • the deadline is the server's — the countdown here is only a display, corrected for clock difference;
 //  • when time runs out the server submits the attempt even if this page is closed.
+//
+// A quiz with strict rules is also watched (lib/quizGuard.js): leaving the page, copying, pasting
+// or a screenshot key is reported to the server, which answers with a warning or ends the attempt.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CircleDashed, Clock, CloudOff, Flag, Grid3x3, Send, Timer, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CircleDashed, Clock, CloudOff, Flag, Grid3x3, PlayCircle, Send, ShieldAlert, Timer, WifiOff, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import { ProgrammingAnswer } from '../../components/CodeWorkbench.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, PageLoader, Spinner } from '../../components/ui.jsx';
+import { preloadCodeEditor } from '../../components/LazyCodeEditor.jsx';
+import { toast } from '../../components/toast.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Modal, PageLoader, Spinner } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
-import { formatDateTime, formatDuration, formatPercent, formatScore, plural } from '../../lib/format.js';
+import { formatDateTime, formatDuration, formatPercent, formatScore, formatSpan, formatTime, plural } from '../../lib/format.js';
+import { disarmGuard, forgetOpening, hasOpened, openAttempt, pendingReports, recordReport, sendPendingReports, sendReport, watchQuiz } from '../../lib/quizGuard.js';
 import { AnswerInput, AnswerReview, QuestionText, ScoreChip, typeLabel } from './quiz/QuestionParts.jsx';
+import { consequenceText, RulesForStudents, violationText } from './quiz/Rules.jsx';
+
+// Said when the page stops something that would otherwise have counted against the student.
+const BLOCKED = {
+  back: 'The Back button is switched off during this quiz. Use Submit when you have finished.',
+  reload: 'Reloading is switched off during this quiz: it would end your attempt.',
+  shortcut: 'That shortcut is switched off during this quiz.',
+  menu: 'The right-click menu is switched off during this quiz.',
+  link: 'Links are switched off during this quiz: opening one would take you off the page.',
+};
 
 export default function QuizAttempt() {
   const { classId, quizId, attemptId } = useParams();
   const client = useQueryClient();
+  // Raised when the server's view of the attempt replaced this page's: the answering screen starts afresh.
+  const [generation, setGeneration] = useState(0);
   const key = ['attempt', attemptId];
-  // While an attempt is in progress the page owns the answers: never refetch over them.
-  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/attempts/${attemptId}`), staleTime: Infinity, refetchOnWindowFocus: false, retry: 1 });
+  // While an attempt is in progress the page owns the answers: never refetch over them. And
+  // nothing is kept once the page is left (gcTime): coming back to it asks the server again,
+  // instead of showing the answers — or the ended attempt — as they were when it was first opened.
+  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/attempts/${attemptId}`), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, retry: 1 });
   const back = `/classes/${classId}/quizzes/${quizId}`;
 
   if (query.isPending) return <div className="grid min-h-dvh place-items-center"><PageLoader label="Opening the quiz…" /></div>;
@@ -31,20 +52,121 @@ export default function QuizAttempt() {
     );
   }
   const attempt = query.data;
-  const finish = (data) => {
-    client.setQueryData(key, data);
+  /** The attempt is over and this page stays: stop watching, and take the extra history entry away. */
+  const release = () => {
+    disarmGuard(attemptId);
+    forgetOpening(attemptId);
+    if (window.history.state?.quizGuard === attemptId) window.history.back();
+  };
+  const refreshLists = () => {
     client.invalidateQueries({ queryKey: ['class', classId] });
     client.invalidateQueries({ queryKey: ['dashboard'] });
   };
-  return attempt.status === 'IN_PROGRESS'
-    ? <Taking key={attempt.id} attempt={attempt} back={back} onFinished={finish} onClosedElsewhere={() => query.refetch()} />
-    : <Review attempt={attempt} back={back} />;
+  const finish = (data) => {
+    client.setQueryData(key, data);
+    if (data.status !== 'IN_PROGRESS') release();
+    refreshLists();
+  };
+  /** The server knows more than this page (time ran out, the attempt was ended): ask it, and start the page afresh. */
+  const reload = async () => {
+    const result = await query.refetch();
+    if (result.data && result.data.status !== 'IN_PROGRESS') release();
+    setGeneration((g) => g + 1);
+    refreshLists();
+  };
+  if (attempt.status === 'IN_PROGRESS') return <Taking key={`${attempt.id}:${generation}`} attempt={attempt} back={back} onFinished={finish} onClosedElsewhere={reload} />;
+  if (attempt.status === 'REOPENED') return <ContinueGate attempt={attempt} back={back} onContinued={reload} />;
+  if (attempt.status === 'TERMINATED') return <Terminated attempt={attempt} back={back} />;
+  return <Review attempt={attempt} back={back} />;
+}
+
+const noun = (attempt) => (attempt.quiz.kind === 'EXAM' ? 'examination' : 'quiz');
+
+function Frame({ attempt, back, children }) {
+  return (
+    <div className="min-h-dvh bg-canvas pb-12">
+      <header className="border-b border-line bg-surface">
+        <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4">
+          <Link to={back} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-soft hover:text-brand"><ArrowLeft className="size-4" aria-hidden="true" />Back to the quiz</Link>
+          <p className="ml-auto min-w-0 truncate text-sm font-semibold text-ink">{attempt.quiz.title}</p>
+        </div>
+      </header>
+      <main className="mx-auto max-w-3xl space-y-4 px-4 pt-6">{children}</main>
+    </div>
+  );
+}
+
+// ── Reopened by the teacher, not continued yet ───────────────────────────────
+function ContinueGate({ attempt, back, onContinued }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const { seconds, continueBy } = attempt.reopened;
+  const go = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/quizzes/${attempt.quizId}/attempts`, { acceptRules: true });
+      await onContinued();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Frame attempt={attempt} back={back}>
+      <Card className="sm:p-8">
+        <span className="grid size-14 place-items-center rounded-2xl bg-brand-soft text-brand"><PlayCircle className="size-7" aria-hidden="true" /></span>
+        <h1 className="mt-4 text-xl font-bold text-ink">Your teacher reopened this attempt</h1>
+        <p className="mt-2 text-sm text-soft">
+          You continue with the answers you had already given. <strong className="font-semibold text-ink">You have {formatSpan(seconds)}</strong>, counted from the moment you press Continue; the timer cannot be paused.
+          {continueBy ? <> Continue before <strong className="font-semibold text-ink">{formatDateTime(continueBy)}</strong>: after that the attempt is handed in with the answers it has.</> : null}
+        </p>
+        {attempt.strictRules && <RulesForStudents warnings={attempt.strictRules.warnings} noun={noun(attempt)} className="mt-5 border-t border-line pt-5" />}
+        {error && <Alert tone="bad" className="mt-4">{error}</Alert>}
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Button size="lg" icon={PlayCircle} loading={busy} onClick={go}>Continue</Button>
+          <Button size="lg" variant="secondary" to={back}>Not now</Button>
+        </div>
+      </Card>
+    </Frame>
+  );
+}
+
+// ── Ended for a rule violation ───────────────────────────────────────────────
+function Terminated({ attempt, back }) {
+  const { at, kind } = attempt.terminated;
+  return (
+    <Frame attempt={attempt} back={back}>
+      <Card className="text-center sm:p-8">
+        <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-bad-soft text-bad"><ShieldAlert className="size-7" aria-hidden="true" /></span>
+        <h1 className="mt-4 text-xl font-bold text-ink">Your attempt was ended</h1>
+        <p className="mt-1 text-sm text-faint">Attempt {attempt.attemptNumber} · ended {formatDateTime(at)}</p>
+        <p className="mx-auto mt-4 max-w-md text-sm text-soft">It was recorded that you <strong className="font-semibold text-ink">{violationText(kind)}</strong>. Under the rules of this {noun(attempt)} the attempt is marked as <strong className="font-semibold text-ink">failed, with 0 points</strong>.</p>
+        <p className="mx-auto mt-3 max-w-md text-sm text-soft">Only your teacher can reopen it. If something outside your control caused this, tell your teacher what happened. The answers you had given are kept.</p>
+        <Button to={back} variant="secondary" className="mt-6">Back to the quiz</Button>
+      </Card>
+    </Frame>
+  );
+}
+
+/** The student's name across the page, faintly: a picture taken of the screen says whose screen it was. */
+function Watermark() {
+  const { user } = useAuth();
+  const image = useMemo(() => {
+    const label = [user?.name, user?.studentProfile?.studentNumber ?? user?.email].filter(Boolean).join(' · ').replace(/[<>&"']/g, '');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="220"><text x="180" y="110" text-anchor="middle" transform="rotate(-24 180 110)" font-family="system-ui, sans-serif" font-size="13" font-weight="600" fill="#808080" fill-opacity="0.13">${label}</text></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+  }, [user]);
+  return <div className="pointer-events-none fixed inset-0 z-10" style={{ backgroundImage: image }} aria-hidden="true" data-quiz-watermark />;
 }
 
 // ── Answering ────────────────────────────────────────────────────────────────
 function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
   const navigate = useNavigate();
   const questions = attempt.questions;
+  // The strict rules as they bind this attempt ({ warnings, used }), or null.
+  const rules = attempt.rules;
+  const strict = Boolean(rules);
   const [index, setIndex] = useState(() => Math.max(0, questions.findIndex((q) => !q.answered)));
   const [answers, setAnswers] = useState(() => Object.fromEntries(questions.map((q) => [q.position, { response: q.response, flagged: q.flagged, files: q.files ?? [] }])));
   const [unsaved, setUnsaved] = useState(() => new Set());
@@ -63,6 +185,36 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
   const timers = useRef(new Map());
   const pending = useRef(new Set());
   const closed = useRef(false);
+
+  // ── Strict rules ──
+  // Violations this page knows of: those the server has counted, and those still on their way to
+  // it (written down by this page, or by an earlier one that was closed while offline).
+  const waiting = useRef(strict ? pendingReports(attempt.id) : []);
+  const used = useRef((rules?.used ?? 0) + waiting.current.length);
+  const [warningsUsed, setWarningsUsed] = useState(used.current);
+  // The warning on screen: { kind, number, at }. A page that comes back after it was thrown away
+  // while the student was gone starts with the warning that could not be shown then.
+  const [warning, setWarning] = useState(() => {
+    const last = waiting.current.at(-1);
+    return last && used.current <= rules.warnings ? { kind: last.kind, number: used.current, at: last.at } : null;
+  });
+  // Set once this page knows the attempt is over, before the server has confirmed it: { kind }.
+  // The answers typed until then are still saved; nothing more can be typed.
+  const [ended, setEnded] = useState(() => (strict && used.current > rules.warnings ? { kind: waiting.current.at(-1)?.kind } : null));
+  const over = useRef(Boolean(ended));
+  // Under strict rules the page first tells the server that it has opened the attempt:
+  // 'asking' → 'open', or 'failed' when the server could not be reached.
+  const [opening, setOpening] = useState(strict && !ended && !hasOpened(attempt.id) ? 'asking' : 'open');
+  const guard = useRef(null);
+  // The latest report of a violation on its way to the server.
+  const lastReport = useRef(null);
+  // The browser would not keep the screen on: a phone that locks itself counts as leaving.
+  const [screenMayLock, setScreenMayLock] = useState(false);
+
+  // The code editor is a download of its own. Fetched now, it is there when the student reaches
+  // the programming question, whatever the connection does in between.
+  const hasProgram = questions.some((q) => q.question.type === 'PROGRAMMING');
+  useEffect(() => { if (hasProgram) preloadCodeEditor(); }, [hasProgram]);
 
   const save = useCallback(async (position) => {
     if (closed.current) return;
@@ -107,6 +259,120 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
     await Promise.all(positions.map((position) => save(position)));
   }, [save]);
 
+  /** What the server said about a violation (null: it has not been reached yet). */
+  const heard = useCallback((answer) => {
+    if (!answer || closed.current) return;
+    if (answer.outcome === 'WARNING' && !over.current) {
+      // The server's count stands; reports still on their way come on top of it.
+      used.current = Math.max(used.current, answer.number + pendingReports(attempt.id).length);
+      setWarningsUsed(used.current);
+      return;
+    }
+    // Ended, already closed, or not as this page thought (the teacher changed the rules in the
+    // meantime): in each case the server's view replaces this page's.
+    closed.current = true;
+    onClosedElsewhere();
+  }, [attempt.id, onClosedElsewhere]);
+
+  /** A rule was broken. Written down first, shown at once, then reported until the server answers. */
+  const violate = useCallback((kind, detail) => {
+    if (closed.current || over.current) return;
+    const report = recordReport(attempt.id, kind, detail);
+    used.current += 1;
+    setWarningsUsed(used.current);
+    // What was typed in the last moment is saved first: it was written before the violation.
+    const saved = flush();
+    const leaving = kind === 'LEFT_PAGE' || kind === 'CLOSED_PAGE';
+    if (used.current > rules.warnings) {
+      over.current = true;
+      disarmGuard(attempt.id);
+      guard.current?.stop({ untilBack: true });
+      setWarning(null);
+      setEnded({ kind });
+    } else {
+      setWarning({ kind, number: used.current, at: Date.now() });
+    }
+    // A page that is going out of sight may not get another chance: its report leaves at once.
+    const ready = leaving || !over.current ? Promise.resolve() : Promise.race([saved, new Promise((resolve) => { setTimeout(resolve, 1500); })]);
+    const sent = ready.then(() => sendReport(attempt.id, report, { keepalive: true }));
+    lastReport.current = sent;
+    sent.then(heard);
+  }, [attempt.id, rules, flush, heard]);
+  const onViolation = useRef(violate);
+  onViolation.current = violate;
+  const onHeard = useRef(heard);
+  onHeard.current = heard;
+  const onFlush = useRef(flush);
+  onFlush.current = flush;
+
+  useEffect(() => {
+    if (!strict) return undefined;
+    // Reports that could not be delivered are sent again every few seconds and when the
+    // connection returns — after the answers that were still unsaved.
+    let busy = false;
+    const send = async () => {
+      if (busy || pendingReports(attempt.id).length === 0) return;
+      busy = true;
+      try {
+        if (over.current) await Promise.race([onFlush.current(), new Promise((resolve) => { setTimeout(resolve, 3000); })]);
+        onHeard.current(await sendPendingReports(attempt.id));
+      } finally {
+        busy = false;
+      }
+    };
+    if (over.current) send(); // a page that was loaded anew with the end of the attempt still to be reported
+    const id = setInterval(send, 4000);
+    window.addEventListener('online', send);
+    return () => { clearInterval(id); window.removeEventListener('online', send); };
+  }, [strict, attempt.id]);
+
+  // The page tells the server that it has opened the attempt (once for each load of the page).
+  // A page that was closed without a word is recognised by this second opening.
+  const [openTry, setOpenTry] = useState(0);
+  useEffect(() => {
+    // Already told and answered, and this screen was only drawn anew: the answer is not acted on twice.
+    if (!strict || over.current || hasOpened(attempt.id)) return undefined;
+    let current = true;
+    openAttempt(attempt.id).then((answer) => {
+      if (!current) return;
+      if (answer.outcome === 'WARNING') {
+        used.current = Math.max(used.current, answer.number + pendingReports(attempt.id).length);
+        setWarningsUsed(used.current);
+        setWarning((w) => w ?? { kind: answer.kind, number: answer.number, at: Date.now() });
+        setOpening('open');
+      } else if (answer.outcome === 'OPENED' || answer.outcome === 'IGNORED') {
+        const { warned } = answer;
+        if (warned) {
+          used.current = Math.max(used.current, warned.number + pendingReports(attempt.id).length);
+          setWarningsUsed(used.current);
+          setWarning((w) => w ?? { kind: warned.kind, number: warned.number, at: new Date(warned.at).getTime() });
+        }
+        setOpening('open');
+      } else {
+        closed.current = true;
+        onClosedElsewhere();
+      }
+    }, () => { if (current) setOpening('failed'); });
+    return () => { current = false; };
+  }, [strict, attempt.id, openTry, onClosedElsewhere]);
+
+  useEffect(() => {
+    if (!strict || over.current || opening !== 'open') return undefined;
+    const watch = watchQuiz({
+      attemptId: attempt.id,
+      onViolation: (kind, detail) => onViolation.current(kind, detail),
+      onBlocked: (what) => { if (BLOCKED[what]) toast.warning(BLOCKED[what]); },
+      // "Came back" is read by the server after the report of the absence that it ends.
+      onSignal: (type, extra) => { Promise.resolve(lastReport.current).then(() => api.post(`/attempts/${attempt.id}/events`, { type, ...extra })).catch(() => {}); },
+      // Brought back by the browser's Back button after the page had been left: that is a new
+      // opening of the page. Ask the server what became of the attempt.
+      onRestored: () => { forgetOpening(attempt.id); onHeard.current({ outcome: 'CLOSED' }); },
+      onAwake: (kept) => setScreenMayLock(!kept),
+    });
+    guard.current = watch;
+    return () => { watch.stop(); if (guard.current === watch) guard.current = null; };
+  }, [strict, attempt.id, opening]);
+
   // ── Clock ──
   const offset = useMemo(() => new Date(attempt.serverTime).getTime() - Date.now(), [attempt.serverTime]);
   const deadline = attempt.deadlineAt ? new Date(attempt.deadlineAt).getTime() : null;
@@ -114,12 +380,16 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
   const timedOut = useRef(false);
 
   const submit = useCallback(async (auto = false) => {
+    if (over.current) return; // ended for a violation: the report settles what becomes of it
     setSubmitting(true);
     setSubmitError(null);
     try {
       await flush();
+      // A violation that is still on its way to the server is settled before the attempt is handed in.
+      if (strict) await sendPendingReports(attempt.id);
       const data = await api.post(`/attempts/${attempt.id}/submit`);
       closed.current = true;
+      guard.current?.stop();
       onFinished(data);
     } catch (err) {
       if (err.code === 'ATTEMPT_CLOSED' || err.code === 'TIME_UP') {
@@ -131,7 +401,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
       setConfirm(false);
       setSubmitError(auto ? `Time is up, but the quiz could not be submitted from this device (${err.message}). The server will submit your saved answers automatically.` : err.message);
     }
-  }, [attempt.id, flush, onFinished, onClosedElsewhere]);
+  }, [attempt.id, strict, flush, onFinished, onClosedElsewhere]);
 
   useEffect(() => {
     if (!deadline) return undefined;
@@ -149,11 +419,20 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
 
   // ── Things the teacher may want to know about, and things the student must not lose ──
   useEffect(() => {
-    const report = (type) => api.post(`/attempts/${attempt.id}/events`, { type }).catch(() => {});
-    const onVisibility = () => report(document.hidden ? 'TAB_HIDDEN' : 'TAB_VISIBLE');
-    const onBlur = () => report('WINDOW_BLUR');
-    const onOffline = () => setOnline(false);
-    const onOnline = () => { setOnline(true); report('ONLINE'); flush(); };
+    const report = (type, extra) => api.post(`/attempts/${attempt.id}/events`, { type, ...extra }).catch(() => {});
+    // A lost connection can only be told of once it is back: with how long it was gone.
+    let offlineSince = navigator.onLine === false ? Date.now() : null;
+    // Without strict rules, leaving the tab is only a signal for the teacher. With them it is a
+    // violation, and lib/quizGuard.js does the watching.
+    const onVisibility = () => { if (!strict) report(document.hidden ? 'TAB_HIDDEN' : 'TAB_VISIBLE'); };
+    const onBlur = () => { if (!strict) report('WINDOW_BLUR'); };
+    const onOffline = () => { setOnline(false); offlineSince ??= Date.now(); };
+    const onOnline = () => {
+      setOnline(true);
+      report('ONLINE', offlineSince === null ? {} : { awayMs: Math.max(0, Date.now() - offlineSince) });
+      offlineSince = null;
+      flush();
+    };
     const onBeforeUnload = (e) => { if (pending.current.size > 0) { e.preventDefault(); e.returnValue = ''; } };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('blur', onBlur);
@@ -169,7 +448,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
       window.removeEventListener('beforeunload', onBeforeUnload);
       for (const t of savers.values()) clearTimeout(t);
     };
-  }, [attempt.id, flush]);
+  }, [attempt.id, flush, strict]);
 
   const current = questions[index];
   const value = answers[current.position];
@@ -207,8 +486,36 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
     </nav>
   );
 
+  if (opening !== 'open') {
+    return (
+      <div className="grid min-h-dvh place-items-center bg-canvas p-6">
+        {opening === 'asking' ? <PageLoader label="Opening the quiz…" /> : (
+          <EmptyState icon={WifiOff} title="The quiz could not be opened" description="The server could not be reached. Check your connection and try again. Your answers so far are saved, and the timer keeps running."
+            action={<Button onClick={() => { setOpening('asking'); setOpenTry((n) => n + 1); }}>Try again</Button>} />
+        )}
+      </div>
+    );
+  }
+
+  // This page knows that the attempt is over; the server is being told (or will be, once the connection is back).
+  if (ended) {
+    return (
+      <div className="grid min-h-dvh place-items-center bg-canvas p-6" role="alert">
+        <Card className="w-full max-w-md text-center sm:p-8">
+          <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-bad-soft text-bad"><ShieldAlert className="size-7" aria-hidden="true" /></span>
+          <h1 className="mt-4 text-xl font-bold text-ink">Your attempt has been ended</h1>
+          <p className="mt-3 text-sm text-soft">You <strong className="font-semibold text-ink">{violationText(ended.kind)}</strong>. Under the rules of this {noun(attempt)} that ends the attempt: it is marked as failed, with 0 points. Only your teacher can reopen it.</p>
+          <p className="mt-5 flex items-center justify-center gap-2 text-sm font-medium text-soft">
+            {online ? <><Spinner className="size-4" label="Recording" />Recording this…</> : <><WifiOff className="size-4 text-bad" aria-hidden="true" /><span>You are offline. This is recorded as soon as your connection returns: keep this page open.</span></>}
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-dvh bg-canvas pb-24 lg:pb-8">
+    <div className={cn('min-h-dvh bg-canvas pb-24 lg:pb-8', strict && 'quiz-guarded')}>
+      {strict && <Watermark />}
       <header className="sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
           <div className="min-w-0 flex-1">
@@ -236,6 +543,15 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
 
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-5 px-4 pt-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
         <main className="min-w-0">
+          {strict && (
+            <p className="mb-4 flex items-start gap-2.5 rounded-xl border border-warn/40 bg-warn-soft px-3.5 py-2.5 text-[13px] leading-snug text-ink" data-testid="strict-rules">
+              <ShieldAlert className="mt-px size-4 shrink-0 text-warn" aria-hidden="true" />
+              <span>
+                <strong className="font-semibold">Strict rules: stay on this page until you submit.</strong> Leaving it, copying, pasting or a screenshot key is a violation. {consequenceText(rules.warnings, warningsUsed)}
+                {screenMayLock && <span className="mt-1.5 block" data-testid="screen-may-lock"><strong className="font-semibold">Keep your screen on.</strong> This browser would not let the quiz do it for you, and a screen that switches off or locks by itself counts as leaving. {window.matchMedia?.('(pointer: coarse)').matches ? 'Touch the page' : 'Move the mouse'} now and then while you read.</span>}
+              </span>
+            </p>
+          )}
           {submitError && <Alert tone="bad" className="mb-4" title="Could not submit">{submitError}</Alert>}
           <Card className="sm:p-7">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -250,6 +566,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
               <ProgrammingAnswer key={current.position} problemId={current.question.programmingProblemId} studentAnswerId={current.answerId} value={value.response} onChange={(response) => change(current.position, { response }, 900)} />
             ) : (
             <AnswerInput key={current.position} name={`q-${current.position}`} question={current.question} response={value.response} files={value.files}
+              onBrowse={() => guard.current?.expectFileDialog()}
               onFiles={(files) => setAnswers((a) => ({ ...a, [current.position]: { ...a[current.position], files } }))}
               onChange={(response) => change(current.position, { response }, ['MULTIPLE_CHOICE', 'TRUE_FALSE', 'MULTIPLE_RESPONSE', 'MATCHING', 'ORDERING', 'FILE_UPLOAD'].includes(current.question.type) ? 150 : 900)} />
             )}
@@ -270,7 +587,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
           <Card className="sticky top-24">
             <h2 className="mb-3 text-sm font-semibold text-ink">{answeredCount} of {questions.length} answered</h2>
             {Palette}
-            <p className="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-faint">Leaving this tab is recorded for your teacher. You can move between questions freely before submitting.</p>
+            <p className="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-faint">{strict ? 'You can move between questions freely before submitting, and cut, copy and paste within your own answers.' : 'Leaving this tab is recorded for your teacher. You can move between questions freely before submitting.'}</p>
           </Card>
         </aside>
       </div>
@@ -303,7 +620,19 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
           <div className="text-center"><Spinner className="mx-auto size-8" label="Submitting" /><p className="mt-3 font-semibold text-ink">Time is up — submitting your answers…</p></div>
         </div>
       )}
-      <button type="button" className="sr-only" onClick={() => navigate(back)}>{deadline ? 'Leave the quiz (your answers stay saved and the timer keeps running)' : 'Leave the quiz (your answers stay saved)'}</button>
+      {/* With strict rules there is no leaving: the way out is Submit. */}
+      {!strict && <button type="button" className="sr-only" onClick={() => navigate(back)}>{deadline ? 'Leave the quiz (your answers stay saved and the timer keeps running)' : 'Leave the quiz (your answers stay saved)'}</button>}
+
+      <Modal open={Boolean(warning)} dismissible={false} title={warning ? `Warning ${warning.number} of ${rules.warnings}` : ''} size="sm"
+        footer={<Button data-autofocus onClick={() => setWarning(null)}>I understand</Button>}>
+        {warning && (
+          <div className="space-y-3 text-sm text-soft">
+            <p className="flex gap-2.5 text-ink"><ShieldAlert className="mt-0.5 size-5 shrink-0 text-warn" aria-hidden="true" /><span>It was recorded at {formatTime(warning.at)} that you <strong className="font-semibold">{violationText(warning.kind)}</strong>.</span></p>
+            <p><strong className="font-semibold text-ink">{consequenceText(rules.warnings, warning.number)}</strong> An attempt that is ended is marked as failed with 0 points, and only your teacher can reopen it.</p>
+            <p>Stay on this page until you submit.</p>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -317,8 +646,8 @@ function Review({ attempt, back }) {
     <div className="min-h-dvh bg-canvas pb-12">
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4">
-          <Link to={back} className="inline-flex items-center gap-1.5 text-sm font-medium text-soft hover:text-brand"><ArrowLeft className="size-4" aria-hidden="true" />Back to the quiz</Link>
-          <p className="ml-auto truncate text-sm font-semibold text-ink">{attempt.quiz.title}</p>
+          <Link to={back} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-soft hover:text-brand"><ArrowLeft className="size-4" aria-hidden="true" />Back to the quiz</Link>
+          <p className="ml-auto min-w-0 truncate text-sm font-semibold text-ink">{attempt.quiz.title}</p>
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-4 px-4 pt-6">

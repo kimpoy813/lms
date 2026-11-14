@@ -1,5 +1,6 @@
-// Quizzes and exams: building, taking (with a server-side clock), scoring, manual grading,
-// result release, analysis and export.
+// Quizzes and exams: building, taking (with a server-side clock and, when the teacher wants them,
+// strict rules whose violations end the attempt), scoring, manual grading, result release,
+// analysis and export.
 import { Router } from 'express';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
@@ -24,6 +25,7 @@ import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, 
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { quizOutcome } from './attemptScore.js';
 import { defaultBankFor, saveQuestion } from './banks.js';
+import { LEAVING_KINDS, MAX_WARNINGS, VIOLATION_KINDS, durationText, pageOpening, reopenClock, rulesApply, secondsLeftWhenEnded, violationOutcome, violationText } from './rules.js';
 
 export const classQuizzesRouter = Router({ mergeParams: true }); // /classes/:classId/quizzes
 classQuizzesRouter.use(requireAuth);
@@ -63,6 +65,9 @@ function baseView(quiz) {
     maxAttempts: quiz.maxAttempts,
     attemptScoring: quiz.attemptScoring,
     passingPercent: quiz.passingPercent,
+    // Strict rules while answering, and how many violations only draw a warning.
+    strictMode: quiz.strictMode,
+    violationWarnings: quiz.violationWarnings,
     questionCount: questionCount(quiz),
     totalPoints: totalPoints(quiz),
     module: quiz.module ?? null,
@@ -93,6 +98,9 @@ const manageView = (quiz, now) => ({
 /** Can this student start (or continue) an attempt now? */
 export function startability(quiz, attempts, now = new Date()) {
   if (attempts.some((a) => a.status === 'IN_PROGRESS')) return { ok: true, resume: true };
+  // An attempt that was ended for a rule violation stands until the teacher decides about it:
+  // a student cannot simply walk past it into the next attempt.
+  if (attempts.some((a) => a.terminatedAt)) return { ok: false, code: 'TERMINATED', reason: 'Your attempt was ended because a rule of this quiz was broken. Only your teacher can reopen it.' };
   if (quiz.availableFrom && quiz.availableFrom > now) return { ok: false, code: 'NOT_OPEN', reason: 'This quiz is not open yet.' };
   if (quiz.availableUntil && quiz.availableUntil <= now) return { ok: false, code: 'CLOSED', reason: 'This quiz is closed.' };
   if (attempts.length >= quiz.maxAttempts) return { ok: false, code: 'NO_ATTEMPTS_LEFT', reason: quiz.maxAttempts === 1 ? 'You have already taken this quiz.' : 'You have used all your attempts.' };
@@ -107,10 +115,17 @@ function studentQuizSummary(quiz, attempts, now) {
   const outcome = quizOutcome(attempts, quiz.attemptScoring);
   const total = totalPoints(quiz);
   const percent = visible && outcome && outcome.fraction !== null ? round(outcome.fraction * 100, 1) : null;
+  const running = attempts.find((a) => a.status === 'IN_PROGRESS');
+  const ended = attempts.find((a) => a.terminatedAt);
   return {
     ...baseView(quiz),
     attemptsUsed: attempts.length,
-    inProgressAttemptId: attempts.find((a) => a.status === 'IN_PROGRESS')?.id ?? null,
+    inProgressAttemptId: running?.id ?? null,
+    // Ended for a rule violation and waiting for the teacher. Said at once, whatever the rule for showing scores.
+    terminated: ended ? { attemptId: ended.id, at: ended.terminatedAt, kind: ended.terminationKind, text: violationText(ended.terminationKind) } : null,
+    // Reopened by the teacher. `seconds` is the time the student gets once they continue (null: the
+    // clock already runs, or there is none); `deadlineAt` is until when they may continue or finish.
+    reopened: running?.reopenedAt ? { at: running.reopenedAt, seconds: running.resumeSeconds, deadlineAt: running.deadlineAt } : null,
     start: startability(quiz, attempts, now),
     submitted: attempts.some((a) => FINISHED.includes(a.status)),
     resultsVisible: visible,
@@ -118,7 +133,7 @@ function studentQuizSummary(quiz, attempts, now) {
     score: percent === null ? null : round(outcome.fraction * total, 2),
     percent,
     passed: percent === null || quiz.passingPercent === null ? null : percent >= quiz.passingPercent,
-    myStatus: attempts.some((a) => a.status === 'IN_PROGRESS') ? 'IN_PROGRESS' : attempts.some((a) => FINISHED.includes(a.status)) ? 'SUBMITTED' : quiz.availableUntil && quiz.availableUntil <= now ? 'MISSING' : 'NOT_STARTED',
+    myStatus: running ? 'IN_PROGRESS' : ended ? 'TERMINATED' : attempts.some((a) => FINISHED.includes(a.status)) ? 'SUBMITTED' : quiz.availableUntil && quiz.availableUntil <= now ? 'MISSING' : 'NOT_STARTED',
   };
 }
 
@@ -139,7 +154,7 @@ classQuizzesRouter.get('/', validate({ params: classParams }), async (req, res) 
   const enrolled = await enrolledStudentIds(access.cls.id);
   const attempts = await prisma.quizAttempt.findMany({
     where: { quizId: { in: quizzes.map((q) => q.id) }, studentId: { in: enrolled } },
-    select: { quizId: true, studentId: true, status: true, needsManualGrading: true },
+    select: { quizId: true, studentId: true, status: true, needsManualGrading: true, terminatedAt: true },
   });
   ok(res, quizzes.map((quiz) => {
     const mine = attempts.filter((a) => a.quizId === quiz.id);
@@ -152,6 +167,8 @@ classQuizzesRouter.get('/', validate({ params: classParams }), async (req, res) 
         submitted: takers.size,
         inProgress: new Set(mine.filter((a) => a.status === 'IN_PROGRESS').map((a) => a.studentId)).size,
         toGrade: mine.filter((a) => FINISHED.includes(a.status) && a.needsManualGrading).length,
+        // Attempts ended for a rule violation, waiting for the teacher to reopen, count or leave them.
+        violations: mine.filter((a) => a.terminatedAt).length,
         missing: quiz.availableUntil && quiz.availableUntil <= now && isPublished(quiz, now) ? enrolled.filter((id) => !mine.some((a) => a.studentId === id)).length : 0,
       },
     };
@@ -173,6 +190,10 @@ const body = z.object({
   passingPercent: z.number().min(0).max(100).nullable().optional(),
   shuffleQuestions: z.boolean().default(false),
   shuffleChoices: z.boolean().default(false),
+  /** Strict rules while answering. Left out when a quiz is created: on, except for practice. */
+  strictMode: z.boolean().optional(),
+  /** Violations that only draw a warning before the attempt is ended. */
+  violationWarnings: z.number().int().min(0).max(MAX_WARNINGS).default(0),
   resultVisibility: z.enum(['IMMEDIATE', 'AFTER_CLOSE', 'MANUAL', 'NEVER']).default('MANUAL'),
   answerVisibility: z.enum(['SCORE_ONLY', 'RESPONSES', 'CORRECT_ANSWERS']).default('SCORE_ONLY'),
   moduleId: zId.nullable().optional(),
@@ -230,6 +251,8 @@ classQuizzesRouter.post('/', validate({ params: classParams, body }), async (req
         classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml: sanitizeRichText(b.instructionsHtml), kind: b.kind, status: 'DRAFT',
         availableFrom: b.availableFrom ?? null, availableUntil: b.availableUntil ?? null, timeLimitMinutes: b.timeLimitMinutes ?? null, maxAttempts: b.maxAttempts,
         attemptScoring: b.attemptScoring, passingPercent: b.passingPercent ?? null, shuffleQuestions: b.shuffleQuestions, shuffleChoices: b.shuffleChoices,
+        // Practice is for trying things out: no strict rules unless the teacher asks for them.
+        strictMode: b.strictMode ?? b.kind !== 'PRACTICE', violationWarnings: b.violationWarnings,
         resultVisibility: b.resultVisibility, answerVisibility: b.answerVisibility, createdById: req.user.id,
       },
     });
@@ -281,10 +304,12 @@ quizzesRouter.get('/:quizId', validate({ params: quizParams }), async (req, res)
     instructionsHtml: quiz.instructionsHtml,
     resultVisibility: quiz.resultVisibility,
     attempts: attempts.map((a) => ({
-      id: a.id, attemptNumber: a.attemptNumber, status: a.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SUBMITTED', startedAt: a.startedAt, submittedAt: a.submittedAt, deadlineAt: a.deadlineAt,
+      id: a.id, attemptNumber: a.attemptNumber, status: a.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : a.terminatedAt ? 'TERMINATED' : 'SUBMITTED', startedAt: a.startedAt, submittedAt: a.submittedAt, deadlineAt: a.deadlineAt,
       awaitingGrading: FINISHED.includes(a.status) && a.needsManualGrading,
-      score: visible && FINISHED.includes(a.status) && !a.needsManualGrading ? a.totalScore : null,
+      score: visible && FINISHED.includes(a.status) && !a.needsManualGrading && !a.terminatedAt ? a.totalScore : null,
       maxScore: a.maxScore,
+      terminated: a.terminatedAt ? { at: a.terminatedAt, kind: a.terminationKind, text: violationText(a.terminationKind) } : null,
+      reopened: Boolean(a.reopenedAt),
     })),
     serverTime: now,
   });
@@ -311,7 +336,7 @@ quizzesRouter.patch('/:quizId', validate({ params: quizParams, body: patchOf(bod
         ...(b.title !== undefined ? { title: plainText(b.title, 200) } : {}),
         ...(b.instructionsHtml !== undefined ? { instructionsHtml: sanitizeRichText(b.instructionsHtml) } : {}),
         ...Object.fromEntries(
-          ['kind', 'availableFrom', 'availableUntil', 'timeLimitMinutes', 'maxAttempts', 'attemptScoring', 'passingPercent', 'shuffleQuestions', 'shuffleChoices', 'resultVisibility', 'answerVisibility', 'moduleId']
+          ['kind', 'availableFrom', 'availableUntil', 'timeLimitMinutes', 'maxAttempts', 'attemptScoring', 'passingPercent', 'shuffleQuestions', 'shuffleChoices', 'strictMode', 'violationWarnings', 'resultVisibility', 'answerVisibility', 'moduleId']
             .filter((k) => b[k] !== undefined)
             .map((k) => [k, b[k]]),
         ),
@@ -326,6 +351,13 @@ quizzesRouter.patch('/:quizId', validate({ params: quizParams, body: patchOf(bod
       const fresh = await tx.quiz.findUnique({ where: { id: quiz.id } });
       for (const s of students) await syncQuizGrade(tx, fresh, s.studentId, req.user.id);
       await audit(req, { action: 'quiz.scoring.change', entityType: 'Quiz', entityId: quiz.id, classId: cls.id, summary: `Changed which attempt counts for "${quiz.title}"`, before: { attemptScoring: quiz.attemptScoring }, after: { attemptScoring: b.attemptScoring } }, tx);
+    }
+    const rulesBefore = { strictMode: quiz.strictMode, violationWarnings: quiz.violationWarnings };
+    const rulesAfter = { strictMode: b.strictMode ?? quiz.strictMode, violationWarnings: b.violationWarnings ?? quiz.violationWarnings };
+    if (quiz._count.attempts > 0 && (rulesAfter.strictMode !== rulesBefore.strictMode || rulesAfter.violationWarnings !== rulesBefore.violationWarnings)) {
+      // The rules changed while students had already started: later questions about "why was I
+      // stopped and my classmate was not" are answered by this entry.
+      await audit(req, { action: 'quiz.rules.change', entityType: 'Quiz', entityId: quiz.id, classId: cls.id, summary: `Changed the strict rules of "${quiz.title}" after students had started`, before: rulesBefore, after: rulesAfter }, tx);
     }
   });
   const full = await fullQuiz(quiz.id);
@@ -351,7 +383,8 @@ quizzesRouter.post('/:quizId/copy', validate({ params: quizParams, body: z.objec
     data: {
       classId: target.cls.id, title: same ? `${quiz.title} (copy)`.slice(0, 200) : quiz.title, instructionsHtml: quiz.instructionsHtml, kind: quiz.kind, status: 'DRAFT',
       timeLimitMinutes: quiz.timeLimitMinutes, maxAttempts: quiz.maxAttempts, attemptScoring: quiz.attemptScoring, passingPercent: quiz.passingPercent,
-      shuffleQuestions: quiz.shuffleQuestions, shuffleChoices: quiz.shuffleChoices, resultVisibility: quiz.resultVisibility === 'AFTER_CLOSE' ? 'MANUAL' : quiz.resultVisibility,
+      shuffleQuestions: quiz.shuffleQuestions, shuffleChoices: quiz.shuffleChoices, strictMode: quiz.strictMode, violationWarnings: quiz.violationWarnings,
+      resultVisibility: quiz.resultVisibility === 'AFTER_CLOSE' ? 'MANUAL' : quiz.resultVisibility,
       answerVisibility: quiz.answerVisibility, moduleId: same ? quiz.moduleId : null, createdById: req.user.id,
       questions: { create: quiz.questions.filter((qq) => !qq.question.deletedAt).map((qq) => ({ questionId: qq.questionId, points: qq.points, position: qq.position })) },
       pools: { create: quiz.pools.filter((p) => !p.bank.deletedAt).map((p) => ({ bankId: p.bankId, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach, position: p.position })) },
@@ -467,14 +500,8 @@ export async function syncQuizGrade(tx, quiz, studentId, changedById = null, { t
   }
 }
 
-/**
- * Close an attempt: score everything that can be scored automatically and total it.
- * Safe to call twice — an attempt that is no longer in progress is returned untouched.
- */
-export async function finalizeAttempt(tx, attemptId, { auto = false, now = new Date() } = {}) {
-  await lockKey(tx, `attempt:${attemptId}`);
-  const attempt = await tx.quizAttempt.findUnique({ where: { id: attemptId }, include: { answers: true, quiz: true } });
-  if (!attempt || attempt.status !== 'IN_PROGRESS') return attempt;
+/** Mark every answer of an attempt that can be marked automatically. Returns the totals. */
+async function scoreAnswers(tx, attempt) {
   const code = await tx.programmingSubmission.groupBy({ by: ['studentAnswerId'], where: { studentAnswerId: { in: attempt.answers.map((a) => a.id) }, status: 'COMPLETED' }, _max: { scorePercent: true } });
   const codeScore = new Map(code.map((c) => [c.studentAnswerId, c._max.scorePercent]));
   const scored = [];
@@ -483,7 +510,18 @@ export async function finalizeAttempt(tx, attemptId, { auto = false, now = new D
     await tx.studentAnswer.update({ where: { id: answer.id }, data: { autoScore: result.autoScore, isCorrect: result.isCorrect, needsManual: result.needsManual, score: result.autoScore } });
     scored.push({ ...result, manualScore: null });
   }
-  const totals = attemptTotals(scored);
+  return attemptTotals(scored);
+}
+
+/**
+ * Close an attempt: score everything that can be scored automatically and total it.
+ * Safe to call twice — an attempt that is no longer in progress is returned untouched.
+ */
+export async function finalizeAttempt(tx, attemptId, { auto = false, now = new Date() } = {}) {
+  await lockKey(tx, `attempt:${attemptId}`);
+  const attempt = await tx.quizAttempt.findUnique({ where: { id: attemptId }, include: { answers: true, quiz: true } });
+  if (!attempt || attempt.status !== 'IN_PROGRESS') return attempt;
+  const totals = await scoreAnswers(tx, attempt);
   // Time is counted up to the deadline, never beyond it.
   const submittedAt = attempt.deadlineAt && now > attempt.deadlineAt ? attempt.deadlineAt : now;
   const updated = await tx.quizAttempt.update({
@@ -493,6 +531,24 @@ export async function finalizeAttempt(tx, attemptId, { auto = false, now = new D
   await tx.quizAttemptEvent.create({ data: { attemptId: attempt.id, type: auto ? 'AUTO_SUBMITTED' : 'SUBMITTED' } });
   await syncQuizGrade(tx, attempt.quiz, attempt.studentId, null, { tolerateLock: true });
   return { ...updated, quiz: attempt.quiz };
+}
+
+/**
+ * End an attempt because a rule of the quiz was broken. It is closed and scores 0. The answers
+ * stay exactly as they were, unmarked: the teacher may still reopen the attempt (the student
+ * continues from them) or count them (they are then marked like any handed-in attempt).
+ * The caller holds the attempt's lock and has checked that it is in progress.
+ */
+async function terminateAttempt(tx, attempt, quiz, { kind, at, count }) {
+  const updated = await tx.quizAttempt.update({
+    where: { id: attempt.id },
+    data: {
+      status: 'AUTO_SUBMITTED', submittedAt: attempt.deadlineAt && at > attempt.deadlineAt ? attempt.deadlineAt : at, terminatedAt: at, terminationKind: kind, violationCount: count,
+      autoScore: 0, manualScore: 0, totalScore: 0, needsManualGrading: false, resumeSeconds: null,
+    },
+  });
+  await syncQuizGrade(tx, quiz, attempt.studentId, null, { tolerateLock: true });
+  return updated;
 }
 
 // After the judge failed, do not keep every closing attempt waiting for it.
@@ -523,10 +579,11 @@ async function judgePatiently(problem, testCases, program) {
  * Runs outside the closing transaction: the judge is a slow external service.
  * @returns {Promise<number>} how many programs were checked
  */
-export async function checkUncheckedPrograms(attemptId, now = Date.now()) {
+export async function checkUncheckedPrograms(attemptId, now = Date.now(), { terminated = false } = {}) {
   if (!codeRunnerConfigured() || now < judgeUnreachableUntil) return 0;
   const answers = await prisma.studentAnswer.findMany({
-    where: { attemptId, attempt: { status: 'IN_PROGRESS' }, snapshot: { path: ['type'], equals: 'PROGRAMMING' } },
+    // `terminated`: the answers of an attempt that was ended for a violation are about to be counted.
+    where: { attemptId, attempt: terminated ? { terminatedAt: { not: null } } : { status: 'IN_PROGRESS' }, snapshot: { path: ['type'], equals: 'PROGRAMMING' } },
     select: { id: true, snapshot: true, response: true, attempt: { select: { studentId: true } } },
   });
   let checked = 0;
@@ -611,7 +668,14 @@ async function pickQuestions(tx, quiz) {
   return list;
 }
 
-quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ params: quizParams }), async (req, res) => {
+/**
+ * Start an attempt, or continue the one in progress.
+ *
+ * A quiz with strict rules is only started with `acceptRules: true`: the web app sends it after
+ * showing the rules. A copy of the web app from before the rules existed does not send it and is
+ * told to reload — nobody starts under rules they were never shown.
+ */
+quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ params: quizParams, body: z.object({ acceptRules: z.boolean().optional() }) }), async (req, res) => {
   const quiz = await loadQuiz(req.valid.params.quizId);
   const access = await loadClassAccess(req.user, quiz.classId);
   if (!access.isStudent) throw forbidden('Only students enrolled in this class can do that.');
@@ -630,7 +694,14 @@ quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ param
     const running = attempts.find((a) => a.status === 'IN_PROGRESS');
     if (running) {
       if (!isOverdue(running, now)) {
-        await tx.quizAttemptEvent.create({ data: { attemptId: running.id, type: 'RESUMED' } });
+        if (running.resumeSeconds !== null) {
+          // Reopened by the teacher: the student's time starts now, with this press of
+          // "Continue" — not when the teacher reopened it, which may have been hours ago.
+          await tx.quizAttempt.update({ where: { id: running.id }, data: { deadlineAt: new Date(now.getTime() + running.resumeSeconds * 1000), resumeSeconds: null } });
+          await tx.quizAttemptEvent.create({ data: { attemptId: running.id, type: 'CONTINUED', meta: { seconds: running.resumeSeconds } } });
+        } else {
+          await tx.quizAttemptEvent.create({ data: { attemptId: running.id, type: 'RESUMED' } });
+        }
         return { attempt: running, resumed: true };
       }
       await finalizeAttempt(tx, running.id, { auto: true, now });
@@ -638,6 +709,9 @@ quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ param
     }
     const can = startability(quiz, attempts, now);
     if (!can.ok) throw new AppError(409, can.code, can.reason);
+    if (quiz.strictMode && req.valid.body.acceptRules !== true) {
+      throw new AppError(409, 'RULES_NOT_ACCEPTED', 'This quiz has strict rules that you need to read first. Reload the page, read the rules, then start again.');
+    }
     const picked = await pickQuestions(tx, quiz);
     if (picked.length === 0) throw new AppError(409, 'QUIZ_EMPTY', 'This quiz has no questions yet. Please tell your teacher.');
     const limit = quiz.timeLimitMinutes ? new Date(now.getTime() + quiz.timeLimitMinutes * 60_000) : null;
@@ -646,9 +720,10 @@ quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ param
     const attempt = await tx.quizAttempt.create({
       data: {
         quizId: quiz.id, studentId: req.user.id, attemptNumber: Math.max(0, ...attempts.map((a) => a.attemptNumber)) + 1, startedAt: now, deadlineAt,
+        rulesAcceptedAt: quiz.strictMode ? now : null,
         maxScore: round(picked.reduce((s, p) => s + p.points, 0), 2),
         answers: { create: picked.map((p, position) => ({ questionId: p.question.id, position, points: p.points, snapshot: buildSnapshot(p.question, { shuffleChoices: quiz.shuffleChoices }) })) },
-        events: { create: { type: 'STARTED' } },
+        events: { create: { type: 'STARTED', ...(quiz.strictMode ? { meta: { rules: { warnings: quiz.violationWarnings } } } : {}) } },
       },
     });
     return { attempt, resumed: false };
@@ -690,8 +765,28 @@ async function studentAttemptView(attempt, now) {
     maxScore: attempt.maxScore,
     serverTime: now,
   };
+  if (attempt.status === 'IN_PROGRESS' && attempt.resumeSeconds !== null) {
+    // Reopened by the teacher and not continued yet. The questions come with the press of
+    // "Continue" (POST /quizzes/:quizId/attempts), which is also what starts the clock.
+    return { ...head, status: 'REOPENED', reopened: { at: attempt.reopenedAt, seconds: attempt.resumeSeconds, continueBy: attempt.deadlineAt }, strictRules: rulesApply(quiz, attempt) ? { warnings: quiz.violationWarnings } : null, questions: null };
+  }
   if (attempt.status === 'IN_PROGRESS') {
-    return { ...head, status: 'IN_PROGRESS', lastSavedAt: attempt.lastSavedAt, questions: answers.map((a) => reviewAnswer(a, files, { reveal: false, scores: false })) };
+    return {
+      ...head, status: 'IN_PROGRESS', lastSavedAt: attempt.lastSavedAt,
+      // The strict rules as they bind this attempt: how many violations only draw a warning, and how many were used.
+      rules: rulesApply(quiz, attempt) ? { warnings: quiz.violationWarnings, used: attempt.violationCount } : null,
+      reopened: Boolean(attempt.reopenedAt),
+      questions: answers.map((a) => reviewAnswer(a, files, { reveal: false, scores: false })),
+    };
+  }
+  if (attempt.terminatedAt) {
+    // Ended for a rule violation. Neither the questions nor a score are shown: the teacher may
+    // still reopen the attempt, and the student should not study the paper in the meantime.
+    return {
+      ...head, status: 'TERMINATED', autoSubmitted: false,
+      terminated: { at: attempt.terminatedAt, kind: attempt.terminationKind, text: violationText(attempt.terminationKind) },
+      resultsVisible: false, awaitingGrading: false, resultVisibility: quiz.resultVisibility, totalScore: null, percent: null, passed: null, questions: null, answersPending: false,
+    };
   }
   const visible = quizResultsVisible(quiz, now);
   const complete = !attempt.needsManualGrading;
@@ -716,12 +811,22 @@ async function studentAttemptView(attempt, now) {
 async function teacherAttemptView(attempt) {
   const answers = [...attempt.answers].sort((a, b) => a.position - b.position);
   const files = await answerFiles(answers.map((a) => a.id));
-  const events = await prisma.quizAttemptEvent.findMany({ where: { attemptId: attempt.id }, orderBy: { createdAt: 'asc' }, take: 200 });
+  // Everything that was recorded: an attempt keeps at most 500 signals, plus its violations.
+  const events = await prisma.quizAttemptEvent.findMany({ where: { attemptId: attempt.id }, orderBy: { createdAt: 'asc' }, take: 700 });
+  const quiz = attempt.quiz;
   return {
-    id: attempt.id, quizId: attempt.quizId, classId: attempt.quiz.classId, attemptNumber: attempt.attemptNumber, status: attempt.status, startedAt: attempt.startedAt, deadlineAt: attempt.deadlineAt,
+    id: attempt.id, quizId: attempt.quizId, classId: quiz.classId, attemptNumber: attempt.attemptNumber, status: attempt.status, startedAt: attempt.startedAt, deadlineAt: attempt.deadlineAt,
     submittedAt: attempt.submittedAt, autoScore: attempt.autoScore, manualScore: attempt.manualScore, totalScore: attempt.totalScore, maxScore: attempt.maxScore, needsManualGrading: attempt.needsManualGrading,
-    quiz: { title: attempt.quiz.title, kind: attempt.quiz.kind },
+    quiz: { title: quiz.title, kind: quiz.kind, timeLimitMinutes: quiz.timeLimitMinutes, availableUntil: quiz.availableUntil, strictMode: quiz.strictMode, violationWarnings: quiz.violationWarnings },
     student: { id: attempt.student.id, name: fullName(attempt.student) },
+    // Did the student start under the strict rules? (An attempt from before they existed did not.)
+    underRules: Boolean(attempt.rulesAcceptedAt),
+    violationCount: attempt.violationCount,
+    // Standing as failed for a rule violation. `secondsLeft` is what the clock showed (null: no clock).
+    terminated: attempt.terminatedAt ? { at: attempt.terminatedAt, kind: attempt.terminationKind, text: violationText(attempt.terminationKind), secondsLeft: secondsLeftWhenEnded(attempt) } : null,
+    // Reopened by a teacher. While `resumeSeconds` is set the student has not continued yet.
+    reopened: attempt.reopenedAt ? { at: attempt.reopenedAt, resumeSeconds: attempt.resumeSeconds } : null,
+    serverTime: new Date(),
     questions: attempt.status === 'IN_PROGRESS' ? null : answers.map((a) => reviewAnswer(a, files, { reveal: true, scores: true })),
     events: events.map((e) => ({ type: e.type, at: e.createdAt, meta: e.meta })),
   };
@@ -762,6 +867,8 @@ attemptsRouter.put('/:attemptId/answers/:position', requireRole('STUDENT'), vali
     await closeAttempt(attempt.id, { auto: true, now });
     throw new AppError(409, 'TIME_UP', 'Time is up. Your answers were submitted automatically.');
   }
+  // Reopened, but the student has not pressed "Continue": the clock starts with that, not with an answer.
+  if (attempt.resumeSeconds !== null) throw new AppError(409, 'ATTEMPT_NOT_CONTINUED', 'Your teacher reopened this attempt. Open the quiz again to continue.');
   const answer = attempt.answers.find((a) => a.position === req.valid.params.position);
   if (!answer) throw notFound('Question');
   const data = { answeredAt: now };
@@ -795,20 +902,208 @@ attemptsRouter.post('/:attemptId/submit', requireRole('STUDENT'), validate({ par
   ok(res, await studentAttemptView(fresh, new Date()));
 });
 
-/** Integrity signals reported by the browser (leaving the tab, losing focus). Informational only. */
+/**
+ * Signals reported by the browser that decide nothing: the connection dropping, the file chooser
+ * being opened, the list of a drop-down taking the focus on a touch screen (PICKER), the device
+ * sleeping with the page open (SUSPENDED), a browser that turned out not to know whether the
+ * quiz window is the active one (FOCUS_UNKNOWN) and — in a quiz without strict rules — leaving
+ * the tab. They are shown to the teacher next to the attempt. `awayMs` says how long the
+ * student had been away when they came back.
+ */
 attemptsRouter.post(
   '/:attemptId/events',
   requireRole('STUDENT'),
-  validate({ params: attemptParams, body: z.object({ type: z.enum(['TAB_HIDDEN', 'TAB_VISIBLE', 'WINDOW_BLUR', 'OFFLINE', 'ONLINE']) }) }),
+  validate({
+    params: attemptParams,
+    body: z.object({ type: z.enum(['TAB_HIDDEN', 'TAB_VISIBLE', 'WINDOW_BLUR', 'WINDOW_FOCUS', 'OFFLINE', 'ONLINE', 'FILE_DIALOG', 'PICKER', 'SUSPENDED', 'FOCUS_UNKNOWN']), awayMs: z.number().int().min(0).max(7 * 24 * 3600 * 1000).optional() }),
+  }),
   async (req, res) => {
     const { attempt } = await loadAttempt(req);
     if (attempt.studentId !== req.user.id) throw notFound('Attempt');
-    if (attempt.status === 'IN_PROGRESS' && (await prisma.quizAttemptEvent.count({ where: { attemptId: attempt.id } })) < 500) {
-      await prisma.quizAttemptEvent.create({ data: { attemptId: attempt.id, type: req.valid.body.type } });
+    const { type, awayMs } = req.valid.body;
+    // After an attempt was ended for leaving, the moment the student came back is still worth
+    // keeping: two seconds away and ten minutes away are different stories for the teacher.
+    const back = ['TAB_VISIBLE', 'WINDOW_FOCUS'].includes(type);
+    const cameBack = Boolean(attempt.terminatedAt) && awayMs !== undefined && back;
+    if ((attempt.status === 'IN_PROGRESS' || cameBack) && (await prisma.quizAttemptEvent.count({ where: { attemptId: attempt.id } })) < 500) {
+      await prisma.quizAttemptEvent.create({ data: { attemptId: attempt.id, type, ...(awayMs !== undefined ? { meta: { awayMs } } : {}) } });
     }
+    // Seen back on the page: if it is opened anew from here on, it was closed without a word (see /open).
+    if (back && attempt.awaySince) await prisma.quizAttempt.updateMany({ where: { id: attempt.id, status: 'IN_PROGRESS' }, data: { awaySince: null } });
     noContent(res);
   },
 );
+
+/**
+ * The browser reports that a rule of the quiz was broken (see rules.js for the kinds).
+ *
+ * The server decides what follows: a warning while the quiz still allows one, otherwise the
+ * attempt is ended — closed with a score of 0, its answers kept unmarked — and stays that way
+ * until the class teacher reopens it, counts its answers or removes it.
+ *
+ *   key     chosen by the browser; a report that is sent twice (it is kept and sent again when
+ *           the connection was down) is counted once
+ *   agoMs   how long ago it happened by the browser's clock, for a report that could not be sent at once
+ *
+ * Answers: { outcome, kind, text, number, allowed, warningsLeft }
+ *   outcome  TERMINATED  the attempt was ended
+ *            WARNING     counted; `warningsLeft` more before the attempt is ended
+ *            CLOSED      the attempt was no longer in progress
+ *            IGNORED     the strict rules do not bind this attempt, the report is older than its
+ *                        reopening, or it tells of leaving a page that has been opened anew since
+ *                        (that was settled when the new page was opened: see /open)
+ */
+attemptsRouter.post(
+  '/:attemptId/violations',
+  requireRole('STUDENT'),
+  validate({
+    params: attemptParams,
+    body: z.object({
+      kind: z.enum(VIOLATION_KINDS),
+      key: z.string().regex(/^[A-Za-z0-9_-]{8,40}$/, 'Invalid key').optional(),
+      agoMs: z.number().int().min(0).max(7 * 24 * 3600 * 1000).default(0),
+      detail: z.string().trim().max(80).optional(),
+    }),
+  }),
+  async (req, res) => {
+    const { attempt, access } = await loadAttempt(req);
+    if (attempt.studentId !== req.user.id) throw notFound('Attempt');
+    const { kind, key = null, agoMs, detail } = req.valid.body;
+    const quiz = attempt.quiz;
+    const now = new Date();
+    // When it happened, as far as the server can tell: never before the attempt started.
+    const at = new Date(Math.max(attempt.startedAt.getTime(), now.getTime() - agoMs));
+    const base = { kind, text: violationText(kind) };
+
+    // Time had already run out when it happened: the attempt is simply handed in.
+    if (attempt.status === 'IN_PROGRESS' && isOverdue(attempt, at)) {
+      await closeAttempt(attempt.id, { auto: true, now });
+      return ok(res, { ...base, outcome: 'CLOSED' });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `attempt:${attempt.id}`);
+      const current = await tx.quizAttempt.findUnique({ where: { id: attempt.id } });
+      if (!current) throw notFound('Attempt');
+      if (key) {
+        // The same report again: answer what was decided the first time.
+        const seen = await tx.quizAttemptEvent.findUnique({ where: { attemptId_clientKey: { attemptId: current.id, clientKey: key } } });
+        if (seen) {
+          const m = seen.meta ?? {};
+          return { ...base, kind: m.kind ?? kind, text: violationText(m.kind ?? kind), outcome: m.outcome === 'LATE' ? 'CLOSED' : m.outcome === 'SUPERSEDED' ? 'IGNORED' : m.outcome ?? 'IGNORED', number: m.number, allowed: m.allowed, warningsLeft: Math.max(0, (m.allowed ?? 0) - (m.number ?? 0)) };
+        }
+      }
+      if (!rulesApply(quiz, current)) return { ...base, outcome: 'IGNORED' };
+      if (current.status !== 'IN_PROGRESS') {
+        // Handed in before the report arrived (the connection was down and time ran out). It is
+        // kept for the teacher to see; it no longer changes anything.
+        if (!current.terminatedAt && current.submittedAt && at < current.submittedAt && (await tx.quizAttemptEvent.count({ where: { attemptId: current.id, type: 'VIOLATION' } })) < 50) {
+          await tx.quizAttemptEvent.create({ data: { attemptId: current.id, type: 'VIOLATION', clientKey: key, createdAt: at, meta: { kind, outcome: 'LATE', ...(detail ? { detail } : {}) } } });
+        }
+        return { ...base, outcome: 'CLOSED' };
+      }
+      // A report from before the teacher reopened the attempt is not held against the new start.
+      if (current.resumeSeconds !== null || (current.reopenedAt && at < current.reopenedAt)) return { ...base, outcome: 'IGNORED' };
+      // The student left a page that has been opened anew since, and this report of it arrives
+      // only now (it waited in another browser, or its connection was down). What became of the
+      // old page was settled when the new one was opened: counted then, unless leaving had been
+      // counted before. One act is not counted twice; the teacher still sees it.
+      if (LEAVING_KINDS.includes(kind) && current.pageOpenedAt && at < current.pageOpenedAt) {
+        if ((await tx.quizAttemptEvent.count({ where: { attemptId: current.id, type: 'VIOLATION' } })) < 50) {
+          await tx.quizAttemptEvent.create({ data: { attemptId: current.id, type: 'VIOLATION', clientKey: key, createdAt: at, meta: { kind, outcome: 'SUPERSEDED', ...(detail ? { detail } : {}), reportedAt: now } } });
+        }
+        return { ...base, outcome: 'IGNORED' };
+      }
+      return countViolation(tx, req, { current, quiz, classId: access.cls.id, kind, key, at, detail, late: agoMs > 30_000 ? now : null });
+    });
+
+    if (result.ended) await announceTermination({ attempt, quiz, cls: access.cls, student: req.user, kind });
+    const { ended: _ended, ...answer } = result;
+    ok(res, answer);
+  },
+);
+
+/**
+ * Count one violation against an attempt that is in progress under the rules, inside the
+ * caller's transaction (which holds the attempt's lock): a warning, or the end of the attempt.
+ */
+async function countViolation(tx, req, { current, quiz, classId, kind, key = null, at, detail, late = null }) {
+  const o = violationOutcome(quiz, current);
+  await tx.quizAttemptEvent.create({
+    data: { attemptId: current.id, type: 'VIOLATION', clientKey: key, createdAt: at, meta: { kind, number: o.number, allowed: o.allowed, outcome: o.terminate ? 'TERMINATED' : 'WARNING', ...(detail ? { detail } : {}), ...(late ? { reportedAt: late } : {}) } },
+  });
+  const base = { kind, text: violationText(kind), number: o.number, allowed: o.allowed };
+  if (!o.terminate) {
+    // Gone from the page until a sign of life says otherwise (see /open).
+    await tx.quizAttempt.update({ where: { id: current.id }, data: { violationCount: o.number, ...(LEAVING_KINDS.includes(kind) ? { awaySince: at } : {}) } });
+    return { ...base, outcome: 'WARNING', warningsLeft: o.warningsLeft };
+  }
+  await terminateAttempt(tx, current, quiz, { kind, at, count: o.number });
+  await audit(req, {
+    action: 'quiz.attempt.terminate', entityType: 'QuizAttempt', entityId: current.id, classId,
+    summary: `Attempt ${current.attemptNumber} in "${quiz.title}" was ended automatically: ${fullName(req.user)} ${violationText(kind)}`,
+    after: { kind, violation: o.number, warningsAllowed: o.allowed },
+  }, tx);
+  return { ...base, outcome: 'TERMINATED', warningsLeft: 0, ended: true };
+}
+
+/** Tell the teacher and the student that an attempt was ended. */
+async function announceTermination({ attempt, quiz, cls, student, kind }) {
+  const link = `/classes/${cls.id}/quizzes/${quiz.id}`;
+  await notify([cls.teacherId], {
+    type: 'quiz.attempt.terminated', title: `Attempt ended for a rule violation: ${quiz.title}`,
+    body: `${fullName(student)} ${violationText(kind)}. The attempt counts as failed unless you reopen it or count its answers.`,
+    link: `${link}/results?attempt=${attempt.id}`, classId: cls.id,
+  });
+  await notify([attempt.studentId], {
+    type: 'quiz.attempt.terminated', title: `Your attempt was ended: ${quiz.title}`,
+    body: `It was recorded that you ${violationText(kind)}. The attempt counts as failed. Only your teacher can reopen it.`,
+    link, classId: cls.id,
+  });
+}
+
+/**
+ * The quiz page tells the server that it has opened the attempt, once for every time the page is
+ * loaded. Under strict rules a page that is opened a second time was closed or reloaded in
+ * between; if nothing was reported about that, it is counted now (rules.js, `pageOpening`).
+ *
+ * Answers: { outcome } — OPENED (nothing more is held against the student; `warned` carries the
+ * warning that was counted when they left, for the new page to show), IGNORED (the rules do not
+ * bind this attempt), CLOSED (it is no longer in progress), or WARNING / TERMINATED with the
+ * fields of a violation.
+ */
+attemptsRouter.post('/:attemptId/open', requireRole('STUDENT'), validate({ params: attemptParams, body: z.object({}).passthrough() }), async (req, res) => {
+  const { attempt, access } = await loadAttempt(req);
+  if (attempt.studentId !== req.user.id) throw notFound('Attempt');
+  const quiz = attempt.quiz;
+  const now = new Date();
+  const kind = 'CLOSED_PAGE';
+  if (attempt.status === 'IN_PROGRESS' && isOverdue(attempt, now)) {
+    await closeAttempt(attempt.id, { auto: true, now });
+    return ok(res, { outcome: 'CLOSED' });
+  }
+  const result = await prisma.$transaction(async (tx) => {
+    await lockKey(tx, `attempt:${attempt.id}`);
+    const current = await tx.quizAttempt.findUnique({ where: { id: attempt.id } });
+    if (!current) throw notFound('Attempt');
+    if (current.status !== 'IN_PROGRESS') return { outcome: 'CLOSED' };
+    if (!rulesApply(quiz, current) || current.resumeSeconds !== null) return { outcome: 'IGNORED' };
+    const opening = pageOpening(current);
+    await tx.quizAttempt.update({ where: { id: current.id }, data: { pageOpenedAt: now, awaySince: null } });
+    if (opening === 'FIRST') return { outcome: 'OPENED' };
+    if (opening === 'AFTER_LEAVING') {
+      if ((await tx.quizAttemptEvent.count({ where: { attemptId: current.id } })) < 500) await tx.quizAttemptEvent.create({ data: { attemptId: current.id, type: 'PAGE_REOPENED', meta: { awayMs: now.getTime() - current.awaySince.getTime() } } });
+      // The new page shows the warning that the old one could no longer show.
+      const last = await tx.quizAttemptEvent.findFirst({ where: { attemptId: current.id, type: 'VIOLATION' }, orderBy: { createdAt: 'desc' } });
+      const m = last?.meta ?? {};
+      return { outcome: 'OPENED', ...(m.outcome === 'WARNING' ? { warned: { kind: m.kind, text: violationText(m.kind), number: m.number, allowed: m.allowed, at: last.createdAt } } : {}) };
+    }
+    return countViolation(tx, req, { current, quiz, classId: access.cls.id, kind, at: now, detail: 'opened again without a report that it was closed' });
+  });
+  if (result.ended) await announceTermination({ attempt, quiz, cls: access.cls, student: req.user, kind });
+  const { ended: _ended, ...answer } = result;
+  return ok(res, answer);
+});
 
 // ── Teacher: results, manual grading, release ────────────────────────────────
 async function resultRows(quiz) {
@@ -829,8 +1124,15 @@ async function resultRows(quiz) {
     const finished = mine.filter((a) => FINISHED.includes(a.status));
     return {
       student: { id: student.id, name: fullName(student), firstName: student.firstName, lastName: student.lastName, studentNumber: student.studentProfile?.studentNumber ?? null },
-      status: mine.some((a) => a.status === 'IN_PROGRESS') ? 'IN_PROGRESS' : finished.length > 0 ? (finished.some((a) => a.needsManualGrading) ? 'NEEDS_GRADING' : 'GRADED') : quiz.availableUntil && quiz.availableUntil <= now && isPublished(quiz, now) ? 'MISSING' : 'NOT_STARTED',
-      attempts: mine.map((a) => ({ id: a.id, attemptNumber: a.attemptNumber, status: a.status, startedAt: a.startedAt, submittedAt: a.submittedAt, totalScore: a.totalScore, maxScore: a.maxScore, needsManualGrading: a.needsManualGrading })),
+      // TERMINATED: an attempt was ended for a rule violation and waits for the teacher's decision.
+      status: mine.some((a) => a.status === 'IN_PROGRESS') ? 'IN_PROGRESS' : mine.some((a) => a.terminatedAt) ? 'TERMINATED' : finished.length > 0 ? (finished.some((a) => a.needsManualGrading) ? 'NEEDS_GRADING' : 'GRADED') : quiz.availableUntil && quiz.availableUntil <= now && isPublished(quiz, now) ? 'MISSING' : 'NOT_STARTED',
+      attempts: mine.map((a) => ({
+        id: a.id, attemptNumber: a.attemptNumber, status: a.status, startedAt: a.startedAt, submittedAt: a.submittedAt, totalScore: a.totalScore, maxScore: a.maxScore, needsManualGrading: a.needsManualGrading,
+        terminated: a.terminatedAt ? { at: a.terminatedAt, kind: a.terminationKind, text: violationText(a.terminationKind) } : null,
+        // Reopened by a teacher; `waiting` until the student continues.
+        reopened: a.reopenedAt ? { at: a.reopenedAt, waiting: a.status === 'IN_PROGRESS' && a.resumeSeconds !== null } : null,
+        violationCount: a.violationCount,
+      })),
       countedAttemptId: outcome?.attemptId ?? null,
       score: percent === null ? null : round(outcome.fraction * total, 2),
       percent,
@@ -850,6 +1152,8 @@ quizzesRouter.get('/:quizId/results', validate({ params: quizParams }), async (r
     stats: {
       submitted: rows.filter((r) => r.attempts.some((a) => FINISHED.includes(a.status))).length,
       needsGrading: rows.filter((r) => r.status === 'NEEDS_GRADING').length,
+      // Students with an attempt that was ended for a rule violation and not yet decided on.
+      violations: rows.filter((r) => r.attempts.some((a) => a.terminated)).length,
       average: scored.length === 0 ? null : round(scored.reduce((s, r) => s + r.percent, 0) / scored.length, 1),
       highest: scored.length === 0 ? null : Math.max(...scored.map((r) => r.percent)),
       lowest: scored.length === 0 ? null : Math.min(...scored.map((r) => r.percent)),
@@ -866,6 +1170,8 @@ attemptsRouter.put(
     if (!access.canManage) throw forbidden('Only the class teacher can do that.');
     assertClassWritable(access.cls);
     if (attempt.status === 'IN_PROGRESS') throw conflict('This attempt has not been submitted yet.', 'ATTEMPT_IN_PROGRESS');
+    // Its answers are not marked while it stands as failed: marking one would half-count it.
+    if (attempt.terminatedAt) throw conflict('This attempt was ended for a rule violation. Count its answers or reopen it first.', 'ATTEMPT_TERMINATED');
     const answer = attempt.answers.find((a) => a.position === req.valid.params.position);
     if (!answer) throw notFound('Question');
     const { score, feedback } = req.valid.body;
@@ -895,6 +1201,106 @@ attemptsRouter.put(
     ok(res, await teacherAttemptView(await prisma.quizAttempt.findUnique({ where: { id: attempt.id }, include: attemptInclude })));
   },
 );
+
+const decisionNote = z.string().trim().max(500).nullable().optional();
+
+/**
+ * Reopen an attempt that was ended for a rule violation. The student continues the same attempt
+ * with the answers they had given; the count of violations starts again.
+ *
+ *   minutes     the time the student gets, counted from the moment they continue.
+ *               Left out: what was left on the clock when the attempt was ended (no timer for an untimed quiz).
+ *   continueBy  until when the student may continue (with no timer: until when they may work).
+ *               Left out: when the quiz closes. Required once the quiz has closed.
+ */
+attemptsRouter.post(
+  '/:attemptId/reopen',
+  validate({ params: attemptParams, body: z.object({ minutes: z.number().int().min(1).max(600).nullable().optional(), continueBy: zOptionalDateTime, note: decisionNote }) }),
+  async (req, res) => {
+    const { attempt, access } = await loadAttempt(req);
+    if (!access.canManage) throw forbidden('Only the class teacher can do that.');
+    assertClassWritable(access.cls);
+    const quiz = attempt.quiz;
+    const note = req.valid.body.note ? plainText(req.valid.body.note, 500) : null;
+    const now = new Date();
+    const clock = await prisma.$transaction(async (tx) => {
+      // The same order as starting an attempt: first the student's place in the quiz, then the attempt.
+      await lockKey(tx, `quiz-start:${quiz.id}:${attempt.studentId}`);
+      await lockKey(tx, `attempt:${attempt.id}`);
+      const current = await tx.quizAttempt.findUnique({ where: { id: attempt.id } });
+      if (!current?.terminatedAt) throw conflict('Only an attempt that was ended for a rule violation can be reopened.', 'ATTEMPT_NOT_TERMINATED');
+      if ((await tx.quizAttempt.count({ where: { quizId: quiz.id, studentId: attempt.studentId, status: 'IN_PROGRESS' } })) > 0) throw conflict('This student has another attempt in progress.', 'ATTEMPT_IN_PROGRESS');
+      const set = reopenClock(quiz, current, { minutes: req.valid.body.minutes ?? null, continueBy: req.valid.body.continueBy ?? null }, now);
+      if (set.errors) throw fieldErrors(set.errors);
+      await tx.quizAttempt.update({
+        where: { id: current.id },
+        data: {
+          status: 'IN_PROGRESS', submittedAt: null, terminatedAt: null, terminationKind: null, violationCount: 0,
+          autoScore: 0, manualScore: 0, totalScore: null, needsManualGrading: false,
+          reopenedAt: now, reopenedById: req.user.id, resumeSeconds: set.resumeSeconds, deadlineAt: set.deadlineAt,
+          pageOpenedAt: null, awaySince: null,
+        },
+      });
+      await tx.quizAttemptEvent.create({ data: { attemptId: current.id, type: 'REOPENED', meta: { by: fullName(req.user), seconds: set.resumeSeconds, until: set.deadlineAt, ...(note ? { note } : {}) } } });
+      await audit(req, {
+        action: 'quiz.attempt.reopen', entityType: 'QuizAttempt', entityId: current.id, classId: access.cls.id,
+        summary: `Reopened attempt ${current.attemptNumber} of ${fullName(attempt.student)} in "${quiz.title}"${note ? ` — ${note}` : ''}`,
+        before: { endedAt: current.terminatedAt, violation: current.terminationKind }, after: { seconds: set.resumeSeconds, until: set.deadlineAt },
+      }, tx);
+      await syncQuizGrade(tx, quiz, attempt.studentId, req.user.id);
+      return set;
+    });
+    const tz = await getTimeZone();
+    const until = clock.deadlineAt ? `${dateKey(clock.deadlineAt, tz)} ${timeKey(clock.deadlineAt, tz)}` : null;
+    const time = clock.resumeSeconds !== null
+      ? `You have ${durationText(clock.resumeSeconds)} from the moment you continue${until ? `. Continue before ${until}` : ''}.`
+      : until ? `You can work on it until ${until}.` : 'You can continue from where you stopped.';
+    await notify([attempt.studentId], {
+      type: 'quiz.attempt.reopened', title: `Your attempt was reopened: ${quiz.title}`,
+      body: `${time} The rules of the quiz still apply.${note ? ` Note from your teacher: ${note}` : ''}`,
+      link: `/classes/${access.cls.id}/quizzes/${quiz.id}`, classId: access.cls.id,
+    });
+    ok(res, await teacherAttemptView(await prisma.quizAttempt.findUnique({ where: { id: attempt.id }, include: attemptInclude })));
+  },
+);
+
+/**
+ * Count the answers of an attempt that was ended for a rule violation: it becomes an ordinary
+ * handed-in attempt, marked on what the student had answered by then.
+ */
+attemptsRouter.post('/:attemptId/count-answers', validate({ params: attemptParams, body: z.object({ note: decisionNote }) }), async (req, res) => {
+  const { attempt, access } = await loadAttempt(req);
+  if (!access.canManage) throw forbidden('Only the class teacher can do that.');
+  assertClassWritable(access.cls);
+  if (!attempt.terminatedAt) throw conflict('Only an attempt that was ended for a rule violation needs this.', 'ATTEMPT_NOT_TERMINATED');
+  const quiz = attempt.quiz;
+  const note = req.valid.body.note ? plainText(req.valid.body.note, 500) : null;
+  // Programs that were written but never checked go to the judge first (slow, so before the transaction).
+  await checkUncheckedPrograms(attempt.id, Date.now(), { terminated: true });
+  await prisma.$transaction(async (tx) => {
+    await lockKey(tx, `attempt:${attempt.id}`);
+    const current = await tx.quizAttempt.findUnique({ where: { id: attempt.id }, include: { answers: true } });
+    if (!current?.terminatedAt) throw conflict('Only an attempt that was ended for a rule violation needs this.', 'ATTEMPT_NOT_TERMINATED');
+    const totals = await scoreAnswers(tx, current);
+    await tx.quizAttempt.update({
+      where: { id: current.id },
+      data: { status: 'SUBMITTED', terminatedAt: null, terminationKind: null, autoScore: totals.autoScore, manualScore: 0, totalScore: totals.totalScore, needsManualGrading: totals.needsManualGrading },
+    });
+    await tx.quizAttemptEvent.create({ data: { attemptId: current.id, type: 'COUNTED', meta: { by: fullName(req.user), ...(note ? { note } : {}) } } });
+    await audit(req, {
+      action: 'quiz.attempt.count', entityType: 'QuizAttempt', entityId: current.id, classId: access.cls.id,
+      summary: `Counted the answers of attempt ${current.attemptNumber} of ${fullName(attempt.student)} in "${quiz.title}", which had been ended for a rule violation${note ? ` — ${note}` : ''}`,
+      before: { endedAt: current.terminatedAt, violation: current.terminationKind, totalScore: 0 }, after: { totalScore: totals.totalScore, needsManualGrading: totals.needsManualGrading },
+    }, tx);
+    await syncQuizGrade(tx, quiz, attempt.studentId, req.user.id);
+  });
+  await notify([attempt.studentId], {
+    type: 'quiz.attempt.counted', title: `Your answers will count: ${quiz.title}`,
+    body: `Your teacher decided to count the answers you had given before the attempt was ended.${note ? ` Note from your teacher: ${note}` : ''}`,
+    link: `/classes/${access.cls.id}/quizzes/${quiz.id}`, classId: access.cls.id,
+  });
+  ok(res, await teacherAttemptView(await prisma.quizAttempt.findUnique({ where: { id: attempt.id }, include: attemptInclude })));
+});
 
 /** Void an attempt (for example after a power cut) so that the student can take the quiz again. */
 attemptsRouter.delete('/:attemptId', validate({ params: attemptParams, body: z.object({ reason: z.string().trim().min(5, 'Give a reason (at least 5 characters)').max(500) }) }), async (req, res) => {
@@ -944,7 +1350,8 @@ quizzesRouter.post('/:quizId/results/withhold', validate({ params: quizParams, b
 quizzesRouter.get('/:quizId/analysis', validate({ params: quizParams }), async (req, res) => {
   const { quiz } = await loadManaged(req, { writable: false });
   const answers = await prisma.studentAnswer.findMany({
-    where: { attempt: { quizId: quiz.id, status: { in: FINISHED } } },
+    // An attempt that stands as failed for a rule violation has answers that were never marked.
+    where: { attempt: { quizId: quiz.id, status: { in: FINISHED }, terminatedAt: null } },
     select: { questionId: true, snapshot: true, response: true, score: true, points: true, isCorrect: true, needsManual: true, manualScore: true },
   });
   const byQuestion = new Map();
@@ -983,7 +1390,7 @@ quizzesRouter.get('/:quizId/export', validate({ params: quizParams, query: z.obj
   const { format } = req.valid.query;
   const tz = await getTimeZone();
   const rows = await resultRows(quiz);
-  const label = { GRADED: 'Graded', NEEDS_GRADING: 'Needs grading', IN_PROGRESS: 'In progress', MISSING: 'Missing', NOT_STARTED: 'Not started' };
+  const label = { GRADED: 'Graded', NEEDS_GRADING: 'Needs grading', IN_PROGRESS: 'In progress', TERMINATED: 'Ended: rule violation', MISSING: 'Missing', NOT_STARTED: 'Not started' };
   await audit(req, { action: 'quiz.export', entityType: 'Quiz', entityId: quiz.id, classId: cls.id, summary: `Exported the results of "${quiz.title}" (${format.toUpperCase()})` });
   await sendTable(res, format, {
     filename: `${cls.course.code}-${quiz.title}-results`,
@@ -996,7 +1403,7 @@ quizzesRouter.get('/:quizId/export', validate({ params: quizParams, query: z.obj
       { header: 'Attempts', value: (r) => r.attempts.length, pdfWidth: 0.9, align: 'right' },
       { header: 'Score', value: (r) => r.score ?? '', pdfWidth: 0.9, align: 'right' },
       { header: '%', value: (r) => r.percent ?? '', pdfWidth: 0.8, align: 'right' },
-      { header: 'Status', value: (r) => label[r.status], width: 16, pdfWidth: 1.3 },
+      { header: 'Status', value: (r) => label[r.status], width: 22, pdfWidth: 1.7 },
       { header: 'Submitted', value: (r) => (r.lastSubmittedAt ? `${dateKey(r.lastSubmittedAt, tz)} ${timeKey(r.lastSubmittedAt, tz)}` : ''), width: 18, pdfWidth: 1.6 },
     ],
     rows,

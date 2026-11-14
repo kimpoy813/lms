@@ -47,7 +47,8 @@ export function FileList({ files, onRemove, className, compact = false }) {
  * Upload control. `value` is the list of uploaded files ([{ id, name, sizeBytes, … }]);
  * `onChange` receives the new list. Files are uploaded immediately and attached when the form is saved.
  */
-export function FileUpload({ value = [], onChange, max = 10, accept, label = 'Add files', hint, compact = false, disabled = false }) {
+/** `onBrowse` is called just before the system's file chooser opens (a quiz with strict rules needs to know). */
+export function FileUpload({ value = [], onChange, max = 10, accept, label = 'Add files', hint, compact = false, disabled = false, onBrowse }) {
   const input = useRef(null);
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
@@ -74,7 +75,7 @@ export function FileUpload({ value = [], onChange, max = 10, accept, label = 'Ad
     <div>
       <FileList files={value} onRemove={disabled ? undefined : (f) => onChange(value.filter((x) => x.id !== f.id))} className="mb-2" compact={compact} />
       {room > 0 && !disabled && (
-        <button type="button" onClick={() => input.current?.click()} disabled={busy}
+        <button type="button" onClick={() => { onBrowse?.(); input.current?.click(); }} disabled={busy}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
           onDrop={(e) => { e.preventDefault(); setOver(false); add(e.dataTransfer.files); }}
           className={cn('flex w-full items-center justify-center gap-2.5 rounded-xl border border-dashed text-sm font-medium transition-colors', compact ? 'px-3 py-2.5' : 'flex-col px-4 py-6', over ? 'border-brand bg-brand-soft text-brand' : 'border-line-strong text-soft hover:border-brand hover:text-brand')}>

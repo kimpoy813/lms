@@ -27,6 +27,8 @@ export const formatDate = (v) => (valid(toDate(v)) ? fmt({ month: 'short', day: 
 export const formatDay = (v) => (valid(toDate(v)) ? fmt({ weekday: 'short', month: 'short', day: 'numeric' }).format(toDate(v)) : '—');
 /** "9:05 AM" */
 export const formatTime = (v) => (valid(toDate(v)) ? fmt({ hour: 'numeric', minute: '2-digit' }).format(toDate(v)) : '—');
+/** With seconds, where two things in the same minute must be told apart. */
+export const formatTimeExact = (v) => (valid(toDate(v)) ? fmt({ hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(toDate(v)) : '—');
 /** "Nov 11, 2026, 9:05 AM" */
 export const formatDateTime = (v) => (valid(toDate(v)) ? fmt({ month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(toDate(v)) : '—');
 /** A calendar date stored as YYYY-MM-DD (no time zone shift). */
@@ -118,5 +120,15 @@ export function formatDuration(seconds) {
   const m = Math.floor((s % 3600) / 60);
   const r = s % 60;
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
+}
+/** A length of time in words: "45 seconds", "12 minutes", "1 hour 5 minutes". */
+export function formatSpan(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return plural(s, 'second');
+  const minutes = Math.round(s / 60);
+  if (minutes < 60) return plural(minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${plural(hours, 'hour')}${rest ? ` ${plural(rest, 'minute')}` : ''}`;
 }
 export const titleCase = (s) => String(s ?? '').toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());

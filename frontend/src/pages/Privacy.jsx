@@ -19,6 +19,12 @@ const SECTIONS = [
     'Your coordinates are not stored, you are not tracked, and no location is read at any other time.',
     'If you refuse or your device cannot determine its location, your teacher can still mark you manually.',
   ]],
+  ['Rules during quizzes and examinations', [
+    'A teacher may set strict rules for a quiz or an examination. You are shown the rules before you start, and the attempt begins only when you agree.',
+    'While you answer, your browser tells the school’s server when you leave the quiz page, click outside it, close or reload it, copy from it, paste into it, press a screenshot key or try to print it: what happened, when, and how long you were away. Your teacher sees this record next to your attempt.',
+    'Nothing else is watched: no camera, no microphone, no picture of your screen, not what you type, not what was on your clipboard, and not which page or app you went to.',
+    'Breaking a rule can end your attempt as failed. The rules of the quiz decide that automatically; your teacher can reopen the attempt or count your answers, so tell them if something outside your control caused it.',
+  ]],
   ['Why we use it', [
     'To run classes: delivering lessons, collecting and grading work, recording attendance and computing grades.',
     'To keep accounts secure and to investigate misuse.',

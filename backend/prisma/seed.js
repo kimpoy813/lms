@@ -308,7 +308,7 @@ async function demo() {
       const skill = [[1, 1, 1, 1, 1, 5], [1, 1, 1, 1, 1, 4], [1, 0, 1, 1, 0, 3], [1, 1, 1, 0, 1, 5], [1, 0, 0, 1, 0, 2], [1, 1, 0, 1, 1, null], [0, 0, 0, 0, 0, null], null];
       for (const [i, s] of itStudents.entries()) {
         if (!skill[i]) continue;
-        const { attemptId } = await s.post(`/quizzes/${q1.id}/attempts`);
+        const { attemptId } = await s.post(`/quizzes/${q1.id}/attempts`, { acceptRules: true });
         const attempt = await s.get(`/attempts/${attemptId}`);
         const k = skill[i];
         for (const item of attempt.questions) {

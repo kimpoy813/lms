@@ -1,10 +1,12 @@
 // Routes. Pages are loaded on demand so the first screen stays small on slow connections.
-import { lazy, Suspense } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router';
 import { useAuth } from './auth/AuthContext.jsx';
 import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Button, EmptyState, PageLoader } from './components/ui.jsx';
 import AppShell from './layout/AppShell.jsx';
+import { armedGuard, attemptsWithPendingReports, disarmGuard, forgetOpening, recordReport, sendPendingReports, sendReport } from './lib/quizGuard.js';
 
 const page = (loader) => lazy(loader);
 
@@ -126,8 +128,54 @@ function NotFound() {
   );
 }
 
+/**
+ * Strict quiz rules: the two things the quiz page cannot do for itself (lib/quizGuard.js).
+ *  • The app moved on to another page while an attempt was being answered — that is leaving it.
+ *  • A page was closed while the connection was down: what it wrote down is sent now.
+ */
+function QuizGuardRelay() {
+  const { pathname } = useLocation();
+  const { user } = useAuth();
+  const client = useQueryClient();
+  const userId = user?.id;
+
+  useEffect(() => {
+    const guard = armedGuard();
+    if (!guard || pathname === guard.path) return;
+    disarmGuard(guard.attemptId);
+    forgetOpening(guard.attemptId); // coming back to it is a new opening of the quiz page
+    const report = recordReport(guard.attemptId, 'CLOSED_PAGE', 'went to another page of the app');
+    // What the pages show about this quiz is out of date from here on.
+    sendReport(guard.attemptId, report, { keepalive: true }).then(() => {
+      for (const root of ['attempt', 'class', 'dashboard', 'notifications']) client.invalidateQueries({ queryKey: [root] });
+    });
+  }, [pathname, client]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    const send = () => {
+      for (const attemptId of attemptsWithPendingReports()) {
+        // The quiz page sends its own.
+        if (armedGuard()?.attemptId !== attemptId && !window.location.pathname.endsWith(`/attempt/${attemptId}`)) sendPendingReports(attemptId).then((answer) => { if (answer) for (const root of ['attempt', 'class', 'dashboard']) client.invalidateQueries({ queryKey: [root] }); });
+      }
+    };
+    send();
+    window.addEventListener('online', send);
+    // A report that the server did not take (it was busy, or being deployed) is offered again.
+    const id = setInterval(send, 30_000);
+    return () => {
+      window.removeEventListener('online', send);
+      clearInterval(id);
+    };
+  }, [userId, client]);
+
+  return null;
+}
+
 export default function App() {
   return (
+    <>
+    <QuizGuardRelay />
     <Routes>
       <Route element={<PublicOnly />}>
         <Route path="/login" element={<Login />} />
@@ -204,5 +252,6 @@ export default function App() {
         </Route>
       </Route>
     </Routes>
+    </>
   );
 }

@@ -92,6 +92,7 @@ definitions: [API.md](API.md).
 | Grade computation | `modules/gradebook/compute.js` (pure, unit-tested) |
 | Recording a grade and its history | `recordGrade` in `modules/gradebook/service.js` |
 | Quiz scoring and what a student may see of a question | `lib/quizScoring.js` |
+| What a violation of a quiz's strict rules leads to | `modules/quizzes/rules.js` (pure, unit-tested). The browser only reports what it noticed (`frontend/src/lib/quizGuard.js`); the server counts, warns or ends the attempt. See [QUIZ-RULES.md](QUIZ-RULES.md) |
 | Whether something is published | `lib/visibility.js` (evaluated at read time, so a scheduled item appears on time even if the background job is late) |
 | Geofence decision | `lib/geo.js` |
 | HTML that users may store | `lib/sanitize.js` |
