@@ -1,33 +1,37 @@
 // Write or edit one question. The same dialog serves the quiz builder and the question banks.
 import { useQuery } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import LazyEditor from '../../../components/LazyEditor.jsx';
 import { Alert, Button, Checkbox, cn, Field, Input, Modal, ModalActions, Segmented, Select, Switch, Textarea } from '../../../components/ui.jsx';
 import { api } from '../../../lib/api.js';
-import { DIFFICULTY, QUESTION_TYPES } from './QuestionParts.jsx';
+import { DIFFICULTY, QUESTION_TYPES, markedBy } from './QuestionParts.jsx';
 
 const countBlanks = (html) => (String(html ?? '').replace(/<[^>]*>/g, ' ').match(/_{3,}/g) ?? []).length;
 const lines = (text) => String(text ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
 
 const blank = (type) => ({
-  type, text: '', points: 1, difficulty: 'MEDIUM', topic: '', explanation: '', settings: {},
+  type, text: '', points: 1, difficulty: 'MEDIUM', topic: '', section: '', explanation: '', settings: {},
   choices: [{ text: '', isCorrect: false }, { text: '', isCorrect: false }, { text: '', isCorrect: false }, { text: '', isCorrect: false }],
   answer: true, correction: [], accepted: [], blanks: [], pairs: [{ left: '', right: '' }, { left: '', right: '' }, { left: '', right: '' }], items: ['', '', ''], programmingProblemId: '',
 });
 
 /**
- * @param {{ question?: object, onSave: (question: object) => Promise<unknown>, onClose: () => void, title?: string }} props
+ * @param {{ question?: object, onSave: (question: object) => Promise<unknown>, onClose: () => void, title?: string, parts?: string[] }} props
  * `onSave` receives the question in the API's editor shape and should reject with an ApiError on failure.
+ * `parts`: the part names already in use where the question goes, offered while typing one.
  */
-export default function QuestionEditor({ question, onSave, onClose, title }) {
-  const [q, setQ] = useState(() => ({ ...blank(question?.type ?? 'MULTIPLE_CHOICE'), ...question, topic: question?.topic ?? '', explanation: question?.explanation ?? '', programmingProblemId: question?.programmingProblemId ?? '' }));
+export default function QuestionEditor({ question, onSave, onClose, title, parts = [] }) {
+  const [q, setQ] = useState(() => ({ ...blank(question?.type ?? 'MULTIPLE_CHOICE'), ...question, topic: question?.topic ?? '', section: question?.section ?? '', explanation: question?.explanation ?? '', programmingProblemId: question?.programmingProblemId ?? '' }));
+  const partsId = useId();
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState([]);
   const set = (name, value) => setQ((s) => ({ ...s, [name]: value }));
   const setSetting = (name, value) => setQ((s) => ({ ...s, settings: { ...s.settings, [name]: value } }));
   const programming = useQuery({ queryKey: ['programming', 'problems'], queryFn: () => api.get('/programming/problems'), enabled: q.type === 'PROGRAMMING' });
 
+  // Who marks the answers, as the question stands in the form.
+  const marking = markedBy(q);
   const blanksNeeded = q.type === 'FILL_BLANKS' ? countBlanks(q.text) : 0;
   const blanks = Array.from({ length: blanksNeeded }, (_, i) => q.blanks?.[i] ?? []);
 
@@ -35,7 +39,7 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
     e.preventDefault();
     setBusy(true);
     setProblems([]);
-    const base = { type: q.type, text: q.text, points: Number(q.points), difficulty: q.difficulty, topic: q.topic.trim() || null, explanation: q.explanation.trim() || null, settings: q.settings };
+    const base = { type: q.type, text: q.text, points: Number(q.points), difficulty: q.difficulty, topic: q.topic.trim() || null, section: q.section.trim() || null, explanation: q.explanation.trim() || null, settings: q.settings };
     const byType = {
       MULTIPLE_CHOICE: { choices: q.choices }, MULTIPLE_RESPONSE: { choices: q.choices },
       TRUE_FALSE: { answer: q.answer }, MODIFIED_TRUE_FALSE: { answer: q.answer, correction: q.correction },
@@ -104,10 +108,17 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
 
         {(q.type === 'IDENTIFICATION' || q.type === 'SHORT_ANSWER') && (
           <div className="space-y-3">
-            <Field label="Accepted answers" hint={q.type === 'SHORT_ANSWER' ? 'One per line. Leave empty to grade the answers yourself.' : 'One per line. Spelling variants count as separate answers.'}>
+            <Field label="Accepted answers" hint="One per line: every answer that is right. Capital letters, spacing, punctuation and accents make no difference, and neither does “the” in front or a number written as a word.">
               <Textarea rows={3} value={q.accepted.join('\n')} onChange={(e) => set('accepted', e.target.value.split('\n'))} onBlur={() => set('accepted', lines(q.accepted.join('\n')))} placeholder={'CPU\nCentral Processing Unit'} />
             </Field>
-            <Checkbox checked={q.settings.caseSensitive === true} onChange={(e) => setSetting('caseSensitive', e.target.checked)} label="Capital letters matter" description="Off: “cpu” and “CPU” are both accepted." />
+            <Checkbox checked={q.settings.caseSensitive === true} onChange={(e) => setSetting('caseSensitive', e.target.checked)} label="Exactly as written" description="Off: “cpu”, “C.P.U.” and “the CPU” are all right for “CPU”. On: only “CPU” is, letter for letter." />
+            {q.type === 'SHORT_ANSWER' && marking.why === 'NO_KEY' && <Alert tone="info">Without an accepted answer there is nothing to check against: you grade every answer yourself, as for an essay.</Alert>}
+            {q.type === 'SHORT_ANSWER' && marking.why !== 'NO_KEY' && (
+              <Checkbox checked={marking.by === 'BOTH'} onChange={(e) => setSetting('reviewMismatch', e.target.checked)} label="I look at the answers that match none of these"
+                description={marking.by === 'BOTH'
+                  ? `An answer that matches is marked right at once. Any other waits for your grade, and the student’s score with it.${marking.why === 'SENTENCE' ? ' This is on because the answer is a whole sentence, which nobody types word for word.' : ''}`
+                  : 'Off: the system checks every answer at once, and an answer that matches none of these is wrong.'} />
+            )}
           </div>
         )}
 
@@ -177,13 +188,18 @@ export default function QuestionEditor({ question, onSave, onClose, title }) {
         )}
 
         {['MULTIPLE_RESPONSE', 'MATCHING', 'ORDERING', 'FILL_BLANKS'].includes(q.type) && (
-          <Switch checked={q.settings.partialCredit !== false} onChange={(on) => setSetting('partialCredit', on)} label="Give partial credit" description="Part of the points for a partly correct answer. Off: all or nothing." />
+          // An ordering is right or wrong as a whole unless the teacher asks for partial credit; the others give it unless it is switched off.
+          <Switch checked={q.type === 'ORDERING' ? q.settings.partialCredit === true : q.settings.partialCredit !== false} onChange={(on) => setSetting('partialCredit', on)} label="Give partial credit" description="Part of the points for a partly correct answer. Off: all or nothing." />
         )}
 
         <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Part" optional hint="Questions with the same part name are given together, one part after the other. Empty: with the other questions of its type.">
+            <Input value={q.section} onChange={(e) => set('section', e.target.value)} maxLength={120} placeholder="e.g. Part I. Multiple Choice" list={partsId} autoComplete="off" />
+            <datalist id={partsId}>{parts.map((name) => <option key={name} value={name} />)}</datalist>
+          </Field>
           <Field label="Topic" optional hint="Used to filter the question bank and to draw random questions."><Input value={q.topic} onChange={(e) => set('topic', e.target.value)} maxLength={120} placeholder="e.g. Number systems" /></Field>
-          <Field label="Explanation" optional hint="Shown with the correct answer after results are released."><Textarea rows={2} value={q.explanation} onChange={(e) => set('explanation', e.target.value)} maxLength={5000} /></Field>
         </div>
+        <Field label="Explanation" optional hint="Shown with the correct answer after results are released."><Textarea rows={2} value={q.explanation} onChange={(e) => set('explanation', e.target.value)} maxLength={5000} /></Field>
 
         <ModalActions>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>

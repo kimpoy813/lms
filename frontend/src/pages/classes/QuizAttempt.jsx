@@ -9,7 +9,7 @@
 // or a screenshot key is reported to the server, which answers with a warning or ends the attempt.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CircleDashed, Clock, CloudOff, Flag, Grid3x3, PlayCircle, Send, ShieldAlert, Timer, WifiOff, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { ProgrammingAnswer } from '../../components/CodeWorkbench.jsx';
@@ -19,7 +19,7 @@ import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Modal, PageL
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatDuration, formatPercent, formatScore, formatSpan, formatTime, plural } from '../../lib/format.js';
 import { disarmGuard, forgetOpening, hasOpened, openAttempt, pendingReports, recordReport, sendPendingReports, sendReport, watchQuiz } from '../../lib/quizGuard.js';
-import { AnswerInput, AnswerReview, QuestionText, ScoreChip, typeLabel } from './quiz/QuestionParts.jsx';
+import { AnswerInput, AnswerReview, PartHeading, QuestionText, ScoreChip, partName, typeLabel } from './quiz/QuestionParts.jsx';
 import { consequenceText, RulesForStudents, violationText } from './quiz/Rules.jsx';
 
 // Said when the page stops something that would otherwise have counted against the student.
@@ -461,23 +461,34 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
 
   const go = (i) => { setIndex(Math.max(0, Math.min(questions.length - 1, i))); setPalette(false); window.scrollTo({ top: 0 }); };
 
+  // The parts of this attempt, in the order they are taken; a quiz without parts is one group.
+  const parts = attempt.parts ?? [];
+  const part = parts.length > 0 ? parts[current.part] ?? null : null;
+  const groups = parts.length > 0 ? parts.map((p, n) => ({ part: p, n, first: p.first, count: p.count })) : [{ part: null, n: 0, first: 0, count: questions.length }];
+
   const Palette = (
     <nav aria-label="Questions">
-      <ol className="grid grid-cols-6 gap-1.5 sm:grid-cols-8 lg:grid-cols-5">
-        {questions.map((q, i) => {
-          const a = answers[q.position];
-          const done = a.response != null;
-          return (
-            <li key={q.position}>
-              <button type="button" onClick={() => go(i)} aria-current={i === index ? 'step' : undefined} aria-label={`Question ${i + 1}${done ? ', answered' : ', not answered'}${a.flagged ? ', flagged' : ''}`}
-                className={cn('relative grid h-10 w-full place-items-center rounded-lg border text-sm font-semibold tabular-nums transition-colors', i === index ? 'border-brand ring-2 ring-brand/30' : 'border-line', done ? 'bg-brand-soft text-brand' : 'bg-surface text-soft hover:bg-raised')}>
-                {i + 1}
-                {a.flagged && <Flag className="absolute -right-1 -top-1 size-3.5 fill-warn text-warn" aria-hidden="true" />}
-              </button>
-            </li>
-          );
-        })}
-      </ol>
+      {groups.map((group) => (
+        <div key={group.n} className={cn(group.part && 'mb-3')} role={group.part ? 'group' : undefined} aria-label={group.part ? partName(group.part, group.n) : undefined}>
+          {group.part && <p className={cn('mb-1.5 text-xs font-semibold', group.n === current.part ? 'text-brand' : 'text-faint')}>{partName(group.part, group.n)}</p>}
+          <ol className="grid grid-cols-6 gap-1.5 sm:grid-cols-8 lg:grid-cols-5" start={group.first + 1}>
+            {questions.slice(group.first, group.first + group.count).map((q, n) => {
+              const i = group.first + n;
+              const a = answers[q.position];
+              const done = a.response != null;
+              return (
+                <li key={q.position}>
+                  <button type="button" onClick={() => go(i)} aria-current={i === index ? 'step' : undefined} aria-label={`Question ${i + 1}${done ? ', answered' : ', not answered'}${a.flagged ? ', flagged' : ''}`}
+                    className={cn('relative grid h-10 w-full place-items-center rounded-lg border text-sm font-semibold tabular-nums transition-colors', i === index ? 'border-brand ring-2 ring-brand/30' : 'border-line', done ? 'bg-brand-soft text-brand' : 'bg-surface text-soft hover:bg-raised')}>
+                    {i + 1}
+                    {a.flagged && <Flag className="absolute -right-1 -top-1 size-3.5 fill-warn text-warn" aria-hidden="true" />}
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
       <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-faint">
         <li className="flex items-center gap-1.5"><span className="size-3 rounded bg-brand-soft ring-1 ring-brand/30" />Answered</li>
         <li className="flex items-center gap-1.5"><span className="size-3 rounded border border-line bg-surface" />Not yet</li>
@@ -554,6 +565,12 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
           )}
           {submitError && <Alert tone="bad" className="mb-4" title="Could not submit">{submitError}</Alert>}
           <Card className="sm:p-7">
+            {part && (
+              <div className="-mx-1 mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-xl bg-raised px-3.5 py-2.5" data-testid="part" role="status">
+                <p className="text-sm font-semibold text-ink">Part {current.part + 1} <span className="font-normal text-faint">of {parts.length}</span>{part.title ? <> · {part.title}</> : null}</p>
+                <p className="text-xs text-faint">{part.count === 1 ? `Question ${part.first + 1}` : `Questions ${part.first + 1} ${part.count === 2 ? 'and' : 'to'} ${part.first + part.count}`} · {formatScore(part.points)} {part.points === 1 ? 'point' : 'points'}</p>
+              </div>
+            )}
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold text-brand">Question {index + 1} <span className="font-normal text-faint">of {questions.length}</span></p>
               <div className="flex items-center gap-2">
@@ -666,16 +683,19 @@ function Review({ attempt, back }) {
 
         {attempt.answersPending && <Alert tone="info">The correct answers will be shown here after the quiz closes for everyone.</Alert>}
         {attempt.questions && attempt.questions.map((item, i) => (
-          <Card key={item.position}>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-brand">Question {i + 1}</p>
-              <div className="flex items-center gap-2"><Badge>{typeLabel(item.question.type)}</Badge><ScoreChip item={item} /></div>
-            </div>
-            <QuestionText question={item.question} className="mb-4" />
-            <AnswerReview item={item} />
-            {item.feedback && <div className="mt-3 rounded-xl bg-raised p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-faint">Teacher’s feedback</p><p className="mt-1 whitespace-pre-wrap text-ink">{item.feedback}</p></div>}
-            {item.explanation && <p className="mt-3 rounded-xl bg-info-soft p-3 text-sm text-ink"><span className="font-semibold">Explanation: </span>{item.explanation}</p>}
-          </Card>
+          <Fragment key={item.position}>
+            {attempt.parts?.[item.part]?.first === i && <PartHeading part={attempt.parts[item.part]} index={item.part} total={attempt.parts.length} className="pt-2" />}
+            <Card>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-brand">Question {i + 1}</p>
+                <div className="flex items-center gap-2"><Badge>{typeLabel(item.question.type)}</Badge><ScoreChip item={item} /></div>
+              </div>
+              <QuestionText question={item.question} className="mb-4" />
+              <AnswerReview item={item} />
+              {item.feedback && <div className="mt-3 rounded-xl bg-raised p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-faint">Teacher’s feedback</p><p className="mt-1 whitespace-pre-wrap text-ink">{item.feedback}</p></div>}
+              {item.explanation && <p className="mt-3 rounded-xl bg-info-soft p-3 text-sm text-ink"><span className="font-semibold">Explanation: </span>{item.explanation}</p>}
+            </Card>
+          </Fragment>
         ))}
         {!attempt.questions && attempt.status !== 'IN_PROGRESS' && <p className="flex items-center justify-center gap-2 py-4 text-center text-sm text-faint"><CircleDashed className="size-4" aria-hidden="true" />Your answers are not shown for this quiz.</p>}
       </main>

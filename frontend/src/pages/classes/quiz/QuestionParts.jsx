@@ -4,6 +4,9 @@ import { FileList, FileUpload } from '../../../components/Files.jsx';
 import RichText from '../../../components/RichText.jsx';
 import { Badge, cn, Input, Select, Textarea } from '../../../components/ui.jsx';
 import { formatScore } from '../../../lib/format.js';
+import { markedBy } from '../../../lib/quizMarking.js';
+
+export { markedBy };
 
 export const QUESTION_TYPES = {
   MULTIPLE_CHOICE: { label: 'Multiple choice', hint: 'One correct answer', auto: true },
@@ -21,6 +24,31 @@ export const QUESTION_TYPES = {
 };
 export const typeLabel = (type) => QUESTION_TYPES[type]?.label ?? type;
 export const DIFFICULTY = { EASY: 'Easy', MEDIUM: 'Medium', HARD: 'Hard' };
+
+/** The badge that says a question is not marked by the system alone. Nothing for one that is. */
+export function MarkedByBadge({ q }) {
+  const { by } = markedBy(q);
+  if (by === 'TEACHER') return <span title="Every answer to this question waits for your grade."><Badge tone="warn">Graded by you</Badge></span>;
+  if (by === 'BOTH') return <span title="An answer that matches is marked right at once. One that does not waits for your grade."><Badge tone="warn">Other answers wait for you</Badge></span>;
+  return null;
+}
+
+/** "Part 2 · True or False" */
+export const partName = (part, index) => `Part ${index + 1}${part?.title ? ` · ${part.title}` : ''}`;
+
+/**
+ * The heading over the questions of one part, where a whole paper is shown: a review, the
+ * teacher's view of an attempt, the builder. `children`: controls at its right-hand end.
+ */
+export function PartHeading({ part, index, total, className, children }) {
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line pb-2', className)} data-testid="part-heading">
+      <h3 className="text-[15px] font-semibold text-ink">Part {index + 1}{total ? <span className="font-normal text-faint"> of {total}</span> : null}{part.title ? <> · {part.title}</> : null}</h3>
+      <p className="text-xs text-faint">{part.count === 1 ? `Question ${part.first + 1}` : `Questions ${part.first + 1}–${part.first + part.count}`} · {formatScore(part.points)} {part.points === 1 ? 'point' : 'points'}</p>
+      {children && <div className="ml-auto flex items-center">{children}</div>}
+    </div>
+  );
+}
 
 /**
  * The answer key as the teacher sees it: in the builder, in a question bank, and for questions
@@ -230,13 +258,19 @@ export function AnswerReview({ item }) {
       );
     }
     case 'IDENTIFICATION':
-    case 'SHORT_ANSWER':
+    case 'SHORT_ANSWER': {
+      // Right or wrong as it counts: nothing while the answer waits for the teacher, and the
+      // teacher's own score where they overruled the system.
+      const ok = item.needsManual ? null
+        : item.manualScore != null ? (item.manualScore >= item.points ? true : item.manualScore <= 0 ? false : null)
+          : item.isCorrect ?? null;
       return (
         <div>
-          <p className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-ink">{item.isCorrect !== null && item.isCorrect !== undefined && <Mark ok={item.isCorrect} />}{r.text}</p>
+          <p className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-ink">{ok !== null && <Mark ok={ok} />}{r.text}</p>
           {reveal && <CorrectText q={q} correct={correct} />}
         </div>
       );
+    }
     case 'ESSAY':
       return <p className="whitespace-pre-wrap rounded-lg border border-line bg-canvas px-3.5 py-3 text-sm leading-relaxed text-ink">{r.text}</p>;
     case 'FILL_BLANKS':
@@ -245,7 +279,8 @@ export function AnswerReview({ item }) {
           {Array.from({ length: q.blankCount }, (_, i) => {
             const given = r.blanks?.[i] ?? '';
             const accepted = correct?.blanks?.[i];
-            const ok = accepted ? accepted.some((a) => a.trim().toLowerCase() === given.trim().toLowerCase()) : null;
+            // As the server counted it; a server that does not say is asked nothing more than the plain comparison.
+            const ok = accepted ? item.pieces?.[i] ?? accepted.some((a) => a.trim().toLowerCase() === given.trim().toLowerCase()) : null;
             return (
               <li key={i} className="flex flex-wrap items-center gap-2">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-raised text-[11px] font-bold text-soft">{i + 1}</span>
@@ -260,9 +295,10 @@ export function AnswerReview({ item }) {
       const rightText = new Map(q.right.map((o) => [o.id, o.text]));
       return (
         <ul className="space-y-1.5 text-sm">
-          {q.left.map((l) => {
+          {q.left.map((l, i) => {
             const given = r.pairs?.[l.id];
-            const ok = reveal ? given === correct.pairs[l.id] : null;
+            // As the server counted it: two pairs may share the same right-hand text.
+            const ok = reveal ? item.pieces?.[i] ?? given === correct.pairs[l.id] : null;
             return (
               <li key={l.id} className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2', ok === null ? 'border-line' : ok ? 'border-ok/50 bg-ok-soft' : 'border-bad/50 bg-bad-soft')}>
                 <span className="font-medium text-ink">{l.text}</span><span className="text-faint">→</span>

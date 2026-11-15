@@ -7,7 +7,7 @@ administrators, teachers and students.
 - **Backend** — Node.js 22 or newer, Express 5, PostgreSQL through Prisma, Socket.IO
 - **Web app** — React 19, React Router 7, TanStack Query, Tailwind CSS 4 (installable, works on phones)
 - **Hosting** — one Node.js server, or Vercel with a Neon database ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md))
-- **Tests** — 618 API and unit tests, 318 web-app unit tests, 63 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
+- **Tests** — 776 API and unit tests, 318 web-app unit tests, 66 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
 
 ## Quick start
 
@@ -59,6 +59,7 @@ administrator, who must change the password at first sign-in.
 | Learning content | Modules and lessons with a rich-text editor, attachments, video embeds, prerequisites, scheduled publishing, progress tracking, bookmarks, class library |
 | Assignments | Text and file submissions (photos from a phone are made smaller before they are sent), due dates, late penalties, attempts, rubrics, feedback, returning grades, bulk download |
 | Quizzes | 12 question types, question banks and random pools, time limits enforced by the server, autosave, automatic and manual scoring, item analysis |
+| Parts and marking of a quiz | Every question with an answer key is marked the moment a student hands in — typed answers too, compared the way a teacher would ("the cpu" is right for "CPU", "ROM" is not right for "RAM"). The teacher marks essays and uploaded files. A quiz is taken part by part (multiple choice, true or false, …), and shuffling changes the order inside each part only. See [docs/QUIZZES.md](docs/QUIZZES.md) |
 | Importing questions | Paste JSON while building a quiz or examination — or choose a JSON, Word, PDF or text file — and the questions arrive with their answer keys. Each one is shown with the answer that was read, and nothing is saved before the teacher has looked. The reply of a chat assistant can be pasted as it is, and questions can be downloaded as JSON again. The format: [docs/QUESTION-IMPORT.md](docs/QUESTION-IMPORT.md) |
 | Strict rules in quizzes and examinations | Leaving the quiz page, copying, pasting, a screenshot key or printing ends the attempt as failed with 0 points; the teacher sees what was recorded and can reopen it, count its answers or remove it. On for quizzes and examinations, off for practice; up to five warnings can be allowed first. What a web page can and cannot notice: [docs/QUIZ-RULES.md](docs/QUIZ-RULES.md) |
 | Attendance | Sessions by code, rotating QR code and GPS geofence; manual marking, correction requests, summaries, exports. See [docs/ATTENDANCE.md](docs/ATTENDANCE.md) |
@@ -131,7 +132,7 @@ frontend/    Web app: src/pages, src/components, src/lib, src/layout
 api/         The API as a Vercel Function (entry point only)
 e2e/         Browser tests (Playwright); vercel/serve.mjs runs a Vercel build locally
 scripts/     dev.mjs (one-command launcher), embedded-postgres.mjs, vercel-build.mjs, smoke.mjs, ai-check.mjs
-docs/        Architecture, deployment, security and privacy, attendance, grading, quiz rules, question import, testing, API reference
+docs/        Architecture, deployment, security and privacy, attendance, grading, quizzes, quiz rules, question import, testing, API reference
 vercel.json  Build, routing and security headers on Vercel
 ```
 
@@ -142,6 +143,7 @@ vercel.json  Build, routing and security headers on Vercel
 - [Security and privacy](docs/SECURITY.md)
 - [QR + GPS attendance](docs/ATTENDANCE.md)
 - [Grading](docs/GRADING.md)
+- [Quizzes and examinations: parts, shuffling and marking](docs/QUIZZES.md)
 - [Strict rules in quizzes and examinations](docs/QUIZ-RULES.md)
 - [Importing questions](docs/QUESTION-IMPORT.md)
 - [Testing](docs/TESTING.md)

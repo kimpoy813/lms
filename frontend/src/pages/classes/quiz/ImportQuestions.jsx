@@ -13,7 +13,7 @@ import { formatLimit, formatScore, plural } from '../../../lib/format.js';
 import { useAction } from '../../../lib/query.js';
 import { ALL_TYPES, buildPrompt, DEFAULT_TYPES, DIFFICULTY_CHOICES, exampleJson, FORMAT_TYPES, isOwnRequest, questionCount } from '../../../lib/questionFormat.js';
 import QuestionEditor from './QuestionEditor.jsx';
-import { AnswerKey, QuestionText, typeLabel } from './QuestionParts.jsx';
+import { AnswerKey, MarkedByBadge, QuestionText, typeLabel } from './QuestionParts.jsx';
 
 /** The server reads documents of up to 10 MB, or less where it accepts only smaller uploads. */
 const IMPORT_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -160,6 +160,7 @@ export default function ImportQuestions({ target = 'quiz', noun = target, previe
                       <p className="mb-1 flex flex-wrap items-center gap-2 text-xs text-faint">
                         <span className="font-semibold text-soft">#{d.number ?? d.key + 1}</span><Badge>{typeLabel(d.type)}</Badge>
                         {d.section && <span>{d.section}</span>}<span>{formatScore(d.points ?? 1)} pt</span>
+                        <MarkedByBadge q={d} />
                       </p>
                       <QuestionText question={d} className="text-sm" />
                       <AnswerKey q={d} />
@@ -179,7 +180,7 @@ export default function ImportQuestions({ target = 'quiz', noun = target, previe
         </div>
       )}
       {editing && (
-        <QuestionEditor title={`Question ${editing.number ?? editing.key + 1}`} question={{ ...editing, id: undefined }} onClose={() => setEditing(null)}
+        <QuestionEditor title={`Question ${editing.number ?? editing.key + 1}`} question={{ ...editing, id: undefined }} parts={[...new Set(drafts.map((d) => d.section).filter(Boolean))]} onClose={() => setEditing(null)}
           // Corrected by hand: nothing is left to flag, and it goes in.
           onSave={async (question) => { set(editing.key, { ...question, errors: [], warnings: [], duplicate: false, include: true }); }} />
       )}

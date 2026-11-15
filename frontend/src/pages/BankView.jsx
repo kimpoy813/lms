@@ -10,7 +10,7 @@ import { formatScore, plural } from '../lib/format.js';
 import { useAction } from '../lib/query.js';
 import ImportQuestions from './classes/quiz/ImportQuestions.jsx';
 import QuestionEditor from './classes/quiz/QuestionEditor.jsx';
-import { AnswerKey, DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './classes/quiz/QuestionParts.jsx';
+import { AnswerKey, DIFFICULTY, MarkedByBadge, QUESTION_TYPES, QuestionText, typeLabel } from './classes/quiz/QuestionParts.jsx';
 
 export default function BankView() {
   const { bankId } = useParams();
@@ -59,7 +59,8 @@ export default function BankView() {
                     <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-raised text-sm font-bold tabular-nums text-soft">{(meta.page - 1) * meta.pageSize + i + 1}</span>
                     <div className="min-w-0 flex-1">
                       <p className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-faint">
-                        <Badge>{typeLabel(q.type)}</Badge><span>{DIFFICULTY[q.difficulty]}</span>{q.topic && <span>· {q.topic}</span>}<span>· {formatScore(q.points)} pt</span>
+                        <Badge>{typeLabel(q.type)}</Badge><span>{DIFFICULTY[q.difficulty]}</span>{q.topic && <span>· {q.topic}</span>}{q.section && <span>· {q.section}</span>}<span>· {formatScore(q.points)} pt</span>
+                        <MarkedByBadge q={q} />
                         {q.usedInQuizzes > 0 && <Badge tone="info">In {plural(q.usedInQuizzes, 'quiz', 'quizzes')}</Badge>}
                       </p>
                       <QuestionText question={q} className="text-[15px]" />
@@ -81,7 +82,7 @@ export default function BankView() {
       <Pagination meta={meta} onPage={setPage} />
 
       {dialog?.edit !== undefined && (
-        <QuestionEditor question={dialog.edit ?? undefined} onClose={() => setDialog(null)}
+        <QuestionEditor question={dialog.edit ?? undefined} parts={[...new Set((query.data?.data ?? []).map((q) => q.section).filter(Boolean))]} onClose={() => setDialog(null)}
           onSave={async (question) => { if (dialog.edit) await api.put(`/question-banks/questions/${dialog.edit.id}`, question); else await api.post(`/question-banks/${bankId}/questions`, question); refresh(); toast.success('Question saved.'); }} />
       )}
       {dialog?.import && (

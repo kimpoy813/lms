@@ -1,8 +1,9 @@
 import { zipSync, strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { markedBy as shownAsMarkedBy } from '../../../frontend/src/lib/quizMarking.js';
 import { docxToText, extractImportText, parseQuestions } from '../../src/lib/questionImport.js';
 import {
-  attemptTotals, buildSnapshot, correctAnswer, normalizeAnswer, normalizeQuestion, publicQuestion, sanitizeResponse, scoreAnswer, toEditorShape,
+  attemptTotals, buildSnapshot, correctAnswer, markedBy, normalizeAnswer, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, toEditorShape,
 } from '../../src/lib/quizScoring.js';
 import { quizOutcome } from '../../src/modules/quizzes/attemptScore.js';
 
@@ -139,19 +140,87 @@ describe('automatic scoring', () => {
     expect(score(t, { choiceId: idOf(t, 'False'), correction: 'x' }).autoScore).toBe(0);
   });
 
-  it('identification matches any accepted answer; short answers that miss go to the teacher', () => {
+  it('identification matches any accepted answer, however it is typed', () => {
     const id = snap({ type: 'IDENTIFICATION', text: 'Capital?', accepted: ['Manila', 'City of Manila'] });
     expect(score(id, { text: 'manila' }).autoScore).toBe(10);
     expect(score(id, { text: ' CITY OF  MANILA ' }).autoScore).toBe(10);
+    expect(score(id, { text: 'the City of Manila.' }).autoScore).toBe(10);
     expect(score(id, { text: 'Cebu' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    // Asked to be exact: as written, letter for letter.
     const cs = snap({ type: 'IDENTIFICATION', text: 'Symbol?', accepted: ['Na'], settings: { caseSensitive: true } });
     expect(score(cs, { text: 'NA' }).autoScore).toBe(0);
     expect(score(cs, { text: 'Na' }).autoScore).toBe(10);
+    expect(score(cs, { text: ' Na. ' }).autoScore).toBe(10);
+    expect(score(cs, { text: 'the Na' }).autoScore).toBe(0);
+    // Several of the accepted answers at once are right, as long as every one of them is accepted.
+    const list = snap({ type: 'IDENTIFICATION', text: 'Name an input device.', accepted: ['keyboard', 'mouse', 'scanner'] });
+    expect(score(list, { text: 'Keyboard, mouse and scanner' }).autoScore).toBe(10);
+    expect(score(list, { text: 'keyboard, monitor' }).autoScore).toBe(0);
+  });
 
-    const short = snap({ type: 'SHORT_ANSWER', text: 'Why?', accepted: ['because of gravity'] });
+  it('a short answer is marked by its answer key: right when it matches, wrong when it does not', () => {
+    const short = snap({ type: 'SHORT_ANSWER', text: 'Why does an apple fall?', accepted: ['because of gravity', 'gravity'] });
     expect(score(short, { text: 'Because of gravity' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
-    expect(score(short, { text: 'gravity pulls it' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: true });
+    expect(score(short, { text: 'The gravity.' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    // Not in the key: wrong at once, and nothing waits for the teacher.
+    expect(score(short, { text: 'the wind pushes it' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    expect(score(short, null)).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+  });
+
+  it('a short answer waits for the teacher only where the system cannot decide', () => {
+    // No answer was given for it: nothing to check against.
     expect(score(snap({ type: 'SHORT_ANSWER', text: 'Why?' }), { text: 'anything' })).toEqual({ autoScore: null, isCorrect: null, needsManual: true });
+    // The teacher asked to see the answers that do not match.
+    const asked = snap({ type: 'SHORT_ANSWER', text: 'Why?', accepted: ['gravity'], settings: { reviewMismatch: true } });
+    expect(score(asked, { text: 'Gravity' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    expect(score(asked, { text: 'the wind' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: true });
+    // The key is a whole sentence, which nobody types word for word.
+    const sentence = snap({ type: 'SHORT_ANSWER', text: 'Why does ice float?', accepted: ['Because ice is less dense than liquid water'] });
+    expect(score(sentence, { text: 'because ice is less dense than liquid water.' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    expect(score(sentence, { text: 'ice is lighter than water' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: true });
+    // …unless the teacher said that the system marks all of them.
+    const all = snap({ type: 'SHORT_ANSWER', text: 'Why does ice float?', accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } });
+    expect(score(all, { text: 'ice is lighter than water' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    // An answer that was left empty never waits.
+    expect(score(sentence, { text: '   ' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+  });
+
+  it('says who marks the answers to a question', () => {
+    const by = (input) => markedBy(input);
+    expect(by({ type: 'MULTIPLE_CHOICE' })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'IDENTIFICATION', accepted: ['A whole sentence of more than six words here'] })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'PROGRAMMING' })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'ESSAY' })).toEqual({ by: 'TEACHER', why: 'ESSAY' });
+    expect(by({ type: 'FILE_UPLOAD' })).toEqual({ by: 'TEACHER', why: 'FILE' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: [] })).toEqual({ by: 'TEACHER', why: 'NO_KEY' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['gravity'] })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['gravity'], settings: { reviewMismatch: true } })).toEqual({ by: 'BOTH', why: 'CHOSEN' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'] })).toEqual({ by: 'BOTH', why: 'SENTENCE' });
+    // One short wording among them is enough for the system to decide.
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water', 'less dense'] })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } })).toEqual({ by: 'SYSTEM', why: null });
+    // The same answer for a stored question and for the copy an attempt holds.
+    const question = stored({ type: 'SHORT_ANSWER', text: 'Why?', accepted: ['gravity'], settings: { reviewMismatch: true } });
+    expect(markedBy(question)).toEqual({ by: 'BOTH', why: 'CHOSEN' });
+    expect(markedBy(buildSnapshot(question))).toEqual({ by: 'BOTH', why: 'CHOSEN' });
+    // The choice is kept only where it means something.
+    expect(stored({ type: 'IDENTIFICATION', text: 'x', accepted: ['a'], settings: { reviewMismatch: true } }).settings).toEqual({});
+    expect(stored({ type: 'SHORT_ANSWER', text: 'x', accepted: ['a'], settings: { reviewMismatch: false } }).settings).toEqual({ reviewMismatch: false });
+  });
+
+  it('is said the same way by the web app, before a question is saved', () => {
+    // The builder and the import show who marks a question from their own copy of the rule.
+    const sentence = 'Because ice is less dense than liquid water';
+    const types = ['MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'MODIFIED_TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER', 'ESSAY', 'MATCHING', 'FILL_BLANKS', 'ORDERING', 'PROGRAMMING', 'FILE_UPLOAD'];
+    const keys = [undefined, [], ['gravity'], [sentence], [sentence, 'less dense'], [sentence, `${sentence} and so it floats`], ['one two three four five six'], ['one two three four five six seven']];
+    const choices = [undefined, {}, { reviewMismatch: true }, { reviewMismatch: false }, { caseSensitive: true }];
+    for (const type of types) for (const accepted of keys) for (const settings of choices) {
+      const question = { type, ...(accepted ? { accepted } : {}), ...(settings ? { settings } : {}) };
+      expect(shownAsMarkedBy(question), JSON.stringify(question)).toEqual(markedBy(question));
+    }
+    // A list that is still being typed: empty lines are not answers.
+    expect(shownAsMarkedBy({ type: 'SHORT_ANSWER', accepted: ['', '  '] })).toEqual({ by: 'TEACHER', why: 'NO_KEY' });
+    expect(shownAsMarkedBy({ type: 'SHORT_ANSWER', accepted: ['gravity', ''] })).toEqual({ by: 'SYSTEM', why: null });
   });
 
   it('fill in the blanks, matching and ordering', () => {
@@ -176,6 +245,25 @@ describe('automatic scoring', () => {
     const lenient = snap({ type: 'ORDERING', text: 'Order', items: ['one', 'two', 'three', 'four'], settings: { partialCredit: true } });
     const lids = lenient.choices.map((x) => x.id);
     expect(score(lenient, { order: [lids[1], lids[0], lids[2], lids[3]] }).autoScore).toBe(5);
+  });
+
+  it('tells which blanks and which pairs were counted as right', () => {
+    // A review shows this, so it never disagrees with the score.
+    const fill = snap({ type: 'FILL_BLANKS', text: 'The ___ runs programs kept on the ___ ; a byte has ___ bits.', blanks: [['CPU'], ['hard disk'], ['8']] });
+    const given = { blanks: ['the cpu', 'harddisk', 'seven'] };
+    expect(pieceResults(fill, given)).toEqual([true, true, false]);
+    expect(score(fill, given, 9).autoScore).toBe(6);
+    expect(pieceResults(fill, null)).toEqual([false, false, false]);
+    const exact = snap({ type: 'FILL_BLANKS', text: 'The symbol of sodium is ___.', blanks: [['Na']], settings: { caseSensitive: true } });
+    expect(pieceResults(exact, { blanks: ['NA'] })).toEqual([false]);
+    expect(pieceResults(exact, { blanks: ['Na'] })).toEqual([true]);
+
+    const match = snap({ type: 'MATCHING', text: 'Match', pairs: [{ left: 'a', right: '1' }, { left: 'b', right: '2' }, { left: 'c', right: '1' }] });
+    const [a, b, c] = match.choices.map((x) => x.id);
+    expect(pieceResults(match, { pairs: { [a]: c, [b]: a } })).toEqual([true, false, false]);
+    expect(pieceResults(match, null)).toEqual([false, false, false]);
+    // The other types are right or wrong as a whole.
+    expect(pieceResults(snap({ type: 'IDENTIFICATION', text: 'x', accepted: ['a'] }), { text: 'a' })).toBeNull();
   });
 
   it('essays and uploads wait for the teacher; blank ones score zero', () => {

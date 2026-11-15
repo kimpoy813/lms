@@ -1112,6 +1112,9 @@ function readQuestion({ raw, defaults, keyed }, ctx) {
   if (typeof setting('partialcredit') === 'boolean') settings.partialCredit = setting('partialcredit');
   const wordLimit = toNumber(setting('wordlimit', 'maxwords'));
   if (wordLimit !== null) settings.wordLimit = wordLimit;
+  // A short answer: does an answer that matches none of the accepted ones wait for the teacher?
+  const review = setting('reviewotheranswers', 'reviewmismatch', 'teacherreview', 'manualreview');
+  if (type === 'SHORT_ANSWER' && typeof review === 'boolean') settings.reviewMismatch = review;
 
   const pointsGiven = r.get('points', 'point', 'pts', 'score', 'marks', 'mark', 'weight', 'maxpoints', 'maxscore');
   const topic = strings(r.get('topic', 'category', 'subject', 'tag', 'tags', 'lesson', 'chapter', 'unit'))[0];
@@ -1251,6 +1254,7 @@ function writeQuestion(q) {
   if (settings.caseSensitive === true) out.caseSensitive = true;
   if (typeof settings.partialCredit === 'boolean') out.partialCredit = settings.partialCredit;
   if (settings.wordLimit) out.wordLimit = settings.wordLimit;
+  if (q.type === 'SHORT_ANSWER' && typeof settings.reviewMismatch === 'boolean') out.reviewOtherAnswers = settings.reviewMismatch;
   return out;
 }
 

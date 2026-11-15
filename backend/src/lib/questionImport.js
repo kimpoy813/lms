@@ -5,6 +5,7 @@
 // Questions written as JSON are read by questionJson.js; `parseImport` below tells the two apart.
 import { unzipSync, strFromU8 } from 'fflate';
 import { looksLikeJson, parseQuestionJson } from './questionJson.js';
+import { sectionType } from './quizParts.js';
 import { countBlanks, normalizeAnswer, normalizeQuestion } from './quizScoring.js';
 import { escapeHtml } from './sanitize.js';
 
@@ -151,19 +152,6 @@ export async function extractImportText(buffer, filename, { limit = MAX_IMPORT_C
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
 
-const SECTION_TYPES = [
-  [/multiple\s+(choice|choices)/i, 'MULTIPLE_CHOICE'],
-  [/multiple\s+(response|answer|select)/i, 'MULTIPLE_RESPONSE'],
-  [/modified\s+true/i, 'MODIFIED_TRUE_FALSE'],
-  [/true\s*(or|\/|and)?\s*false/i, 'TRUE_FALSE'],
-  [/identif/i, 'IDENTIFICATION'],
-  [/fill[\s-]*in|blank/i, 'FILL_BLANKS'],
-  [/match/i, 'MATCHING'],
-  [/essay|discussion|explain/i, 'ESSAY'],
-  [/short\s+answer/i, 'SHORT_ANSWER'],
-  [/enumerat/i, 'SHORT_ANSWER'],
-  [/order|sequenc|arrange/i, 'ORDERING'],
-];
 const HEADING = /^(?:(?:part|section|test)\s+(?:[ivxlc]+|\d+|[a-d])\b[\s.:)\-–—]*)(.*)$/i;
 const QUESTION = /^(?:q(?:uestion)?\s*)?(\d{1,3})\s*[.)]\s*(.*)$/i;
 const CHOICE = /^(\*?)\s*\(?([A-Ha-h])[.)]\s+(.+)$/;
@@ -174,7 +162,6 @@ const POINTS = /[([]\s*(\d+(?:\.\d+)?)\s*(?:points?|pts?|marks?)\s*(?:each)?\s*[
 const TF = /^(t|true|tama)$|^(f|false|mali)$/i;
 const CORRECT_MARK = /\s*(?:\(correct\)|\[correct\]|✓|✔|<-+\s*correct)\s*$/i;
 
-const sectionType = (text) => SECTION_TYPES.find(([re]) => re.test(text))?.[1] ?? null;
 const toHtml = (text) => text.split('\n').map((line) => `<p>${escapeHtml(line)}</p>`).join('');
 
 /** "1. B  2. C  3. True" or one answer per line → Map(number → answer text). */
