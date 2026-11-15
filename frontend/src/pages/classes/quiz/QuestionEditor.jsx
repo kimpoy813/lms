@@ -3,12 +3,76 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
 import { useId, useState } from 'react';
 import LazyEditor from '../../../components/LazyEditor.jsx';
-import { Alert, Button, Checkbox, cn, Field, Input, Modal, ModalActions, Segmented, Select, Switch, Textarea } from '../../../components/ui.jsx';
+import { Alert, Badge, Button, Checkbox, cn, Field, Input, Modal, ModalActions, Segmented, Select, Switch, Textarea, useDebounced } from '../../../components/ui.jsx';
 import { api } from '../../../lib/api.js';
-import { DIFFICULTY, QUESTION_TYPES, markedBy } from './QuestionParts.jsx';
+import { isSentence, usesKeyWords } from '../../../lib/quizMarking.js';
+import { DIFFICULTY, KeyWordsFound, QUESTION_TYPES, markedBy } from './QuestionParts.jsx';
 
 const countBlanks = (html) => (String(html ?? '').replace(/<[^>]*>/g, ' ').match(/_{3,}/g) ?? []).length;
 const lines = (text) => String(text ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+
+const OUTCOME = {
+  RIGHT: { tone: 'ok', label: 'Right: all the points' },
+  HALF: { tone: 'warn', label: 'Half right: half the points' },
+  WRONG: { tone: 'bad', label: 'Wrong: no points' },
+  WAITS: { tone: 'info', label: 'Waits for your grade' },
+};
+
+/** "right with 3 of 4, half right with 2" */
+function needs({ keyWords, right, half }) {
+  const all = keyWords.length;
+  if (all === 1) return 'the answer has to have it';
+  const full = right === all ? `right with ${all === 2 ? 'both' : `all ${all}`}` : `right with ${right} of ${all}`;
+  return half ? `${full}, half right with ${half}` : full;
+}
+
+/**
+ * For a typed question that is being written: the key words the system will look for, and a box
+ * to try an answer in before any student gives it. The server does the marking, so what shows
+ * here is what a student's answer gets.
+ */
+function TryAnswer({ q }) {
+  const [answer, setAnswer] = useState('');
+  const accepted = lines((q.accepted ?? []).join('\n'));
+  const payload = useDebounced(JSON.stringify({ question: { type: q.type, text: q.text ?? '', accepted, settings: { caseSensitive: q.settings?.caseSensitive === true, partialCredit: q.settings?.partialCredit, reviewMismatch: q.settings?.reviewMismatch, keyWords: q.settings?.keyWords } }, answer: answer.trim() }), 350);
+  const check = useQuery({ queryKey: ['try-answer', payload], queryFn: () => api.post('/question-banks/try-answer', JSON.parse(payload)), enabled: accepted.length > 0, placeholderData: (prev) => prev, staleTime: 60_000, retry: false });
+  if (accepted.length === 0) return null;
+  const { keyWords = [], result = null } = check.data ?? {};
+  const outcome = answer.trim() && result ? OUTCOME[result.outcome] : null;
+  return (
+    <div className="space-y-3 rounded-xl border border-line bg-canvas p-3.5" data-testid="try-answer">
+      {keyWords.length > 0 && (
+        <div className="space-y-1.5 text-[13px] text-soft" data-testid="key-words">
+          <p><strong className="font-semibold text-ink">The system looks for these key words</strong> in what the student wrote, in any order and in the student’s own words. The words that your question already gives do not count.</p>
+          <ul className="space-y-1">
+            {keyWords.map((entry) => (
+              <li key={entry.accepted} className="flex flex-wrap items-center gap-1.5">
+                {keyWords.length > 1 && <span className="text-faint">“{entry.accepted.length > 40 ? `${entry.accepted.slice(0, 40)}…` : entry.accepted}”:</span>}
+                {entry.keyWords.map((word) => <Badge key={word} tone="brand">{word}</Badge>)}
+                <span className="text-faint">{needs(entry)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-faint">Leave out of your answer the words that a right answer does not need. The system looks for words, it does not understand: you can change any score it gives.</p>
+        </div>
+      )}
+      {q.type === 'SHORT_ANSWER' && check.data && keyWords.length === 0 && q.settings?.caseSensitive !== true && (
+        <p className="text-[13px] text-soft" data-testid="phrase-note">
+          <strong className="font-semibold text-ink">An answer has to be one of yours, as it stands.</strong> “The”, “is”, “it” and the words of your question may be added or left out, nothing else. Tick <em>Check by key words</em> to have the words looked for in the student’s own sentence instead.
+        </p>
+      )}
+      <Field label="Try an answer" hint="Type what a student might write, and see how the system marks it.">
+        <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="A student’s answer" maxLength={2000} />
+      </Field>
+      {outcome && (
+        <div className="space-y-1 text-sm" role="status" data-testid="try-result">
+          <p><Badge tone={outcome.tone}>{outcome.label}</Badge></p>
+          <KeyWordsFound check={result} className="text-[13px]" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 const blank = (type) => ({
   type, text: '', points: 1, difficulty: 'MEDIUM', topic: '', section: '', explanation: '', settings: {},
@@ -32,6 +96,7 @@ export default function QuestionEditor({ question, onSave, onClose, title, parts
 
   // Who marks the answers, as the question stands in the form.
   const marking = markedBy(q);
+  const byKeyWords = usesKeyWords(q);
   const blanksNeeded = q.type === 'FILL_BLANKS' ? countBlanks(q.text) : 0;
   const blanks = Array.from({ length: blanksNeeded }, (_, i) => q.blanks?.[i] ?? []);
 
@@ -113,12 +178,20 @@ export default function QuestionEditor({ question, onSave, onClose, title, parts
             </Field>
             <Checkbox checked={q.settings.caseSensitive === true} onChange={(e) => setSetting('caseSensitive', e.target.checked)} label="Exactly as written" description="Off: “cpu”, “C.P.U.” and “the CPU” are all right for “CPU”. On: only “CPU” is, letter for letter." />
             {q.type === 'SHORT_ANSWER' && marking.why === 'NO_KEY' && <Alert tone="info">Without an accepted answer there is nothing to check against: you grade every answer yourself, as for an essay.</Alert>}
+            {q.type === 'SHORT_ANSWER' && marking.why !== 'NO_KEY' && q.settings.caseSensitive !== true && (
+              // Left alone, it follows what is typed: on for a sentence, off for a word or a phrase.
+              <Checkbox checked={byKeyWords} onChange={(e) => setSetting('keyWords', e.target.checked === lines(q.accepted.join('\n')).some(isSentence) ? undefined : e.target.checked)} label="Check by key words"
+                description={byKeyWords
+                  ? 'On: the system looks for the key words of your answer in what the student wrote, in any order and in the student’s own words.'
+                  : 'Off: an answer has to be one of yours, as it stands. The system turns this on by itself for a sentence.'} />
+            )}
             {q.type === 'SHORT_ANSWER' && marking.why !== 'NO_KEY' && (
               <Checkbox checked={marking.by === 'BOTH'} onChange={(e) => setSetting('reviewMismatch', e.target.checked)} label="I look at the answers that match none of these"
                 description={marking.by === 'BOTH'
-                  ? `An answer that matches is marked right at once. Any other waits for your grade, and the student’s score with it.${marking.why === 'SENTENCE' ? ' This is on because the answer is a whole sentence, which nobody types word for word.' : ''}`
-                  : 'Off: the system checks every answer at once, and an answer that matches none of these is wrong.'} />
+                  ? 'An answer that is right is marked at once. Any other waits for your grade, and the student’s score with it.'
+                  : marking.why === 'KEY_WORDS' ? 'Off: the system checks every answer at once, by the key words shown below.' : 'Off: the system checks every answer at once, and an answer that matches none of these is wrong.'} />
             )}
+            <TryAnswer q={q} />
           </div>
         )}
 
@@ -190,6 +263,9 @@ export default function QuestionEditor({ question, onSave, onClose, title, parts
         {['MULTIPLE_RESPONSE', 'MATCHING', 'ORDERING', 'FILL_BLANKS'].includes(q.type) && (
           // An ordering is right or wrong as a whole unless the teacher asks for partial credit; the others give it unless it is switched off.
           <Switch checked={q.type === 'ORDERING' ? q.settings.partialCredit === true : q.settings.partialCredit !== false} onChange={(on) => setSetting('partialCredit', on)} label="Give partial credit" description="Part of the points for a partly correct answer. Off: all or nothing." />
+        )}
+        {q.type === 'SHORT_ANSWER' && marking.why === 'KEY_WORDS' && (
+          <Switch checked={q.settings.partialCredit !== false} onChange={(on) => setSetting('partialCredit', on)} label="Give partial credit" description="Half the points for an answer with some of the key words: “half right with …” above says how many. Off: right or wrong." />
         )}
 
         <div className="grid gap-4 sm:grid-cols-2">

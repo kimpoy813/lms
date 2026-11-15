@@ -88,11 +88,16 @@ unless the class sets another value. Excused sessions are left out.
   written make no difference, while another word or a sign that carries meaning does
   ([how](QUIZZES.md#how-a-typed-answer-is-compared)). A question can ask for the answer exactly
   as written instead.
+- **A short answer that is a whole sentence is checked by its key words**, in the student's own
+  words: two thirds of them or more is right; a third or more, and two at least, is half right
+  ([how](QUIZZES.md#a-sentence-is-checked-by-its-key-words)). The teacher can ask for the same
+  for a word or a phrase, or switch it off for a sentence.
 - **The teacher marks essays and file uploads**, and a short answer for which no accepted answer
-  was given. A short answer that matches none of its accepted answers waits for the teacher only
-  where the teacher asked for that, or where the accepted answer is a whole sentence
-  ([why](QUIZZES.md#the-one-case-where-a-short-answer-waits)). The total is shown to the student,
-  and written to the gradebook, only when every answer has a score.
+  was given. Another short answer waits for the teacher only where the teacher asked to see the
+  answers that are not right, or where an answer has the key words and may still say the
+  opposite — "not lost" for "lost", "more" for "less"
+  ([why](QUIZZES.md#when-a-short-answer-waits)). The total is shown to the student, and written
+  to the gradebook, only when every answer has a score.
 - The teacher can overrule any score the system gave; that is kept in the audit log. Answers
   that were handed in before the system could mark them can be
   [marked again](QUIZZES.md#marking-again).

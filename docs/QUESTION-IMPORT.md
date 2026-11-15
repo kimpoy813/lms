@@ -62,7 +62,7 @@ The list alone, without `{ "questions": … }` around it, is read as well.
 | `true_false` | The question is a statement | `true` or `false` |
 | `modified_true_false` | A statement. When it is false, `correction`: the word or phrase that makes it true (a list when several are accepted) | `true` or `false` |
 | `identification` | — | The accepted answer, or a list of every answer that is accepted. Marked by the computer: capital letters, spacing, punctuation and accents make no difference ([how answers are compared](QUIZZES.md#how-a-typed-answer-is-compared)) |
-| `short_answer` | — | As for identification, and marked the same way: an answer that matches none of the accepted answers is wrong. Two exceptions: with `reviewOtherAnswers` (below), or when every accepted answer is a whole sentence, such an answer waits for the teacher instead. The answer may be left out: the teacher then marks every answer |
+| `short_answer` | — | As for identification. A word or a phrase is marked the same way: an answer that is none of the accepted answers is wrong. An accepted answer that is a sentence — more than six words, or four and more that state something — is checked by its [key words](QUIZZES.md#a-sentence-is-checked-by-its-key-words): right, half right or wrong; `keyWords` (below) says so for any accepted answer, or for none. With `reviewOtherAnswers` (below), an answer that is not right waits for the teacher instead. The answer may be left out: the teacher then marks every answer |
 | `fill_blanks` | Each blank is written as three underscores, `___`, in the question | One list for each blank, in the order of the blanks, with the wordings that are accepted |
 | `matching` | `pairs`: a list of `{ "left": …, "right": … }`, at least two | — (the pairs are the answer) |
 | `ordering` | `items`: two or more texts, **written in their correct order** | — (students see them shuffled) |
@@ -105,9 +105,10 @@ All of these can be left out.
 | `section` | The part of the test the question belongs to, such as "Part I. Multiple Choice". Questions with the same part name are given together, and a shuffled quiz is shuffled inside each part only ([Parts](QUIZZES.md#parts)) | with the other questions of its type |
 | `explanation` | Why the answer is right. Students see it where the quiz shows them the correct answers after they submit. For an essay: what a good answer contains | none |
 | `caseSensitive` | `true`: the answer must be typed exactly as written — "Na" is right, "NA" and "the Na" are wrong. For typed answers | capital letters, spacing, punctuation and accents do not matter |
-| `partialCredit` | `false`: all or nothing, for multiple response, modified true or false, fill in the blanks and matching. `true`: part of the points for an ordering that is partly right | part of the points for part of the answer; an ordering is right or wrong as a whole |
+| `partialCredit` | `false`: all or nothing, for multiple response, modified true or false, fill in the blanks, matching, and a short answer that is checked by key words. `true`: part of the points for an ordering that is partly right | part of the points for part of the answer; an ordering is right or wrong as a whole |
 | `wordLimit` | For an essay: the most words | no limit |
-| `reviewOtherAnswers` | For a short answer. `true`: an answer that matches none of the accepted answers waits for the teacher. `false`: it is wrong, also where the accepted answer is a whole sentence | wrong; waits where every accepted answer is a whole sentence |
+| `reviewOtherAnswers` | For a short answer. `true`: an answer that is not right by the accepted answers waits for the teacher | the system marks every answer: a sentence by its key words |
+| `keyWords` | For a short answer. `true`: the [key words](QUIZZES.md#the-teacher-says-where) of every accepted answer are looked for in what the student wrote, a word or a phrase too. `false`: of none; an answer has to be an accepted answer as it stands | the key words of an accepted answer that is a sentence |
 
 ### How the text is read
 

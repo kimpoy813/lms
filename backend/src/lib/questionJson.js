@@ -1115,6 +1115,9 @@ function readQuestion({ raw, defaults, keyed }, ctx) {
   // A short answer: does an answer that matches none of the accepted ones wait for the teacher?
   const review = setting('reviewotheranswers', 'reviewmismatch', 'teacherreview', 'manualreview');
   if (type === 'SHORT_ANSWER' && typeof review === 'boolean') settings.reviewMismatch = review;
+  // A short answer: are the key words of the accepted answers looked for? Left out: for a sentence.
+  const byKeyWords = setting('keywords', 'checkbykeywords', 'bykeywords', 'usekeywords');
+  if (type === 'SHORT_ANSWER' && typeof byKeyWords === 'boolean') settings.keyWords = byKeyWords;
 
   const pointsGiven = r.get('points', 'point', 'pts', 'score', 'marks', 'mark', 'weight', 'maxpoints', 'maxscore');
   const topic = strings(r.get('topic', 'category', 'subject', 'tag', 'tags', 'lesson', 'chapter', 'unit'))[0];
@@ -1255,6 +1258,7 @@ function writeQuestion(q) {
   if (typeof settings.partialCredit === 'boolean') out.partialCredit = settings.partialCredit;
   if (settings.wordLimit) out.wordLimit = settings.wordLimit;
   if (q.type === 'SHORT_ANSWER' && typeof settings.reviewMismatch === 'boolean') out.reviewOtherAnswers = settings.reviewMismatch;
+  if (q.type === 'SHORT_ANSWER' && typeof settings.keyWords === 'boolean') out.keyWords = settings.keyWords;
   return out;
 }
 

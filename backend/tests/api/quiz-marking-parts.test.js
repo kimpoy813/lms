@@ -246,38 +246,79 @@ describe('the system marks the answers', () => {
   });
 
   it('leaves to the teacher only what it cannot decide', async () => {
-    const room = await classroom(3);
+    const room = await classroom(4);
     const { teacher, students } = room;
+    const sentence = 'Because ice is less dense than liquid water';
     const quiz = await quizWith(room, [
       mc(1),
       short('no key', { accepted: [] }),
       short('asked', { settings: { reviewMismatch: true } }),
-      short('sentence', { accepted: ['Because ice is less dense than liquid water'] }),
-      short('sentence, decided', { accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } }),
+      short('sentence', { accepted: [sentence] }),
+      short('sentence, asked', { accepted: [sentence], settings: { reviewMismatch: true } }),
       essay(1),
     ]);
-    // The teacher is told so while building the quiz.
-    expect(quiz.questions.map((q) => q.settings)).toEqual([{}, {}, { reviewMismatch: true }, {}, { reviewMismatch: false }, {}]);
+    // The teacher is told so while building the quiz: what the system looks for in a sentence.
+    expect(quiz.questions.map((q) => q.settings)).toEqual([{}, {}, { reviewMismatch: true }, {}, { reviewMismatch: true }, {}]);
+    const lookedFor = [{ accepted: sentence, keyWords: ['ice', 'dense', 'liquid', 'water'], right: 3, half: 2 }];
+    expect(quiz.questions.map((q) => q.keyWords)).toEqual([[], [], [], lookedFor, lookedFor, []]);
 
-    // Answers that match nothing: four of them wait.
+    // Answers that match nothing. The sentence is wrong at once; the others wait, each for its own reason.
     const attempt = await start(students[0], quiz.id);
-    for (const text of ['SHORT no key', 'SHORT asked', 'SHORT sentence', 'SHORT sentence, decided', 'ESSAY 1']) await answer(students[0], attempt, text, { text: 'something else entirely' });
+    for (const text of ['SHORT no key', 'SHORT asked', 'SHORT sentence', 'SHORT sentence, asked', 'ESSAY 1']) await answer(students[0], attempt, text, { text: 'something else entirely' });
     expect(await submit(students[0], attempt)).toMatchObject({ awaitingGrading: true, totalScore: null });
     const seen = (await teacher.get(`/api/attempts/${attempt.id}`)).body.data;
-    expect(seen.questions.map((q) => [label(q), q.needsManual])).toEqual([['MC 1', false], ['SHORT no key', true], ['SHORT asked', true], ['SHORT sentence', true], ['SHORT sentence, decided', false], ['ESSAY 1', true]]);
+    expect(seen.questions.map((q) => [label(q), q.needsManual])).toEqual([['MC 1', false], ['SHORT no key', true], ['SHORT asked', true], ['SHORT sentence', false], ['SHORT sentence, asked', true], ['ESSAY 1', true]]);
+    expect(byText(seen, 'SHORT sentence')).toMatchObject({ score: 0, check: { how: 'KEY_WORDS', share: 0, found: [], missing: ['ice', 'dense', 'liquid', 'water'] } });
+
+    // In the student's own words: marked at once, also where the teacher looks at the other answers.
+    const own = await start(students[1], quiz.id);
+    await answer(students[1], own, 'SHORT asked', { text: 'Gravity' });
+    await answer(students[1], own, 'SHORT sentence', { text: 'the ice floats since water in its liquid form is denser' });
+    await answer(students[1], own, 'SHORT sentence, asked', { text: 'Liquid water is more dense than ice' });
+    expect(await submit(students[1], own)).toMatchObject({ awaitingGrading: false, totalScore: 6 });
+
+    // About half of the key words: half of the points, and the review says which were found.
+    const half = await start(students[2], quiz.id);
+    await answer(students[2], half, 'SHORT sentence', { text: 'because of the dense water' });
+    expect(await submit(students[2], half)).toMatchObject({ awaitingGrading: false, totalScore: 1 });
+    const halfSeen = byText((await teacher.get(`/api/attempts/${half.id}`)).body.data, 'SHORT sentence');
+    expect(halfSeen).toMatchObject({ score: 1, isCorrect: false, needsManual: false, check: { how: 'KEY_WORDS', share: 0.5, doubt: null, accepted: sentence, found: ['dense', 'water'], missing: ['ice', 'liquid'] } });
+    // The student is told as much as the quiz shows of its answers: here, not the key.
+    expect(byText((await students[2].get(`/api/attempts/${half.id}`)).body.data, 'SHORT sentence').check).toBeUndefined();
+
+    // The key words with a "not" that the accepted answer does not have: the system cannot tell, and says so.
+    const denied = await start(students[3], quiz.id);
+    await answer(students[3], denied, 'SHORT sentence', { text: 'ice is not dense like liquid water' });
+    expect(await submit(students[3], denied)).toMatchObject({ awaitingGrading: true, totalScore: null });
+    const deniedSeen = byText((await teacher.get(`/api/attempts/${denied.id}`)).body.data, 'SHORT sentence');
+    expect(deniedSeen).toMatchObject({ needsManual: true, check: { how: 'KEY_WORDS', doubt: { why: 'NOT' }, found: ['ice', 'dense', 'liquid', 'water'] } });
+    expect((await teacher.put(`/api/attempts/${denied.id}/answers/${deniedSeen.position}/grade`, { score: 0 })).body.data).toMatchObject({ totalScore: 0, needsManualGrading: false });
+
     // Nothing here is for the system to mark again.
-    expect((await teacher.get(`/api/quizzes/${quiz.id}/results`)).body.data.stats).toMatchObject({ needsGrading: 1, canBeMarked: 0 });
+    expect((await teacher.get(`/api/quizzes/${quiz.id}/results`)).body.data.stats).toMatchObject({ submitted: 4, needsGrading: 1, canBeMarked: 0 });
+  });
 
-    // Answers that match the key are marked at once, also in these questions.
-    const matching = await start(students[1], quiz.id);
-    await answer(students[1], matching, 'SHORT asked', { text: 'Gravity' });
-    await answer(students[1], matching, 'SHORT sentence', { text: 'because ice is less dense than liquid water.' });
-    const done = await submit(students[1], matching);
-    expect(done).toMatchObject({ awaitingGrading: false, totalScore: 4 });
+  it('marks again the sentences that waited for the teacher', async () => {
+    const room = await classroom(3);
+    const { teacher, students } = room;
+    const quiz = await quizWith(room, [short('sentence', { accepted: ['Because ice is less dense than liquid water'] })]);
+    const answers = ['liquid water is denser than the ice', 'because of the dense water', 'no idea'];
+    const attempts = [];
+    for (const [i, text] of answers.entries()) {
+      const attempt = await start(students[i], quiz.id);
+      await answer(students[i], attempt, 'SHORT sentence', { text });
+      await submit(students[i], attempt);
+      attempts.push(attempt);
+    }
+    // As they were kept when an answer to a sentence that was not typed word for word was left to the teacher.
+    await prisma.studentAnswer.updateMany({ where: { attemptId: { in: attempts.map((a) => a.id) } }, data: { autoScore: 0, score: 0, isCorrect: false, needsManual: true } });
+    await prisma.quizAttempt.updateMany({ where: { id: { in: attempts.map((a) => a.id) } }, data: { autoScore: 0, totalScore: 0, needsManualGrading: true } });
+    expect((await teacher.get(`/api/quizzes/${quiz.id}/results`)).body.data.stats).toMatchObject({ needsGrading: 3, canBeMarked: 3 });
 
-    // And nothing waits for an answer that was never given.
-    const empty = await start(students[2], quiz.id);
-    expect(await submit(students[2], empty)).toMatchObject({ awaitingGrading: false, totalScore: 0 });
+    expect((await teacher.post(`/api/quizzes/${quiz.id}/results/recheck`, {})).body.data).toEqual({ attempts: 3, answers: 3, settled: 3, raised: 2, complete: 3 });
+    const after = (await teacher.get(`/api/quizzes/${quiz.id}/results`)).body.data;
+    expect(after.stats).toMatchObject({ needsGrading: 0, canBeMarked: 0 });
+    expect(after.students.map((s) => [s.status, s.score])).toEqual([['GRADED', 2], ['GRADED', 1], ['GRADED', 0]]);
   });
 
   it('marks again the answers that were handed in before it could mark them', async () => {
@@ -316,7 +357,8 @@ describe('the system marks the answers', () => {
     expect((await teacher.put(`/api/attempts/${three.id}/answers/${position(three, 'SHORT 1')}/grade`, { score: 1 })).status).toBe(200);
 
     const before = (await teacher.get(`/api/quizzes/${quiz.id}/results`)).body.data;
-    expect(before.stats).toMatchObject({ needsGrading: 3, canBeMarked: 2 });
+    // Two answers wait that the system can mark, and one that it marked wrong would now be right.
+    expect(before.stats).toMatchObject({ needsGrading: 3, canBeMarked: 3 });
 
     // Only the teacher of the class.
     expect((await students[0].post(`/api/quizzes/${quiz.id}/results/recheck`, {})).status).toBe(403);
@@ -368,16 +410,50 @@ describe('the system marks the answers', () => {
     expect((await teacher.get(`/api/attempts/${attempt.id}`)).body.data).toMatchObject({ totalScore: 2 });
   });
 
+  it('shows the teacher how an answer would be marked, before any student gives it', async () => {
+    const { teacher, students } = await classroom(1);
+    const question = { type: 'SHORT_ANSWER', text: '<p>What is an algorithm?</p>', accepted: ['A step-by-step procedure for solving a problem', 'recipe'], settings: {} };
+    const tryIt = async (answer, extra = {}) => (await teacher.post('/api/question-banks/try-answer', { question: { ...question, ...extra }, answer })).body.data;
+    const keyWords = [{ accepted: question.accepted[0], keyWords: ['step', 'procedure', 'solving', 'problem'], right: 3, half: 2 }];
+
+    // What the system will look for, before any answer is tried.
+    expect(await tryIt('')).toEqual({ keyWords, result: null });
+    expect(await tryIt('a procedure to solve problems step by step')).toEqual({ keyWords, result: { outcome: 'RIGHT', how: 'KEY_WORDS', doubt: null, accepted: question.accepted[0], found: ['step', 'procedure', 'solving', 'problem'], missing: [] } });
+    expect((await tryIt('a procedure for a problem')).result).toMatchObject({ outcome: 'HALF', found: ['procedure', 'problem'], missing: ['step', 'solving'] });
+    expect((await tryIt('a procedure for a problem', { settings: { partialCredit: false } })).result).toMatchObject({ outcome: 'WRONG', found: ['procedure', 'problem'] });
+    expect((await tryIt('Recipe.')).result).toMatchObject({ outcome: 'RIGHT', how: 'SAME' });
+    expect((await tryIt('it is not a procedure for solving problems step by step')).result).toMatchObject({ outcome: 'WAITS', doubt: { why: 'NOT', words: ['procedure'], side: 'ANSWER' } });
+    expect((await tryIt('a procedure', { settings: { reviewMismatch: true } })).result).toMatchObject({ outcome: 'WAITS', doubt: null });
+    expect((await tryIt('a procedure to solve problems step by step', { settings: { caseSensitive: true } }))).toMatchObject({ keyWords: [], result: { outcome: 'WRONG' } });
+    // The teacher's choice: no key words for the sentence, or key words for the word as well.
+    expect(await tryIt('a procedure to solve problems step by step', { settings: { keyWords: false } })).toMatchObject({ keyWords: [], result: { outcome: 'WRONG', how: 'NONE' } });
+    expect(await tryIt('it is like a recipe to follow', { settings: { keyWords: true } })).toMatchObject({ keyWords: [keyWords[0], { accepted: 'recipe', keyWords: ['recipe'], right: 1, half: null }], result: { outcome: 'RIGHT', how: 'KEY_WORDS', accepted: 'recipe', found: ['recipe'] } });
+    expect((await tryIt('it is like a recipe to follow')).result).toMatchObject({ outcome: 'WRONG' });
+    // An identification is a term: right or wrong.
+    expect(await tryIt('the cpu', { type: 'IDENTIFICATION', accepted: ['CPU'] })).toEqual({ keyWords: [], result: { outcome: 'RIGHT', how: null, accepted: null, found: [], missing: [], doubt: null } });
+    expect((await tryIt('the gpu', { type: 'IDENTIFICATION', accepted: ['CPU'] })).result).toMatchObject({ outcome: 'WRONG' });
+    // A question that is still being written.
+    expect(await tryIt('anything', { accepted: ['', '  '] })).toEqual({ keyWords: [], result: null });
+
+    // For teachers, and for typed questions.
+    expect((await students[0].post('/api/question-banks/try-answer', { question, answer: 'x' })).status).toBe(403);
+    expect((await teacher.post('/api/question-banks/try-answer', { question: { ...question, type: 'ESSAY' }, answer: 'x' })).status).toBe(422);
+  });
+
   it('keeps the teacher’s choice about a short answer through a download and an import', async () => {
     const room = await classroom(1);
     const { teacher, cls } = room;
-    const quiz = await quizWith(room, [short('asked', { settings: { reviewMismatch: true } }), short('decided', { accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } }), short('plain')]);
+    const quiz = await quizWith(room, [short('asked', { settings: { reviewMismatch: true } }), short('decided', { accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false, keyWords: false } }), short('plain'), short('by key words', { settings: { keyWords: true, partialCredit: false } })]);
+    // Saved with the question, and with it what the system then looks for.
+    expect(quiz.questions.map((q) => q.keyWords.length)).toEqual([0, 0, 0, 1]);
     const file = JSON.parse((await teacher.get(`/api/quizzes/${quiz.id}/questions/export`)).text);
-    expect(file.questions.map((q) => q.reviewOtherAnswers)).toEqual([true, false, undefined]);
+    expect(file.questions.map((q) => q.reviewOtherAnswers)).toEqual([true, false, undefined, undefined]);
+    expect(file.questions.map((q) => q.keyWords)).toEqual([undefined, false, undefined, true]);
+    expect(file.questions.map((q) => q.partialCredit)).toEqual([undefined, undefined, undefined, false]);
 
     const other = (await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'Copy' })).body.data.id;
     const preview = await teacher.post(`/api/quizzes/${other}/import/preview`, { text: JSON.stringify(file) });
     expect(preview.status).toBe(200);
-    expect(preview.body.data.questions.map((q) => q.settings ?? {})).toEqual([{ reviewMismatch: true }, { reviewMismatch: false }, {}]);
+    expect(preview.body.data.questions.map((q) => q.settings ?? {})).toEqual([{ reviewMismatch: true }, { reviewMismatch: false, keyWords: false }, {}, { keyWords: true, partialCredit: false }]);
   });
 });

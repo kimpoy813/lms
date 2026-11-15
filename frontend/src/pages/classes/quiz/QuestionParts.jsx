@@ -4,7 +4,7 @@ import { FileList, FileUpload } from '../../../components/Files.jsx';
 import RichText from '../../../components/RichText.jsx';
 import { Badge, cn, Input, Select, Textarea } from '../../../components/ui.jsx';
 import { formatScore } from '../../../lib/format.js';
-import { markedBy } from '../../../lib/quizMarking.js';
+import { doubtText, markedBy } from '../../../lib/quizMarking.js';
 
 export { markedBy };
 
@@ -25,12 +25,35 @@ export const QUESTION_TYPES = {
 export const typeLabel = (type) => QUESTION_TYPES[type]?.label ?? type;
 export const DIFFICULTY = { EASY: 'Easy', MEDIUM: 'Medium', HARD: 'Hard' };
 
-/** The badge that says a question is not marked by the system alone. Nothing for one that is. */
+/** The badge that says how a question is marked, where it is not simply right or wrong by its key. */
 export function MarkedByBadge({ q }) {
-  const { by } = markedBy(q);
+  const { by, why } = markedBy(q);
   if (by === 'TEACHER') return <span title="Every answer to this question waits for your grade."><Badge tone="warn">Graded by you</Badge></span>;
-  if (by === 'BOTH') return <span title="An answer that matches is marked right at once. One that does not waits for your grade."><Badge tone="warn">Other answers wait for you</Badge></span>;
+  if (by === 'BOTH') return <span title="An answer that is right is marked at once. Any other waits for your grade."><Badge tone="warn">Other answers wait for you</Badge></span>;
+  if (why === 'KEY_WORDS') return <span title="The accepted answer is a sentence: the system looks for its key words in what the student writes."><Badge tone="info">Checked by key words</Badge></span>;
   return null;
+}
+
+/**
+ * How the system held a short answer against its key, in words: the key words it found and
+ * missed. `check` comes from the server ({ how, accepted, found, missing, doubt }). Nothing for
+ * an answer that simply is, or is not, an accepted answer.
+ */
+export function KeyWordsFound({ check, className }) {
+  if (!check) return null;
+  if (check.how === 'WORDS') return <p className={cn('text-soft', className)} data-testid="answer-check">Taken as “{check.accepted}”.</p>;
+  if (check.how !== 'KEY_WORDS') return null;
+  const all = check.found.length + check.missing.length;
+  return (
+    <div className={cn('space-y-0.5 text-soft', className)} data-testid="answer-check">
+      <p>
+        Key words found: <strong className="font-semibold text-ink">{check.found.length} of {all}</strong>
+        {check.found.length > 0 && <> — <span className="text-ok">{check.found.join(', ')}</span></>}
+        {check.missing.length > 0 && <>{check.found.length > 0 ? ' · ' : ' — '}missing: <span className="text-bad">{check.missing.join(', ')}</span></>}
+      </p>
+      {check.doubt && <p className="text-warn">{doubtText(check.doubt)} Key words cannot tell whether that is right, so it is left to the teacher.</p>}
+    </div>
+  );
 }
 
 /** "Part 2 · True or False" */
@@ -51,6 +74,33 @@ export function PartHeading({ part, index, total, className, children }) {
 }
 
 /**
+ * The accepted answers of a typed question. Words and phrases stand in one line; where one of
+ * them is longer, each stands on its own line, a sentence with the key words that the system
+ * looks for (`keyWords`: [{ accepted, keyWords, right, half }], when the server gave them).
+ */
+function Accepted({ answers, keyWords = [], className }) {
+  if (!answers.some((answer) => String(answer).trim().split(/\s+/).length > 3)) {
+    return <p className={cn('text-sm text-soft', className)}>Accepted: <strong className="text-ok">{answers.join(', ')}</strong></p>;
+  }
+  return (
+    <div className={cn('text-sm text-soft', className)}>
+      <p>Accepted:</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {answers.map((answer, i) => {
+          const words = keyWords?.find((entry) => entry.accepted === answer)?.keyWords;
+          return (
+            <li key={`${i}-${answer}`}>
+              <strong className="text-ok">{answer}</strong>
+              {words && <span className="text-[13px] text-faint" data-testid="key-words"> — key words: {words.join(' · ')}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * The answer key as the teacher sees it: in the builder, in a question bank, and for questions
  * that are being imported (which may still have two choices with the same text).
  */
@@ -66,7 +116,9 @@ export function AnswerKey({ q }) {
       return <p className="mt-2 text-sm text-soft">Answer: <strong className={q.answer ? 'text-ok' : 'text-bad'}>{q.answer ? 'True' : 'False'}</strong>{q.correction?.length > 0 && <> · correction: <strong className="text-ink">{q.correction.join(', ')}</strong></>}</p>;
     case 'IDENTIFICATION':
     case 'SHORT_ANSWER':
-      return <p className="mt-2 text-sm text-soft">{q.accepted?.length ? <>Accepted: <strong className="text-ok">{q.accepted.join(', ')}</strong></> : 'No accepted answers listed — you grade the answers.'}</p>;
+      if (!q.accepted?.length) return <p className="mt-2 text-sm text-soft">No accepted answers listed — you grade the answers.</p>;
+      // `keyWords`: what the system looks for in the answers to a sentence (from the server, for a saved question).
+      return <Accepted answers={q.accepted} keyWords={q.keyWords} className="mt-2" />;
     case 'FILL_BLANKS':
       return <ol className="mt-2 space-y-0.5 text-sm text-soft">{(q.blanks ?? []).map((b, i) => <li key={`${i}-${b.join('|')}`}>({i + 1}) <strong className="text-ok">{b.join(' / ')}</strong></li>)}</ol>;
     case 'MATCHING':
@@ -212,7 +264,8 @@ export function AnswerInput({ question: q, response, onChange, disabled, name, f
   }
 }
 
-const Mark = ({ ok }) => (ok ? <Check className="size-4 shrink-0 text-ok" aria-label="Correct" /> : <X className="size-4 shrink-0 text-bad" aria-label="Incorrect" />);
+const Mark = ({ ok }) => (ok === 'part' ? <span className="shrink-0 text-sm font-bold leading-none text-warn" role="img" aria-label="Partly correct">½</span>
+  : ok ? <Check className="size-4 shrink-0 text-ok" aria-label="Correct" /> : <X className="size-4 shrink-0 text-bad" aria-label="Incorrect" />);
 
 /** A finished answer. `item` is one entry of attempt.questions; `item.correct` is present only when answers may be revealed. */
 export function AnswerReview({ item }) {
@@ -259,15 +312,18 @@ export function AnswerReview({ item }) {
     }
     case 'IDENTIFICATION':
     case 'SHORT_ANSWER': {
-      // Right or wrong as it counts: nothing while the answer waits for the teacher, and the
-      // teacher's own score where they overruled the system.
+      // Right, half right or wrong as it counts: nothing while the answer waits for the teacher,
+      // and the teacher's own score where they overruled the system.
+      const earned = item.manualScore ?? item.autoScore;
       const ok = item.needsManual ? null
-        : item.manualScore != null ? (item.manualScore >= item.points ? true : item.manualScore <= 0 ? false : null)
-          : item.isCorrect ?? null;
+        : earned == null ? item.isCorrect ?? null
+          : earned >= item.points ? true : earned <= 0 ? false : 'part';
       return (
         <div>
           <p className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-ink">{ok !== null && <Mark ok={ok} />}{r.text}</p>
           {reveal && <CorrectText q={q} correct={correct} />}
+          {/* How a sentence was checked: its key words. Sent with the key only. */}
+          {reveal && q.type === 'SHORT_ANSWER' && <KeyWordsFound check={item.check} className="mt-1 text-[13px]" />}
         </div>
       );
     }
@@ -338,7 +394,7 @@ export function AnswerReview({ item }) {
 
 function CorrectText({ q, correct }) {
   if (q.type === 'IDENTIFICATION' || q.type === 'SHORT_ANSWER') {
-    return correct.accepted?.length ? <p className="mt-2 text-sm text-soft">Accepted: <strong className="text-ok">{correct.accepted.join(', ')}</strong></p> : null;
+    return correct.accepted?.length ? <Accepted answers={correct.accepted} className="mt-2" /> : null;
   }
   return null;
 }

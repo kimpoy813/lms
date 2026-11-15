@@ -18,7 +18,9 @@ export function normalizeAnswer(value, { caseSensitive = false } = {}) {
   return caseSensitive ? text : text.toLocaleLowerCase('en');
 }
 
-const DASHES = /[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
+export const DASHES = /[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
+/** ñ → n, é → e. */
+export const stripAccents = (text) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC');
 const isLetter = (ch) => ch !== undefined && /\p{L}/u.test(ch);
 
 /** How many letters stand in a row at `from`, reading in direction `step`. */
@@ -75,13 +77,17 @@ function numberAt(words, start) {
   return best;
 }
 
-/** "eight bits" → "8 bits", "twenty one" → "21". Words that spell no number are left as they are. */
-function numberWordsToDigits(text) {
+/**
+ * "eight bits" → "8 bits", "twenty one" → "21". Words that spell no number are left as they are.
+ * `keepLoneOne`: a "one" that stands alone stays a word ("one of the parts"), as in a sentence.
+ */
+export function numberWordsToDigits(text, { keepLoneOne = false } = {}) {
   const words = text.split(' ');
   if (!words.some(isNumberWord)) return text;
   const out = [];
   for (let i = 0; i < words.length;) {
-    const number = isNumberWord(words[i]) ? numberAt(words, i) : null;
+    let number = isNumberWord(words[i]) ? numberAt(words, i) : null;
+    if (keepLoneOne && number?.length === 1 && words[i] === 'one') number = null;
     if (number) {
       out.push(String(number.value));
       i += number.length;
@@ -94,7 +100,7 @@ function numberWordsToDigits(text) {
 }
 
 /** A numeral by its value: 007 → 7, 2.50 → 2.5, +5 → 5. Done on the digits, so no long number loses any. */
-function canonicalNumeral(numeral) {
+export function canonicalNumeral(numeral) {
   const m = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(numeral);
   if (!m) return numeral;
   const whole = m[2].replace(/^0+(?=\d)/, '');
@@ -109,7 +115,7 @@ function canonicalNumeral(numeral) {
  */
 function plain(value) {
   const normal = normalizeAnswer(value);
-  let t = normal.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC'); // ñ → n, é → e
+  let t = stripAccents(normal);
   t = t.replace(DASHES, '-');
   t = t.replace(/(?<=\d),(?=\d{3}(?!\d))/g, ''); // 1,000 → 1000
   t = t.replace(/(?<![\d.])\.(?=\d)/g, '0.'); // .5 → 0.5
@@ -256,5 +262,28 @@ export function answersMatch(given, accepted, { exact = false, list = false } = 
   return items.length >= 2 && items.length <= 30 && items.every((item) => overlaps(givenForms(item), forms));
 }
 
-/** More than a phrase: a whole sentence, which nobody types word for word. */
-export const isSentence = (text) => String(text ?? '').trim().split(/\s+/).length > 6;
+// The words that make a few words a statement: "it stores data permanently", "RAM is volatile
+// memory". Not "do", "if", "while", "for", "this", "and", "or", "will", "may": they are in the
+// names of things ("do while loop", "AND gate", "May 5"), which are given as they are.
+const STATEMENT = /(?<![\p{L}\p{N}])(?:is|are|was|were|has|have|had|does|did|can|cannot|it|they|he|she|we|you|because|since|when|ay|dahil|kasi|kapag|ito|siya|sila)(?![\p{L}\p{N}])/iu;
+// Small words that a title keeps in small letters: "The Lord of the Rings".
+const IN_A_TITLE = new Set('a an the of and or for in on to at by with from ng sa at mga'.split(' '));
+
+/**
+ * More than a word or a phrase: a sentence, which nobody types word for word. More than six
+ * words — or four and more that state something ("It stores data permanently"). A title, with
+ * a capital letter on every word ("As You Like It"), is a name however it reads.
+ * frontend/src/lib/quizMarking.js has a copy, for a question that is not saved yet.
+ */
+export const isSentence = (text) => {
+  const t = String(text ?? '').trim();
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return true;
+  if (words.length < 4) return false;
+  // Text that is all in capitals says nothing by its capitals.
+  if (!/\p{Ll}/u.test(t)) return STATEMENT.test(t);
+  const named = words.filter((word) => /\p{L}/u.test(word) && !IN_A_TITLE.has(word.toLowerCase()));
+  if (named.length >= 2 && named.every((word) => /^\P{L}*\p{Lu}/u.test(word))) return false;
+  // "IT" and "AND" in capitals are names ("IT support staff", "AND gate"), not "it" and "and".
+  return STATEMENT.test(t.replace(/(?<![\p{L}\p{N}])\p{Lu}{2,}(?![\p{L}\p{N}])/gu, ' '));
+};

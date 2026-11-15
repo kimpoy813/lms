@@ -82,18 +82,39 @@ test('the teacher sees the examination in its parts, and builds on them', async 
   await page.getByRole('button', { name: 'Move part 1 down' }).click();
   await expect(headings(page).first()).toHaveText(/Part 1 · Multiple Choice\s*Questions 1–3/);
 
-  // A short answer whose key is a whole sentence is the one case that can wait: said on the question.
+  // A short answer that is a sentence is checked by its key words: the question shows them,
+  // and the teacher can try an answer before any student gives it.
   await page.getByRole('button', { name: 'New question' }).click();
   await editor.getByLabel('Question type').selectOption('SHORT_ANSWER');
   const review = editor.getByLabel('I look at the answers that match none of these');
   await editor.getByLabel('Accepted answers').fill('volatile');
   await expect(review).not.toBeChecked();
-  await editor.getByLabel('Accepted answers').fill('Because it holds the programs that are running right now');
-  await expect(review).toBeChecked();
-  await expect(editor.getByText('This is on because the answer is a whole sentence')).toBeVisible();
-  // The teacher decides otherwise, and the system marks every answer.
-  await review.uncheck();
-  await expect(editor.getByText('Off: the system checks every answer at once')).toBeVisible();
+  await expect(editor.getByTestId('key-words')).toHaveCount(0);
+  await editor.getByLabel('Try an answer').fill('It is volatile.');
+  await expect(editor.getByTestId('try-result')).toHaveText('Right: all the points');
+
+  await editor.getByLabel('Accepted answers').fill('It holds the programs and the data that are in use');
+  await expect(editor.getByTestId('key-words')).toContainText('The system looks for these key words in what the student wrote');
+  await expect(editor.getByTestId('key-words').getByRole('listitem')).toHaveText('holdsprogramsdataright with 2 of 3');
+  // The system has switched the key words on by itself, and nothing waits because of that.
+  await expect(editor.getByLabel('Check by key words')).toBeChecked();
+  await expect(review).not.toBeChecked();
+  await editor.getByLabel('Try an answer').fill('the programs that run, with their data');
+  await expect(editor.getByTestId('try-result')).toContainText('Right: all the points');
+  await expect(editor.getByTestId('try-result')).toContainText('Key words found: 2 of 3 — programs, data · missing: holds');
+  // One word in common is not half an answer.
+  await editor.getByLabel('Try an answer').fill('some data');
+  await expect(editor.getByTestId('try-result')).toContainText('Wrong: no points');
+  await expect(editor.getByTestId('try-result')).toContainText('Key words found: 1 of 3 — data · missing: holds, programs');
+  // What it does not decide: an answer with the words and a "not" that the accepted answer does not have.
+  await editor.getByLabel('Try an answer').fill('it does not hold programs and data');
+  await expect(editor.getByTestId('try-result')).toContainText('Waits for your grade');
+  await expect(editor.getByTestId('try-result')).toContainText('It says “not” about “hold”, and the accepted answer does not.');
+  // A teacher who wants to see every answer that is not right says so.
+  await review.check();
+  await expect(editor.getByText('An answer that is right is marked at once. Any other waits for your grade')).toBeVisible();
+  await editor.getByLabel('Try an answer').fill('some data');
+  await expect(editor.getByTestId('try-result')).toContainText('Waits for your grade');
   await editor.getByRole('button', { name: 'Cancel' }).click();
 
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
