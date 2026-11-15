@@ -12,7 +12,7 @@ import { formatDateTime, formatPercent, formatScore, formatSpan, plural } from '
 import { useAction } from '../../lib/query.js';
 import ImportQuestions from './quiz/ImportQuestions.jsx';
 import QuestionEditor from './quiz/QuestionEditor.jsx';
-import { AnswerKey, DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './quiz/QuestionParts.jsx';
+import { AnswerKey, DIFFICULTY, MarkedByBadge, PartHeading, QUESTION_TYPES, QuestionText, markedBy, typeLabel } from './quiz/QuestionParts.jsx';
 import QuizDialog, { ANSWER_VISIBILITY, QUIZ_KINDS, RESULT_VISIBILITY } from './QuizDialog.jsx';
 import { windowText } from './Quizzes.jsx';
 import { RulesForStudents, rulesSummary } from './quiz/Rules.jsx';
@@ -203,9 +203,23 @@ function Builder({ quiz }) {
 
   const saveItems = useAction((items) => api.put(`/quizzes/${quiz.id}/questions`, { items }), { invalidate, onSuccess: (data) => client.setQueryData(key, data) });
   const publish = useAction((status) => api.patch(`/quizzes/${quiz.id}`, { status }), { invalidate, success: (_, status) => (status === 'PUBLISHED' ? 'Quiz published. Students have been notified.' : 'Quiz moved back to draft.') });
+  // The questions come in the order in which students get them, and are saved in that order.
   const items = quiz.questions.map((q) => ({ questionId: q.id, points: q.points }));
   const change = (fn) => saveItems.mutate(fn(items));
   const move = (i, delta) => change((list) => { const next = [...list]; const [x] = next.splice(i, 1); next.splice(i + delta, 0, x); return next; });
+  // The parts of the quiz, each with its questions. Without parts: one group that is the whole list.
+  const parts = quiz.parts ?? [];
+  const groups = parts.length > 0 ? parts.map((part, index) => ({ part, index, first: part.first, count: part.count })) : [{ part: null, index: 0, first: 0, count: quiz.questions.length }];
+  // Where the questions of a part are kept together, a question moves inside its part and a part moves as a whole.
+  const kept = Boolean(quiz.keptInParts) && parts.length > 0;
+  const movePart = (index, delta) => change((list) => {
+    const order = parts.map((_, n) => n);
+    order.splice(index + delta, 0, ...order.splice(index, 1));
+    return order.flatMap((n) => list.slice(parts[n].first, parts[n].first + parts[n].count));
+  });
+  // Who marks what: the questions that can wait for the teacher.
+  const waits = quiz.questions.filter((q) => markedBy(q).by !== 'SYSTEM').length;
+  const partNames = [...new Set(quiz.questions.map((q) => q.section).filter(Boolean))];
 
   const poolPoints = quiz.pools.reduce((s, p) => s + p.count * p.pointsEach, 0);
   const empty = quiz.questions.length === 0 && quiz.pools.length === 0;
@@ -266,54 +280,88 @@ function Builder({ quiz }) {
               action={frozen ? null : <div className="flex flex-wrap justify-center gap-2"><Button variant="secondary" icon={FileUp} onClick={() => setDialog('import')}>Import questions</Button><Button icon={Plus} onClick={() => setDialog('new')}>New question</Button></div>} />
           </Card>
         ) : (
-          <ol className="space-y-3">
-            {quiz.questions.map((q, i) => (
-              <li key={q.id}>
-                <Card className="p-4">
-                  <div className="flex items-start gap-3">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-sm font-bold text-brand">{i + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-faint">
-                        <Badge>{typeLabel(q.type)}</Badge>
-                        <span>{DIFFICULTY[q.difficulty]}</span>
-                        {q.topic && <span>· {q.topic}</span>}
-                        {!QUESTION_TYPES[q.type]?.auto && <Badge tone="warn">Graded by you</Badge>}
-                        {q.removed && <Badge tone="bad">Deleted from the bank</Badge>}
-                      </p>
-                      <QuestionText question={q} className="text-[15px]" />
-                      <AnswerKey q={q} />
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <label className="flex items-center gap-1.5 text-xs text-faint">
-                        <span className="sr-only">Points for question {i + 1}</span>
-                        <PointsInput value={q.points} disabled={frozen} onCommit={(points) => change((list) => list.map((x, n) => (n === i ? { ...x, points } : x)))} /> pts
-                      </label>
-                      {!frozen && (
-                        <div className="flex">
-                          <IconButton icon={ArrowUp} size="sm" label="Move up" disabled={i === 0} onClick={() => move(i, -1)} />
-                          <IconButton icon={ArrowDown} size="sm" label="Move down" disabled={i === quiz.questions.length - 1} onClick={() => move(i, 1)} />
-                          <IconButton icon={Pencil} size="sm" label="Edit question" onClick={() => setDialog({ edit: q })} />
-                          <IconButton icon={Trash2} size="sm" variant="dangerGhost" label="Remove from this quiz" onClick={() => change((list) => list.filter((_, n) => n !== i))} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </Card>
-              </li>
+          <div className="space-y-5">
+            {(parts.length > 0 || quiz.shuffleQuestions) && (quiz.questions.length > 0 || quiz.pools.length > 0) && (
+              <p className="text-[13px] text-soft" data-testid="order-note">
+                {!quiz.shuffleQuestions ? 'Students get the questions in this order, part by part.'
+                  : parts.length > 0 ? 'Students take the parts in this order. Inside each part, every student gets the questions in a different order.'
+                    // Random questions make parts of their own: the questions of one type are given together.
+                    : quiz.pools.length > 0 ? 'Every student gets the questions in a different order. Questions of the same type are kept together.'
+                      : 'Every student gets these questions in a different order.'}
+              </p>
+            )}
+            {groups.map((group) => (
+              <section key={group.part ? `part-${group.index}` : 'all'} aria-label={group.part ? `Part ${group.index + 1}` : 'Questions'}>
+                {group.part && (
+                  <PartHeading part={group.part} index={group.index} className="mb-3">
+                    {kept && !frozen && (
+                      <>
+                        <IconButton icon={ArrowUp} size="sm" label={`Move part ${group.index + 1} up`} disabled={group.index === 0} onClick={() => movePart(group.index, -1)} />
+                        <IconButton icon={ArrowDown} size="sm" label={`Move part ${group.index + 1} down`} disabled={group.index === parts.length - 1} onClick={() => movePart(group.index, 1)} />
+                      </>
+                    )}
+                  </PartHeading>
+                )}
+                <ol className="space-y-3" start={group.first + 1}>
+                  {quiz.questions.slice(group.first, group.first + group.count).map((q, n) => {
+                    const i = group.first + n;
+                    // Inside its part where parts are kept together; otherwise anywhere in the list.
+                    const [low, high] = kept ? [group.first, group.first + group.count - 1] : [0, quiz.questions.length - 1];
+                    return (
+                      <li key={q.id}>
+                        <Card className="p-4">
+                          <div className="flex items-start gap-3">
+                            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-sm font-bold text-brand">{i + 1}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-faint">
+                                <Badge>{typeLabel(q.type)}</Badge>
+                                <span>{DIFFICULTY[q.difficulty]}</span>
+                                {q.topic && <span>· {q.topic}</span>}
+                                <MarkedByBadge q={q} />
+                                {q.removed && <Badge tone="bad">Deleted from the bank</Badge>}
+                              </p>
+                              <QuestionText question={q} className="text-[15px]" />
+                              <AnswerKey q={q} />
+                            </div>
+                            <div className="flex shrink-0 flex-col items-end gap-2">
+                              <label className="flex items-center gap-1.5 text-xs text-faint">
+                                <span className="sr-only">Points for question {i + 1}</span>
+                                <PointsInput value={q.points} disabled={frozen} onCommit={(points) => change((list) => list.map((x, k) => (k === i ? { ...x, points } : x)))} /> pts
+                              </label>
+                              {!frozen && (
+                                <div className="flex">
+                                  <IconButton icon={ArrowUp} size="sm" label="Move up" disabled={i === low} onClick={() => move(i, -1)} />
+                                  <IconButton icon={ArrowDown} size="sm" label="Move down" disabled={i === high} onClick={() => move(i, 1)} />
+                                  <IconButton icon={Pencil} size="sm" label="Edit question" onClick={() => setDialog({ edit: q })} />
+                                  <IconButton icon={Trash2} size="sm" variant="dangerGhost" label="Remove from this quiz" onClick={() => change((list) => list.filter((_, k) => k !== i))} />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </Card>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
             ))}
-            {quiz.pools.map((p) => (
-              <li key={p.id}>
-                <Card className="flex flex-wrap items-center gap-3 border-dashed p-4">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-info-soft text-info"><Dices className="size-4" aria-hidden="true" /></span>
-                  <div className="min-w-0 flex-1 text-sm">
-                    <p className="font-semibold text-ink">{plural(p.count, 'random question')} from “{p.bankTitle}”</p>
-                    <p className="text-[13px] text-faint">{[p.topic && `topic: ${p.topic}`, p.difficulty && DIFFICULTY[p.difficulty], p.type && typeLabel(p.type)].filter(Boolean).join(' · ') || 'any question in the bank'} · {formatScore(p.pointsEach)} pt each · each student gets a different draw</p>
-                  </div>
-                  {!frozen && <Button size="sm" variant="ghost" onClick={() => setDialog('pools')}>Change</Button>}
-                </Card>
-              </li>
-            ))}
-          </ol>
+            {quiz.pools.length > 0 && (
+              <ul className="space-y-3">
+                {quiz.pools.map((p) => (
+                  <li key={p.id}>
+                    <Card className="flex flex-wrap items-center gap-3 border-dashed p-4">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-info-soft text-info"><Dices className="size-4" aria-hidden="true" /></span>
+                      <div className="min-w-0 flex-1 text-sm">
+                        <p className="font-semibold text-ink">{plural(p.count, 'random question')} from “{p.bankTitle}”</p>
+                        <p className="text-[13px] text-faint">{[p.topic && `topic: ${p.topic}`, p.difficulty && DIFFICULTY[p.difficulty], p.type && typeLabel(p.type)].filter(Boolean).join(' · ') || 'any question in the bank'} · {formatScore(p.pointsEach)} pt each · each student gets a different draw{parts.length > 0 || quiz.shuffleQuestions ? ', placed with the questions of its type' : ''}</p>
+                      </div>
+                      {!frozen && <Button size="sm" variant="ghost" onClick={() => setDialog('pools')}>Change</Button>}
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </div>
 
@@ -325,7 +373,9 @@ function Builder({ quiz }) {
             <div className="rounded-xl bg-raised py-3"><dd className="text-2xl font-bold tabular-nums text-ink">{formatScore(quiz.totalPoints)}</dd><dt className="text-xs font-medium text-faint">Points</dt></div>
           </dl>
           {poolPoints > 0 && <p className="mt-2 text-center text-xs text-faint">includes {formatScore(poolPoints)} points from random questions</p>}
-          {quiz.questions.some((q) => !QUESTION_TYPES[q.type]?.auto) && <p className="mt-3 flex gap-2 text-[13px] text-soft"><AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden="true" />Some questions are graded by you. Scores are released after you grade them.</p>}
+          {quiz.questions.length > 0 && (waits > 0
+            ? <p className="mt-3 flex gap-2 text-[13px] text-soft" data-testid="marking-note"><AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden="true" /><span>{plural(waits, 'question')} can wait for your grade. The system checks all the others the moment a student hands in. A student’s score shows once nothing waits.</span></p>
+            : <p className="mt-3 flex gap-2 text-[13px] text-soft" data-testid="marking-note"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" aria-hidden="true" /><span>The system checks every question the moment a student hands in.{quiz.pools.length > 0 ? ' Random questions are checked the same way, except essays and file uploads.' : ''}</span></p>)}
           {quiz.status !== 'DRAFT' && !readOnly && quiz.attemptCount === 0 && <Button variant="ghost" size="sm" className="mt-3 w-full" loading={publish.isPending} onClick={() => publish.mutate('DRAFT')}>Move back to draft</Button>}
         </Card>
         <Card>
@@ -346,8 +396,8 @@ function Builder({ quiz }) {
       </div>
 
       {dialog === 'settings' && <QuizDialog quiz={quiz} onClose={() => setDialog(null)} />}
-      {dialog === 'new' && <QuestionEditor onClose={() => setDialog(null)} onSave={async (question) => { client.setQueryData(key, await api.post(`/quizzes/${quiz.id}/questions`, { question })); client.invalidateQueries({ queryKey: ['class', cls.id, 'quizzes'] }); toast.success('Question added.'); }} />}
-      {dialog?.edit && <QuestionEditor question={dialog.edit} onClose={() => setDialog(null)} onSave={async (question) => { await api.put(`/question-banks/questions/${dialog.edit.id}`, question); await client.invalidateQueries({ queryKey: key }); toast.success('Question saved.'); }} />}
+      {dialog === 'new' && <QuestionEditor parts={partNames} onClose={() => setDialog(null)} onSave={async (question) => { client.setQueryData(key, await api.post(`/quizzes/${quiz.id}/questions`, { question })); client.invalidateQueries({ queryKey: ['class', cls.id, 'quizzes'] }); toast.success('Question added.'); }} />}
+      {dialog?.edit && <QuestionEditor question={dialog.edit} parts={partNames} onClose={() => setDialog(null)} onSave={async (question) => { await api.put(`/question-banks/questions/${dialog.edit.id}`, question); await client.invalidateQueries({ queryKey: key }); toast.success('Question saved.'); }} />}
       {dialog === 'bank' && <BankPicker quiz={quiz} onClose={() => setDialog(null)} onAdd={(picked) => { change((list) => [...list, ...picked.map((q) => ({ questionId: q.id, points: q.points }))]); setDialog(null); }} />}
       {dialog === 'pools' && <PoolsDialog quiz={quiz} invalidate={invalidate} onClose={() => setDialog(null)} />}
       {dialog === 'import' && <ImportQuestions target="quiz" noun={noun} previewUrl={`/quizzes/${quiz.id}/import/preview`} onSave={addImported} onClose={() => setDialog(null)} />}

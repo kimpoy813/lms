@@ -1,7 +1,7 @@
 // Quiz results for the teacher: who took it, what needs grading, how each question performed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, BarChart3, CheckCircle2, ChevronLeft, Download, Eye, EyeOff, FileQuestion, History, MonitorOff, RotateCcw, ShieldAlert, Trash2, Users } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { toast } from '../../components/toast.jsx';
@@ -9,7 +9,7 @@ import { Alert, Avatar, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Fiel
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, formatSpan, formatTime, formatTimeExact, fromLocalInput, plural, titleCase, toLocalInput } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
-import { AnswerReview, QuestionText, typeLabel } from './quiz/QuestionParts.jsx';
+import { AnswerReview, PartHeading, QuestionText, typeLabel } from './quiz/QuestionParts.jsx';
 import { rulesSummary, violationText } from './quiz/Rules.jsx';
 import { RESULT_VISIBILITY } from './QuizDialog.jsx';
 import { useClass } from './useClass.js';
@@ -41,6 +41,12 @@ export default function QuizResults() {
     onError: (err) => { if (err.code === 'GRADING_PENDING') { setConfirm('pending'); return true; } return false; },
   });
   const withhold = useAction(() => api.post(`/quizzes/${quizId}/results/withhold`), { invalidate, success: 'Results are hidden from students again.' });
+  // Check the handed-in answers again: for answers that were handed in before the system could check them.
+  const recheck = useAction(() => api.post(`/quizzes/${quizId}/results/recheck`), {
+    invalidate: [...invalidate, ['attempt']],
+    success: (r) => (r.answers === 0 ? 'Nothing changed: every answer was checked already.'
+      : `${plural(r.answers, 'answer')} checked${r.raised > 0 ? `, ${r.raised} of them right` : ''}.${r.complete > 0 ? ` ${plural(r.complete, 'student')} now ${r.complete === 1 ? 'has' : 'have'} a complete score.` : ''}`),
+  });
   const exportAs = async (format) => {
     try {
       await api.download(`/quizzes/${quizId}/export`, { format }, `quiz-results.${format}`);
@@ -89,9 +95,16 @@ export default function QuizResults() {
               </Alert>
             )}
 
+            {stats.canBeMarked > 0 && (
+              <Alert tone="info" className="mb-4" title={`${plural(stats.canBeMarked, 'answer')} ${stats.canBeMarked === 1 ? 'waits' : 'wait'} for you that the system can check`}
+                action={cls.status === 'ARCHIVED' ? null : <Button size="sm" loading={recheck.isPending} onClick={() => recheck.mutate()}>{stats.canBeMarked === 1 ? 'Check it now' : 'Check them now'}</Button>}>
+                {stats.canBeMarked === 1 ? 'It was' : 'They were'} handed in when a short answer that did not match the answer key was left to you. The system now checks such an answer itself: right when it matches an accepted answer, wrong when it does not. Scores you gave yourself stay as they are.
+              </Alert>
+            )}
+
             <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
               <StatCard label="Submitted" value={`${stats.submitted}/${students.length}`} icon={Users} />
-              <StatCard label="Needs grading" value={stats.needsGrading} icon={FileQuestion} tone={stats.needsGrading > 0 ? 'info' : 'ok'} hint={stats.needsGrading > 0 ? 'Essay or file answers' : 'Nothing waiting'} />
+              <StatCard label="Needs grading" value={stats.needsGrading} icon={FileQuestion} tone={stats.needsGrading > 0 ? 'info' : 'ok'} hint={stats.needsGrading > 0 ? 'Waiting for your grade' : 'Nothing waiting'} />
               <StatCard label="Class average" value={stats.average === null ? '—' : formatPercent(stats.average)} icon={BarChart3} hint={stats.highest !== null ? `Highest ${formatPercent(stats.highest, 0)} · lowest ${formatPercent(stats.lowest, 0)}` : 'No scores yet'} />
               <StatCard label="Passed" value={quiz.passingPercent == null ? '—' : stats.passed} icon={CheckCircle2} tone="ok" hint={quiz.passingPercent == null ? 'No passing score set' : `Passing score ${quiz.passingPercent}%`} />
             </div>
@@ -227,6 +240,7 @@ function describeEvent(e) {
     case 'REOPENED': return { text: `Reopened by ${m.by ?? 'the teacher'}${m.seconds != null ? ` with ${formatSpan(m.seconds)}` : ''}${m.until ? `, to be continued by ${formatDateTime(m.until)}` : ''}${m.note ? `. Note: ${m.note}` : ''}`, tone: 'info' };
     case 'CONTINUED': return { text: `Continued${m.seconds != null ? ` with ${formatSpan(m.seconds)} on the clock` : ''}`, tone: 'info' };
     case 'COUNTED': return { text: `Answers counted by ${m.by ?? 'the teacher'}${m.note ? `. Note: ${m.note}` : ''}`, tone: 'info' };
+    case 'MARKED_AGAIN': return { text: `Checked again by the system, asked by ${m.by ?? 'the teacher'}: ${plural(m.answers?.length ?? 0, 'answer')} changed${m.totalFrom != null && m.totalTo != null ? `, total ${formatScore(m.totalFrom)} → ${formatScore(m.totalTo)}` : ''}`, tone: 'info' };
     default: return { text: titleCase(e.type) };
   }
 }
@@ -314,7 +328,7 @@ function AttemptDialog({ attemptId, invalidate, onClose }) {
                 ) : (
                   <>
                     <div><p className="text-xs font-medium text-faint">Score</p><p className="text-2xl font-bold tabular-nums text-ink">{formatScore(attempt.totalScore)}<span className="text-base font-semibold text-faint"> / {formatScore(attempt.maxScore)}</span></p></div>
-                    <div className="text-sm text-soft">Checked automatically: <strong className="text-ink">{formatScore(attempt.autoScore)}</strong> · by you: <strong className="text-ink">{formatScore(attempt.manualScore)}</strong></div>
+                    <div className="text-sm text-soft">Checked by the system: <strong className="text-ink">{formatScore(attempt.autoScore)}</strong> · by you: <strong className="text-ink">{formatScore(attempt.manualScore)}</strong></div>
                     {attempt.needsManualGrading && <Badge tone="info" className="ml-auto">Answers waiting for your grade</Badge>}
                   </>
                 )}
@@ -326,7 +340,12 @@ function AttemptDialog({ attemptId, invalidate, onClose }) {
               </Alert>
             )}
             {attempt.events.length > 0 && <Timeline events={attempt.events} />}
-            {attempt.questions?.map((item, i) => <GradeAnswer key={item.position} attemptId={attempt.id} item={item} number={i + 1} onGraded={onGraded} readOnly={readOnly} unmarked={Boolean(ended)} />)}
+            {attempt.questions?.map((item, i) => (
+              <Fragment key={item.position}>
+                {attempt.parts?.[item.part]?.first === i && <PartHeading part={attempt.parts[item.part]} index={item.part} total={attempt.parts.length} className="pt-1" />}
+                <GradeAnswer attemptId={attempt.id} item={item} number={i + 1} onGraded={onGraded} readOnly={readOnly} unmarked={Boolean(ended)} />
+              </Fragment>
+            ))}
           </div>
         )}
       </QueryState>
@@ -389,7 +408,7 @@ function CountDialog({ attempt, onClose, onDone }) {
     <Modal open onClose={count.isPending ? undefined : onClose} title="Count the answers of this attempt?" size="md"
       footer={<><Button variant="secondary" onClick={onClose} disabled={count.isPending}>Cancel</Button><Button icon={CheckCircle2} loading={count.isPending} onClick={() => count.mutate()}>Count the answers</Button></>}>
       <div className="space-y-4">
-        <p className="text-sm text-soft">The attempt stops counting as failed. The answers {attempt.student.name} had given when it was ended are marked now, and essay or file answers wait for your grade. The student gets no more time: to let them go on answering, reopen the attempt instead.</p>
+        <p className="text-sm text-soft">The attempt stops counting as failed. The answers {attempt.student.name} had given when it was ended are marked now by the system, and essay or file answers wait for your grade. The student gets no more time: to let them go on answering, reopen the attempt instead.</p>
         <Field label="Note" optional hint="Kept with the attempt and in the audit log.">
           <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="e.g. The pop-up came from the school's own software" />
         </Field>

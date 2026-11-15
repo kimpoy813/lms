@@ -10,7 +10,8 @@ import { exportFormat, sendBuffer, sendTable } from '../../lib/exporter.js';
 import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { logger } from '../../lib/logger.js';
 import { MAX_IMPORT_QUESTIONS, questionsToJson } from '../../lib/questionJson.js';
-import { attemptTotals, buildSnapshot, correctAnswer, isAnswered, normalizeQuestion, publicQuestion, sanitizeResponse, scoreAnswer, shuffle, toEditorShape } from '../../lib/quizScoring.js';
+import { arrangeQuestions, hasNamedParts, hasParts, partsInOrder } from '../../lib/quizParts.js';
+import { MANUAL_TYPES, attemptTotals, buildSnapshot, correctAnswer, isAnswered, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, shuffle, toEditorShape } from '../../lib/quizScoring.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { dateKey, timeKey } from '../../lib/time.js';
 import { isPublished, publishedWhere, quizResultsVisible, resolvePublication } from '../../lib/visibility.js';
@@ -77,7 +78,20 @@ function baseView(quiz) {
   };
 }
 
-const manageView = (quiz, now) => ({
+/**
+ * The questions of a quiz in the order in which students get them, with the parts they make.
+ * (Questions drawn at random from a bank are not in it: they join the part of their kind when
+ * an attempt starts.)
+ */
+function quizArrangement(quiz) {
+  const own = quiz.questions.map((qq) => qq.question);
+  const keptInParts = hasNamedParts(own) || (quiz.shuffleQuestions && hasParts(own));
+  const arranged = arrangeQuestions(quiz.questions, { question: (qq) => qq.question, byParts: keptInParts });
+  const { parts, partOf } = partsInOrder(arranged.map(({ item, part }) => ({ type: item.question.type, part, points: item.points })));
+  return { keptInParts, questions: arranged.map(({ item }, i) => ({ qq: item, part: partOf[i] })), parts };
+}
+
+const manageView = (quiz, now, arrangement = quizArrangement(quiz)) => ({
   ...baseView(quiz),
   instructionsHtml: quiz.instructionsHtml,
   status: quiz.status,
@@ -91,7 +105,12 @@ const manageView = (quiz, now) => ({
   resultsPublishedAt: quiz.resultsPublishedAt,
   attemptCount: quiz._count.attempts,
   locked: quiz._count.attempts > 0,
-  questions: quiz.questions.map((qq) => ({ ...toEditorShape(qq.question), points: qq.points, bankPoints: qq.question.points, removed: Boolean(qq.question.deletedAt) })),
+  // In the order in which students get them. `part` is an index into `parts` (null: no parts).
+  questions: arrangement.questions.map(({ qq, part }) => ({ ...toEditorShape(qq.question), points: qq.points, bankPoints: qq.question.points, removed: Boolean(qq.question.deletedAt), part })),
+  // The parts the quiz is given in: [{ title, first, count, points }]. Empty when it has none.
+  parts: arrangement.parts,
+  // Are the questions of a part kept together (see lib/quizParts.js)? Then shuffling stays inside each part.
+  keptInParts: arrangement.keptInParts,
   pools: quiz.pools.map((p) => ({ id: p.id, bankId: p.bankId, bankTitle: p.bank.title, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach })),
   createdAt: quiz.createdAt,
   updatedAt: quiz.updatedAt,
@@ -554,7 +573,8 @@ quizzesRouter.post(
  */
 quizzesRouter.get('/:quizId/questions/export', validate({ params: quizParams }), async (req, res) => {
   const { quiz, cls } = await loadManaged(req, { writable: false });
-  const questions = quiz.questions.filter((qq) => !qq.question.deletedAt).map((qq) => ({ ...toEditorShape(qq.question), points: qq.points }));
+  // Part by part, as the quiz is given.
+  const questions = quizArrangement(quiz).questions.filter(({ qq }) => !qq.question.deletedAt).map(({ qq }) => ({ ...toEditorShape(qq.question), points: qq.points }));
   const file = questionsToJson(questions, { title: quiz.title });
   // The answers leave the system with this file: who took them, and when, is kept.
   await audit(req, { action: 'quiz.questions.export', entityType: 'Quiz', entityId: quiz.id, classId: cls.id, summary: `Downloaded the ${questions.length} question(s) of "${quiz.title}" with their answers` });
@@ -771,21 +791,29 @@ registerJob('quiz.autoSubmit', 30_000, async () => {
 // ── Taking a quiz ────────────────────────────────────────────────────────────
 async function pickQuestions(tx, quiz) {
   const fixed = await tx.quizQuestion.findMany({ where: { quizId: quiz.id, question: { deletedAt: null } }, orderBy: { position: 'asc' }, include: { question: { include: { choices: true } } } });
-  let list = fixed.map((qq) => ({ question: qq.question, points: qq.points }));
+  const list = fixed.map((qq) => ({ question: qq.question, points: qq.points }));
+  // Every question this quiz may give, in a fixed order: it decides the order of the parts, so
+  // that the parts come in the same order for every student whatever was drawn for them.
+  const outline = list.map((x) => x.question);
   const used = new Set(list.map((x) => x.question.id));
   const pools = await tx.quizQuestionPool.findMany({ where: { quizId: quiz.id }, orderBy: { position: 'asc' } });
   for (const pool of pools) {
     const candidates = await tx.question.findMany({
       where: { bankId: pool.bankId, deletedAt: null, id: { notIn: [...used] }, ...(pool.topic ? { topic: pool.topic } : {}), ...(pool.difficulty ? { difficulty: pool.difficulty } : {}), ...(pool.type ? { type: pool.type } : {}) },
       include: { choices: true },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
+    outline.push(...candidates);
     for (const question of shuffle(candidates).slice(0, pool.count)) {
       used.add(question.id);
       list.push({ question, points: pool.pointsEach });
     }
   }
-  if (quiz.shuffleQuestions) list = shuffle(list);
-  return list;
+  // Part by part: the questions of a part stay together, and shuffling changes the order inside
+  // each part only (lib/quizParts.js). A quiz without parts is given as written, or shuffled as a whole.
+  const given = list.map((x) => x.question);
+  const keptInParts = hasNamedParts(given) || (quiz.shuffleQuestions && hasParts(given));
+  return arrangeQuestions(list, { question: (x) => x.question, outline, byParts: keptInParts, shuffleWithin: quiz.shuffleQuestions }).map(({ item, part }) => ({ ...item, part }));
 }
 
 /**
@@ -842,7 +870,7 @@ quizzesRouter.post('/:quizId/attempts', requireRole('STUDENT'), validate({ param
         quizId: quiz.id, studentId: req.user.id, attemptNumber: Math.max(0, ...attempts.map((a) => a.attemptNumber)) + 1, startedAt: now, deadlineAt,
         rulesAcceptedAt: quiz.strictMode ? now : null,
         maxScore: round(picked.reduce((s, p) => s + p.points, 0), 2),
-        answers: { create: picked.map((p, position) => ({ questionId: p.question.id, position, points: p.points, snapshot: buildSnapshot(p.question, { shuffleChoices: quiz.shuffleChoices }) })) },
+        answers: { create: picked.map((p, position) => ({ questionId: p.question.id, position, points: p.points, snapshot: buildSnapshot(p.question, { shuffleChoices: quiz.shuffleChoices, part: p.part }) })) },
         events: { create: { type: 'STARTED', ...(quiz.strictMode ? { meta: { rules: { warnings: quiz.violationWarnings } } } : {}) } },
       },
     });
@@ -859,19 +887,27 @@ async function answerFiles(answerIds) {
   return map;
 }
 
-/** One answer as shown in a review. `reveal` adds the key and the explanation. */
-function reviewAnswer(answer, files, { reveal, scores }) {
+/**
+ * The parts of an attempt, as it was given: { parts: [{ title, first, count, points }], partOf }.
+ * `partOf[i]` is the index of the part of the i-th answer (null when the attempt has no parts).
+ */
+const attemptParts = (answers) => partsInOrder(answers.map((a) => ({ type: a.snapshot.type, part: a.snapshot.part, points: a.points })));
+
+/** One answer as shown in a review. `reveal` adds the key and the explanation. `part`: index into the attempt's parts. */
+function reviewAnswer(answer, files, { reveal, scores, part = null }) {
   return {
     answerId: answer.id,
     position: answer.position,
     points: answer.points,
+    part,
     question: publicQuestion(answer.snapshot),
     response: answer.response,
     files: files.get(answer.id) ?? [],
     flagged: answer.flagged,
     answered: isAnswered(answer.response),
     ...(scores ? { score: answer.score, autoScore: answer.autoScore, manualScore: answer.manualScore, isCorrect: answer.isCorrect, needsManual: answer.needsManual && answer.manualScore === null, feedback: answer.feedback } : {}),
-    ...(reveal ? { correct: correctAnswer(answer.snapshot), explanation: answer.snapshot.explanation ?? null } : {}),
+    // `pieces`: which blanks or pairs were counted as right (null for the other types).
+    ...(reveal ? { correct: correctAnswer(answer.snapshot), pieces: pieceResults(answer.snapshot, answer.response), explanation: answer.snapshot.explanation ?? null } : {}),
   };
 }
 
@@ -879,6 +915,7 @@ async function studentAttemptView(attempt, now) {
   const quiz = attempt.quiz;
   const answers = [...attempt.answers].sort((a, b) => a.position - b.position);
   const files = await answerFiles(answers.map((a) => a.id));
+  const { parts, partOf } = attemptParts(answers);
   const head = {
     id: attempt.id, quizId: quiz.id, classId: quiz.classId, attemptNumber: attempt.attemptNumber, startedAt: attempt.startedAt, deadlineAt: attempt.deadlineAt, submittedAt: attempt.submittedAt,
     quiz: { title: quiz.title, kind: quiz.kind, instructionsHtml: quiz.instructionsHtml, timeLimitMinutes: quiz.timeLimitMinutes },
@@ -896,7 +933,9 @@ async function studentAttemptView(attempt, now) {
       // The strict rules as they bind this attempt: how many violations only draw a warning, and how many were used.
       rules: rulesApply(quiz, attempt) ? { warnings: quiz.violationWarnings, used: attempt.violationCount } : null,
       reopened: Boolean(attempt.reopenedAt),
-      questions: answers.map((a) => reviewAnswer(a, files, { reveal: false, scores: false })),
+      // The parts this attempt goes through, in order; every question says which one it is in.
+      parts,
+      questions: answers.map((a, i) => reviewAnswer(a, files, { reveal: false, scores: false, part: partOf[i] })),
     };
   }
   if (attempt.terminatedAt) {
@@ -923,7 +962,8 @@ async function studentAttemptView(attempt, now) {
     totalScore: showScore ? attempt.totalScore : null,
     percent,
     passed: percent === null || quiz.passingPercent === null ? null : percent >= quiz.passingPercent,
-    questions: showQuestions ? answers.map((a) => reviewAnswer(a, files, { scores: true, reveal: quiz.answerVisibility === 'CORRECT_ANSWERS' && answersReleasable(quiz, now) })) : null,
+    parts: showQuestions ? parts : [],
+    questions: showQuestions ? answers.map((a, i) => reviewAnswer(a, files, { scores: true, part: partOf[i], reveal: quiz.answerVisibility === 'CORRECT_ANSWERS' && answersReleasable(quiz, now) })) : null,
     answersPending: showQuestions && quiz.answerVisibility === 'CORRECT_ANSWERS' && !answersReleasable(quiz, now),
   };
 }
@@ -934,6 +974,7 @@ async function teacherAttemptView(attempt) {
   // Everything that was recorded: an attempt keeps at most 500 signals, plus its violations.
   const events = await prisma.quizAttemptEvent.findMany({ where: { attemptId: attempt.id }, orderBy: { createdAt: 'asc' }, take: 700 });
   const quiz = attempt.quiz;
+  const { parts, partOf } = attemptParts(answers);
   return {
     id: attempt.id, quizId: attempt.quizId, classId: quiz.classId, attemptNumber: attempt.attemptNumber, status: attempt.status, startedAt: attempt.startedAt, deadlineAt: attempt.deadlineAt,
     submittedAt: attempt.submittedAt, autoScore: attempt.autoScore, manualScore: attempt.manualScore, totalScore: attempt.totalScore, maxScore: attempt.maxScore, needsManualGrading: attempt.needsManualGrading,
@@ -947,7 +988,8 @@ async function teacherAttemptView(attempt) {
     // Reopened by a teacher. While `resumeSeconds` is set the student has not continued yet.
     reopened: attempt.reopenedAt ? { at: attempt.reopenedAt, resumeSeconds: attempt.resumeSeconds } : null,
     serverTime: new Date(),
-    questions: attempt.status === 'IN_PROGRESS' ? null : answers.map((a) => reviewAnswer(a, files, { reveal: true, scores: true })),
+    parts: attempt.status === 'IN_PROGRESS' ? [] : parts,
+    questions: attempt.status === 'IN_PROGRESS' ? null : answers.map((a, i) => reviewAnswer(a, files, { reveal: true, scores: true, part: partOf[i] })),
     events: events.map((e) => ({ type: e.type, at: e.createdAt, meta: e.meta })),
   };
 }
@@ -1262,16 +1304,37 @@ async function resultRows(quiz) {
   });
 }
 
+/**
+ * What marking a handed-in answer again would make of it, or null when nothing would change.
+ * Only answers that the answer key alone decides: never a score the teacher gave, an essay,
+ * a file or a program.
+ */
+function markedAgain(answer) {
+  if (answer.manualScore !== null || answer.gradedAt !== null) return null;
+  if (MANUAL_TYPES.has(answer.snapshot.type) || answer.snapshot.type === 'PROGRAMMING') return null;
+  const result = scoreAnswer(answer.snapshot, answer.response, answer.points);
+  // Everything that was right is still right under today's rules. Should that ever not hold,
+  // the score that was given stands: marking again never takes points away.
+  if ((result.autoScore ?? 0) < (answer.autoScore ?? 0)) return null;
+  return result.autoScore === answer.autoScore && result.isCorrect === answer.isCorrect && result.needsManual === answer.needsManual ? null : result;
+}
+
+/** The attempts whose answers can be marked again: handed in, and not standing as failed for a rule violation. */
+const markableAttempts = (quizId) => ({ quizId, status: { in: FINISHED }, terminatedAt: null });
+
 quizzesRouter.get('/:quizId/results', validate({ params: quizParams }), async (req, res) => {
   const { quiz } = await loadManaged(req, { writable: false });
   const rows = await resultRows(quiz);
   const scored = rows.filter((r) => r.percent !== null);
+  // Answers that wait for the teacher although the system can mark them: handed in before it could.
+  const waiting = await prisma.studentAnswer.findMany({ where: { needsManual: true, manualScore: null, attempt: markableAttempts(quiz.id) }, select: { snapshot: true, response: true, points: true, autoScore: true, isCorrect: true, needsManual: true, manualScore: true, gradedAt: true } });
   ok(res, {
     quiz: { ...baseView(quiz), status: quiz.status, resultVisibility: quiz.resultVisibility, answerVisibility: quiz.answerVisibility, resultsPublishedAt: quiz.resultsPublishedAt },
     students: rows,
     stats: {
       submitted: rows.filter((r) => r.attempts.some((a) => FINISHED.includes(a.status))).length,
       needsGrading: rows.filter((r) => r.status === 'NEEDS_GRADING').length,
+      canBeMarked: waiting.filter((a) => markedAgain(a)?.needsManual === false).length,
       // Students with an attempt that was ended for a rule violation and not yet decided on.
       violations: rows.filter((r) => r.attempts.some((a) => a.terminated)).length,
       average: scored.length === 0 ? null : round(scored.reduce((s, r) => s + r.percent, 0) / scored.length, 1),
@@ -1321,6 +1384,55 @@ attemptsRouter.put(
     ok(res, await teacherAttemptView(await prisma.quizAttempt.findUnique({ where: { id: attempt.id }, include: attemptInclude })));
   },
 );
+
+/**
+ * Mark the handed-in answers of a quiz again, by the answer key that each attempt holds and by
+ * the rules as they are today (lib/answerMatch.js, lib/quizScoring.js).
+ *
+ * For attempts that were handed in under older rules: an answer that waits for the teacher
+ * although the system can mark it is marked, and an answer that was marked wrong for a
+ * difference that no longer counts ("harddisk" for "hard disk") is marked right. A score never
+ * goes down by this, and a score that the teacher gave is never touched; neither is an essay, a
+ * file, a program, or an attempt that stands as failed for a rule violation.
+ */
+quizzesRouter.post('/:quizId/results/recheck', validate({ params: quizParams, body: z.object({}).passthrough() }), async (req, res) => {
+  const { quiz, cls } = await loadManaged(req);
+  const attempts = await prisma.quizAttempt.findMany({ where: markableAttempts(quiz.id), select: { id: true }, orderBy: { startedAt: 'asc' } });
+  const counts = { attempts: 0, answers: 0, settled: 0, raised: 0, complete: 0 };
+  for (const { id } of attempts) {
+    await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `attempt:${id}`);
+      const attempt = await tx.quizAttempt.findUnique({ where: { id }, include: { answers: true } });
+      if (!attempt || !FINISHED.includes(attempt.status) || attempt.terminatedAt) return;
+      const changes = [];
+      for (const answer of attempt.answers) {
+        const result = markedAgain(answer);
+        if (!result) continue;
+        await tx.studentAnswer.update({ where: { id: answer.id }, data: { autoScore: result.autoScore, isCorrect: result.isCorrect, needsManual: result.needsManual, score: result.autoScore } });
+        changes.push({ position: answer.position, from: answer.autoScore, to: result.autoScore });
+        if (answer.needsManual && !result.needsManual) counts.settled += 1;
+        if ((result.autoScore ?? 0) > (answer.autoScore ?? 0)) counts.raised += 1;
+        Object.assign(answer, { autoScore: result.autoScore, isCorrect: result.isCorrect, needsManual: result.needsManual });
+      }
+      if (changes.length === 0) return;
+      const totals = attemptTotals(attempt.answers);
+      await tx.quizAttempt.update({ where: { id }, data: totals });
+      await tx.quizAttemptEvent.create({ data: { attemptId: id, type: 'MARKED_AGAIN', meta: { by: fullName(req.user), answers: changes.slice(0, 100), totalFrom: attempt.totalScore, totalTo: totals.totalScore } } });
+      // A locked grading period keeps its score; it is brought over when the period is unlocked.
+      await syncQuizGrade(tx, quiz, attempt.studentId, req.user.id, { tolerateLock: true });
+      counts.attempts += 1;
+      counts.answers += changes.length;
+      if (attempt.needsManualGrading && !totals.needsManualGrading) counts.complete += 1;
+    }, { timeout: 30_000 });
+  }
+  if (counts.answers > 0) {
+    await audit(req, {
+      action: 'quiz.results.recheck', entityType: 'Quiz', entityId: quiz.id, classId: cls.id,
+      summary: `Marked the answers of "${quiz.title}" again: ${counts.answers} answer(s) in ${counts.attempts} attempt(s) changed`, after: counts,
+    });
+  }
+  ok(res, counts);
+});
 
 const decisionNote = z.string().trim().max(500).nullable().optional();
 

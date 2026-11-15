@@ -10,6 +10,8 @@
 //     pairs: [{ left, right }]                MATCHING
 //     items: ["first", "second", …]           ORDERING (given in the correct order)
 //     programmingProblemId                    PROGRAMMING }
+//   settings: caseSensitive (compare typed answers exactly), partialCredit, wordLimit (ESSAY),
+//             reviewMismatch (SHORT_ANSWER: an answer that does not match the key waits for the teacher)
 //
 // ── Storage ──────────────────────────────────────────────────────────────────────────────────
 //   Question.answerKey   { accepted } | { blanks } | { answer, correction } | null
@@ -20,6 +22,9 @@
 //   { choiceId } | { choiceIds } | { choiceId, correction } | { text } | { blanks: [] } |
 //   { pairs: { leftId: rightId } } | { order: [ids] } | { fileIds: [] } | { language, code }
 import { randomInt } from 'node:crypto';
+import { answersMatch, isSentence, normalizeAnswer } from './answerMatch.js';
+
+export { normalizeAnswer };
 
 export const QUESTION_TYPES = [
   'MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'MODIFIED_TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER',
@@ -38,18 +43,27 @@ const clean = (value, max = 2000) => String(value ?? '').replace(/\s+/g, ' ').tr
 const stripTags = (html) => String(html ?? '').replace(/<[^>]*>/g, ' ');
 export const countBlanks = (text) => (stripTags(text).match(BLANK) ?? []).length;
 
-/** Canonical form used to compare a typed answer with the key. */
-export function normalizeAnswer(value, { caseSensitive = false } = {}) {
-  let text = String(value ?? '').normalize('NFKC').replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/\s+/g, ' ').trim();
-  // Trailing sentence punctuation is not part of the answer.
-  text = text.replace(/[.!?;,]+$/u, '').trim();
-  return caseSensitive ? text : text.toLocaleLowerCase('en');
+/**
+ * Who marks the answers to a question.
+ *   { by: 'SYSTEM' }         every answer is marked by the answer key, at once
+ *   { by: 'TEACHER', why }   every answer waits for the teacher: 'ESSAY', 'FILE' (nothing to check
+ *                            against) or 'NO_KEY' (a short answer for which no answer was given)
+ *   { by: 'BOTH', why }      an answer that matches the key is marked at once, one that does not
+ *                            waits for the teacher: the teacher asked for that ('CHOSEN'), or the
+ *                            key is a whole sentence, which nobody types word for word ('SENTENCE')
+ * Takes a stored question, a snapshot, or a question in editor shape.
+ */
+export function markedBy(question) {
+  if (question?.type === 'ESSAY') return { by: 'TEACHER', why: 'ESSAY' };
+  if (question?.type === 'FILE_UPLOAD') return { by: 'TEACHER', why: 'FILE' };
+  if (question?.type !== 'SHORT_ANSWER') return { by: 'SYSTEM', why: null };
+  const accepted = question.answerKey?.accepted ?? question.accepted ?? [];
+  if (accepted.length === 0) return { by: 'TEACHER', why: 'NO_KEY' };
+  const chosen = question.settings?.reviewMismatch;
+  if (chosen === true) return { by: 'BOTH', why: 'CHOSEN' };
+  if (chosen !== false && accepted.every(isSentence)) return { by: 'BOTH', why: 'SENTENCE' };
+  return { by: 'SYSTEM', why: null };
 }
-
-const matchesAny = (value, accepted, settings) => {
-  const mine = normalizeAnswer(value, settings);
-  return mine !== '' && accepted.some((a) => normalizeAnswer(a, settings) === mine);
-};
 
 function uniqueList(list, max = 300) {
   const seen = new Set();
@@ -83,6 +97,7 @@ export function normalizeQuestion(input) {
   if (typeof input.settings?.partialCredit === 'boolean') settings.partialCredit = input.settings.partialCredit;
   const wordLimit = Number(input.settings?.wordLimit);
   if (Number.isInteger(wordLimit) && wordLimit > 0 && wordLimit <= 10_000) settings.wordLimit = wordLimit;
+  if (type === 'SHORT_ANSWER' && typeof input.settings?.reviewMismatch === 'boolean') settings.reviewMismatch = input.settings.reviewMismatch;
 
   let choices = [];
   let answerKey = null;
@@ -226,11 +241,13 @@ function shuffleDifferent(list) {
  * Freeze a question for one attempt. The snapshot carries the answer key, so it stays on the
  * server: students only ever receive `publicQuestion(snapshot)`.
  */
-export function buildSnapshot(question, { shuffleChoices = false } = {}) {
+export function buildSnapshot(question, { shuffleChoices = false, part = null } = {}) {
   const ordered = [...(question.choices ?? [])].sort((a, b) => a.position - b.position).map((c) => ({ id: c.id, text: c.text, matchText: c.matchText ?? null, isCorrect: c.isCorrect }));
   const snapshot = {
     questionId: question.id, type: question.type, text: question.text, settings: question.settings ?? {}, explanation: question.explanation ?? null,
     answerKey: question.answerKey ?? null, programmingProblemId: question.programmingProblemId ?? null,
+    // The part of the quiz this question was given in: { key, title } (lib/quizParts.js).
+    part,
   };
   switch (question.type) {
     case 'MULTIPLE_CHOICE':
@@ -374,7 +391,7 @@ export function scoreAnswer(snapshot, response, points, extra = {}) {
     return { autoScore: round2(points * f), isCorrect: f === 1, needsManual: false };
   };
   const partial = snapshot.settings?.partialCredit !== false;
-  const settings = { caseSensitive: snapshot.settings?.caseSensitive === true };
+  const exact = snapshot.settings?.caseSensitive === true;
   const choices = snapshot.choices ?? [];
 
   if (MANUAL_TYPES.has(snapshot.type)) {
@@ -406,32 +423,27 @@ export function scoreAnswer(snapshot, response, points, extra = {}) {
       const statementIsTrue = snapshot.answerKey?.answer === true;
       if (statementIsTrue) return picked?.text === 'True' ? full : zero;
       if (picked?.text !== 'False') return zero;
-      if (matchesAny(response.correction, snapshot.answerKey?.correction ?? [], settings)) return full;
+      if (answersMatch(response.correction, snapshot.answerKey?.correction ?? [], { exact })) return full;
       // Spotting that it is false is half of the task.
       return partial ? part(0.5) : zero;
     }
     case 'IDENTIFICATION':
-      return matchesAny(response.text, snapshot.answerKey?.accepted ?? [], settings) ? full : zero;
+      return answersMatch(response.text, snapshot.answerKey?.accepted ?? [], { exact, list: true }) ? full : zero;
     case 'SHORT_ANSWER': {
       const accepted = snapshot.answerKey?.accepted ?? [];
+      // No answer was given for it: there is nothing to check against.
       if (accepted.length === 0) return { autoScore: null, isCorrect: null, needsManual: true };
-      // A short answer that does not match the key word for word may still be right.
-      return matchesAny(response.text, accepted, settings) ? full : { autoScore: 0, isCorrect: false, needsManual: true };
+      if (answersMatch(response.text, accepted, { exact, list: true })) return full;
+      // Wrong, like any other answer that is not in the key — unless the teacher looks at these.
+      return markedBy(snapshot).by === 'BOTH' ? { autoScore: 0, isCorrect: false, needsManual: true } : zero;
     }
-    case 'FILL_BLANKS': {
-      const key = snapshot.answerKey?.blanks ?? [];
-      if (key.length === 0) return zero;
-      const right = key.filter((accepted, i) => matchesAny(response.blanks?.[i], accepted, settings)).length;
-      if (right === key.length) return full;
-      return partial ? part(right / key.length) : zero;
-    }
+    case 'FILL_BLANKS':
     case 'MATCHING': {
-      if (choices.length === 0) return zero;
-      const textOf = new Map(choices.map((c) => [c.id, normalizeAnswer(c.matchText)]));
-      // Two pairs may share the same right-hand text; either option is then correct.
-      const right = choices.filter((c) => response.pairs?.[c.id] !== undefined && textOf.get(response.pairs[c.id]) === textOf.get(c.id)).length;
-      if (right === choices.length) return full;
-      return partial ? part(right / choices.length) : zero;
+      const pieces = pieceResults(snapshot, response);
+      if (pieces.length === 0) return zero;
+      const right = pieces.filter(Boolean).length;
+      if (right === pieces.length) return full;
+      return partial ? part(right / pieces.length) : zero;
     }
     case 'ORDERING': {
       const correct = choices.map((c) => c.id);
@@ -443,6 +455,26 @@ export function scoreAnswer(snapshot, response, points, extra = {}) {
     default:
       return zero;
   }
+}
+
+/**
+ * Which pieces of an answer are right, for the two types that are marked piece by piece: one
+ * true or false for each blank (FILL_BLANKS), or for each pair in the order of the left-hand
+ * items (MATCHING). Null for every other type. This is the judgement that scoreAnswer counts,
+ * so a review that shows it never disagrees with the score.
+ */
+export function pieceResults(snapshot, response) {
+  if (snapshot.type === 'FILL_BLANKS') {
+    const exact = snapshot.settings?.caseSensitive === true;
+    return (snapshot.answerKey?.blanks ?? []).map((accepted, i) => answersMatch(response?.blanks?.[i], accepted, { exact }));
+  }
+  if (snapshot.type === 'MATCHING') {
+    const choices = snapshot.choices ?? [];
+    const textOf = new Map(choices.map((c) => [c.id, normalizeAnswer(c.matchText)]));
+    // Two pairs may share the same right-hand text; either option is then correct.
+    return choices.map((c) => response?.pairs?.[c.id] !== undefined && textOf.get(response.pairs[c.id]) === textOf.get(c.id));
+  }
+  return null;
 }
 
 /** Totals of an attempt from its answers. */

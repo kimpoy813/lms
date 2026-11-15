@@ -92,6 +92,8 @@ definitions: [API.md](API.md).
 | Grade computation | `modules/gradebook/compute.js` (pure, unit-tested) |
 | Recording a grade and its history | `recordGrade` in `modules/gradebook/service.js` |
 | Quiz scoring and what a student may see of a question | `lib/quizScoring.js` |
+| Whether a typed answer is one of the accepted answers | `lib/answerMatch.js` (pure; its test lists the pairs that must match and those that must not) |
+| The parts of a quiz, and the order its questions are given in | `lib/quizParts.js` (pure). The attempt keeps the part of each question, so a paper that was handed out does not change ([Quizzes and examinations](QUIZZES.md)) |
 | What a violation of a quiz's strict rules leads to | `modules/quizzes/rules.js` (pure, unit-tested). The browser only reports what it noticed (`frontend/src/lib/quizGuard.js`); the server counts, warns or ends the attempt. See [QUIZ-RULES.md](QUIZ-RULES.md) |
 | Reading questions that a teacher pastes or uploads | `lib/questionJson.js` (JSON) and `lib/questionImport.js` (a test paper; chooses between the two). Pure and unit-tested: they turn text into draft questions and save nothing. Where an answer is not clear they leave it open instead of guessing. See [QUESTION-IMPORT.md](QUESTION-IMPORT.md) |
 | Whether something is published | `lib/visibility.js` (evaluated at read time, so a scheduled item appears on time even if the background job is late) |

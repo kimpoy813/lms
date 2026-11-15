@@ -71,21 +71,31 @@ unless the class sets another value. Excused sessions are left out.
 
 ### Quizzes
 
-- Objective questions are scored by the server when the attempt is handed in:
+- **The system marks every question that has an answer key**, when the attempt is handed in
+  ([Quizzes and examinations](QUIZZES.md) has the whole rule):
 
   | Type | Scoring |
   |---|---|
-  | Multiple choice, true/false, identification | Right or wrong |
+  | Multiple choice, true/false | Right or wrong |
+  | Identification, short answer | Right when the answer matches an accepted answer, wrong when it does not |
   | Multiple response | Partial credit; each wrong pick cancels a right one, so ticking everything earns nothing |
   | Modified true/false | Half for spotting a false statement, full with an accepted correction |
   | Fill in the blanks, matching | Partial credit per blank or pair |
   | Ordering | All or nothing, unless the question allows partial credit |
-  | Short answer | Full marks when it matches an accepted answer; otherwise the teacher reviews it, because a differently worded answer may still be right |
 
-  Partial credit can be switched off per question. Answers are compared without regard to
-  capital letters unless the question says otherwise.
-- Essays and file uploads wait for the teacher. The total is shown to the student only when
-  every answer has a score.
+  Partial credit can be switched off per question. A typed answer is compared the way a teacher
+  would: capital letters, spacing, punctuation, accents, "the" in front and the way a number is
+  written make no difference, while another word or a sign that carries meaning does
+  ([how](QUIZZES.md#how-a-typed-answer-is-compared)). A question can ask for the answer exactly
+  as written instead.
+- **The teacher marks essays and file uploads**, and a short answer for which no accepted answer
+  was given. A short answer that matches none of its accepted answers waits for the teacher only
+  where the teacher asked for that, or where the accepted answer is a whole sentence
+  ([why](QUIZZES.md#the-one-case-where-a-short-answer-waits)). The total is shown to the student,
+  and written to the gradebook, only when every answer has a score.
+- The teacher can overrule any score the system gave; that is kept in the audit log. Answers
+  that were handed in before the system could mark them can be
+  [marked again](QUIZZES.md#marking-again).
 - **Programming questions** take the best result among the programs the student had checked
   during the attempt (*tests passed, by weight*, or all-or-nothing if the problem says so). A
   program that was saved but never checked is checked once when the quiz is handed in. If it does

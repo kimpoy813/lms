@@ -82,7 +82,7 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
         <fieldset className="space-y-4 rounded-xl border border-line p-4">
           <legend className="px-1 text-sm font-medium text-ink">Fairness</legend>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Switch checked={v.shuffleQuestions} onChange={(on) => set('shuffleQuestions', on)} label="Shuffle the questions" description="Each student gets a different order." />
+            <Switch checked={v.shuffleQuestions} onChange={(on) => set('shuffleQuestions', on)} label="Shuffle the questions" description="Each student gets a different order inside every part. The parts themselves stay in order." />
             <Switch checked={v.shuffleChoices} onChange={(on) => set('shuffleChoices', on)} label="Shuffle the choices" description="For multiple-choice questions." />
           </div>
           <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">

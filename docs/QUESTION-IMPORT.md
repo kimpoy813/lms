@@ -61,8 +61,8 @@ The list alone, without `{ "questions": … }` around it, is read as well.
 | `multiple_response` | `choices`: two or more texts | A list with the text of every correct choice |
 | `true_false` | The question is a statement | `true` or `false` |
 | `modified_true_false` | A statement. When it is false, `correction`: the word or phrase that makes it true (a list when several are accepted) | `true` or `false` |
-| `identification` | — | The accepted answer, or a list of every wording that is accepted. Marked by the computer |
-| `short_answer` | — | As for identification, but an answer that matches none of the wordings waits for the teacher instead of being marked wrong. The answer may be left out: the teacher then marks every answer |
+| `identification` | — | The accepted answer, or a list of every answer that is accepted. Marked by the computer: capital letters, spacing, punctuation and accents make no difference ([how answers are compared](QUIZZES.md#how-a-typed-answer-is-compared)) |
+| `short_answer` | — | As for identification, and marked the same way: an answer that matches none of the accepted answers is wrong. Two exceptions: with `reviewOtherAnswers` (below), or when every accepted answer is a whole sentence, such an answer waits for the teacher instead. The answer may be left out: the teacher then marks every answer |
 | `fill_blanks` | Each blank is written as three underscores, `___`, in the question | One list for each blank, in the order of the blanks, with the wordings that are accepted |
 | `matching` | `pairs`: a list of `{ "left": …, "right": … }`, at least two | — (the pairs are the answer) |
 | `ordering` | `items`: two or more texts, **written in their correct order** | — (students see them shuffled) |
@@ -102,11 +102,12 @@ All of these can be left out.
 | `points` | What the question is worth | 1 |
 | `difficulty` | `easy`, `medium` or `hard` | medium |
 | `topic` | A label, used to filter a question bank and to draw random questions by topic | none |
-| `section` | The part of the test the question comes from, such as "Part I". Kept with the question as a label, and shown when the import is reviewed | none |
+| `section` | The part of the test the question belongs to, such as "Part I. Multiple Choice". Questions with the same part name are given together, and a shuffled quiz is shuffled inside each part only ([Parts](QUIZZES.md#parts)) | with the other questions of its type |
 | `explanation` | Why the answer is right. Students see it where the quiz shows them the correct answers after they submit. For an essay: what a good answer contains | none |
-| `caseSensitive` | `true`: "Na" is right and "NA" is wrong. For typed answers | capitals do not matter |
+| `caseSensitive` | `true`: the answer must be typed exactly as written — "Na" is right, "NA" and "the Na" are wrong. For typed answers | capital letters, spacing, punctuation and accents do not matter |
 | `partialCredit` | `false`: all or nothing, for multiple response, modified true or false, fill in the blanks and matching. `true`: part of the points for an ordering that is partly right | part of the points for part of the answer; an ordering is right or wrong as a whole |
 | `wordLimit` | For an essay: the most words | no limit |
+| `reviewOtherAnswers` | For a short answer. `true`: an answer that matches none of the accepted answers waits for the teacher. `false`: it is wrong, also where the accepted answer is a whole sentence | wrong; waits where every accepted answer is a whole sentence |
 
 ### How the text is read
 
@@ -199,7 +200,9 @@ meaning is clear:
   `distractors`, `wrong_answers`). The choices are put together in alphabetical order — "All of
   the above" and the like stay last — so that the correct one is not always the first, and a note
   says so. Turn on *Shuffle the choices* in the quiz to give every student another order.
-- **Parts of a test**, each with a heading, a type and the points of each question:
+- **Parts of a test**, each with a heading, a type and the points of each question. The
+  headings become the [parts of the quiz](QUIZZES.md#parts): the questions under one heading are
+  given together, and students see which part they are in.
 
   ```json
   {
@@ -303,7 +306,7 @@ The same dialog reads a test that was typed as a document: Word (`.docx`), PDF o
   `Answer: B`. An answer key at the end of the document (`Answer Key`, then `1. B`, `2. True`, …)
   is understood as well.
 - Headings such as "Part II. True or False" or "Identification" set the type of the questions
-  under them.
+  under them, and become the [parts of the quiz](QUIZZES.md#parts).
 - Scanned pages, which are pictures of text, cannot be read.
 
 ## Downloading questions
