@@ -11,7 +11,9 @@
 //     items: ["first", "second", …]           ORDERING (given in the correct order)
 //     programmingProblemId                    PROGRAMMING }
 //   settings: caseSensitive (compare typed answers exactly), partialCredit, wordLimit (ESSAY),
-//             reviewMismatch (SHORT_ANSWER: an answer that does not match the key waits for the teacher)
+//             reviewMismatch (SHORT_ANSWER: an answer that is not right by the key waits for the teacher),
+//             keyWords (SHORT_ANSWER: true = the key words of every accepted answer are looked for,
+//             false = of none; not set = of an accepted answer that is a sentence)
 //
 // ── Storage ──────────────────────────────────────────────────────────────────────────────────
 //   Question.answerKey   { accepted } | { blanks } | { answer, correction } | null
@@ -23,6 +25,7 @@
 //   { pairs: { leftId: rightId } } | { order: [ids] } | { fileIds: [] } | { language, code }
 import { randomInt } from 'node:crypto';
 import { answersMatch, isSentence, normalizeAnswer } from './answerMatch.js';
+import { checkShortAnswer, keyWords, keyWordsNeeded } from './keyWords.js';
 
 export { normalizeAnswer };
 
@@ -45,12 +48,14 @@ export const countBlanks = (text) => (stripTags(text).match(BLANK) ?? []).length
 
 /**
  * Who marks the answers to a question.
- *   { by: 'SYSTEM' }         every answer is marked by the answer key, at once
+ *   { by: 'SYSTEM', why }    every answer is marked by the answer key, at once. why 'KEY_WORDS':
+ *                            an accepted answer is a sentence, which is checked by its key words
+ *                            (lib/keyWords.js) — the one answer that then waits for the teacher
+ *                            is one that has the words and may still say the opposite
  *   { by: 'TEACHER', why }   every answer waits for the teacher: 'ESSAY', 'FILE' (nothing to check
  *                            against) or 'NO_KEY' (a short answer for which no answer was given)
- *   { by: 'BOTH', why }      an answer that matches the key is marked at once, one that does not
- *                            waits for the teacher: the teacher asked for that ('CHOSEN'), or the
- *                            key is a whole sentence, which nobody types word for word ('SENTENCE')
+ *   { by: 'BOTH', why }      an answer that is right by the key is marked at once, any other
+ *                            waits for the teacher, who asked for that ('CHOSEN')
  * Takes a stored question, a snapshot, or a question in editor shape.
  */
 export function markedBy(question) {
@@ -59,10 +64,38 @@ export function markedBy(question) {
   if (question?.type !== 'SHORT_ANSWER') return { by: 'SYSTEM', why: null };
   const accepted = question.answerKey?.accepted ?? question.accepted ?? [];
   if (accepted.length === 0) return { by: 'TEACHER', why: 'NO_KEY' };
-  const chosen = question.settings?.reviewMismatch;
-  if (chosen === true) return { by: 'BOTH', why: 'CHOSEN' };
-  if (chosen !== false && accepted.every(isSentence)) return { by: 'BOTH', why: 'SENTENCE' };
-  return { by: 'SYSTEM', why: null };
+  if (question.settings?.reviewMismatch === true) return { by: 'BOTH', why: 'CHOSEN' };
+  return { by: 'SYSTEM', why: usesKeyWords(question) ? 'KEY_WORDS' : null };
+}
+
+/**
+ * Is a short answer checked by key words? The teacher says (settings.keyWords); left to the
+ * system, it is where an accepted answer is a sentence. Never where the answer has to be
+ * exactly as written.
+ */
+export function usesKeyWords(question) {
+  if (question?.type !== 'SHORT_ANSWER' || question.settings?.caseSensitive === true) return false;
+  const accepted = question.answerKey?.accepted ?? question.accepted ?? [];
+  if (typeof question.settings?.keyWords === 'boolean') return question.settings.keyWords && accepted.length > 0;
+  return accepted.some(isSentence);
+}
+
+/**
+ * The key words that the system looks for in the answers to a short-answer question: one entry
+ * for each accepted answer that is checked that way. Empty for a question that is not.
+ * @returns {Array<{ accepted: string, keyWords: string[], right: number, half: number|null }>}
+ *   right, half  how many of the key words an answer needs to be right, and to be half right
+ *                (null: nothing is half right; also where the question gives no part of the points)
+ */
+export function keyWordsOf(question) {
+  if (!usesKeyWords(question)) return [];
+  const accepted = question.answerKey?.accepted ?? question.accepted ?? [];
+  return accepted.flatMap((answer) => {
+    const words = keyWords(answer, question.text, question.settings?.keyWords)?.map((key) => key.word);
+    if (!words) return [];
+    const needed = keyWordsNeeded(words.length);
+    return [{ accepted: answer, keyWords: words, right: needed.right, half: question.settings?.partialCredit === false ? null : needed.half }];
+  });
 }
 
 function uniqueList(list, max = 300) {
@@ -98,6 +131,7 @@ export function normalizeQuestion(input) {
   const wordLimit = Number(input.settings?.wordLimit);
   if (Number.isInteger(wordLimit) && wordLimit > 0 && wordLimit <= 10_000) settings.wordLimit = wordLimit;
   if (type === 'SHORT_ANSWER' && typeof input.settings?.reviewMismatch === 'boolean') settings.reviewMismatch = input.settings.reviewMismatch;
+  if (type === 'SHORT_ANSWER' && typeof input.settings?.keyWords === 'boolean') settings.keyWords = input.settings.keyWords;
 
   let choices = [];
   let answerKey = null;
@@ -433,9 +467,15 @@ export function scoreAnswer(snapshot, response, points, extra = {}) {
       const accepted = snapshot.answerKey?.accepted ?? [];
       // No answer was given for it: there is nothing to check against.
       if (accepted.length === 0) return { autoScore: null, isCorrect: null, needsManual: true };
-      if (answersMatch(response.text, accepted, { exact, list: true })) return full;
-      // Wrong, like any other answer that is not in the key — unless the teacher looks at these.
-      return markedBy(snapshot).by === 'BOTH' ? { autoScore: 0, isCorrect: false, needsManual: true } : zero;
+      const check = shortAnswerCheck(snapshot, response);
+      // Its key words are there, and it may still say the opposite ("not lost" for "lost",
+      // "more" for "less"): the one thing the system leaves to the teacher of its own accord.
+      if (check.doubt) return { autoScore: 0, isCorrect: null, needsManual: true };
+      if (check.share === 1) return full;
+      // Not right — unless the teacher looks at these answers. Half the key words of a
+      // sentence are half the points, where the question gives part of the points.
+      if (markedBy(snapshot).by === 'BOTH') return { autoScore: 0, isCorrect: false, needsManual: true };
+      return check.share > 0 ? part(check.share) : zero;
     }
     case 'FILL_BLANKS':
     case 'MATCHING': {
@@ -475,6 +515,23 @@ export function pieceResults(snapshot, response) {
     return choices.map((c) => response?.pairs?.[c.id] !== undefined && textOf.get(response.pairs[c.id]) === textOf.get(c.id));
   }
   return null;
+}
+
+/**
+ * How a short answer was held against its accepted answers, for a review that may show the key:
+ * which accepted answer, how (lib/keyWords.js), and the key words found and missing. Null for
+ * every other type, for an answer that was not given, and for a question without a key.
+ * This is the judgement that scoreAnswer counts.
+ */
+export function shortAnswerCheck(snapshot, response) {
+  if (snapshot.type !== 'SHORT_ANSWER' || !isAnswered(response)) return null;
+  const accepted = snapshot.answerKey?.accepted ?? [];
+  if (accepted.length === 0) return null;
+  const check = checkShortAnswer(response.text, accepted, { exact: snapshot.settings?.caseSensitive === true, question: snapshot.text, keyWords: snapshot.settings?.keyWords });
+  // Half the key words count for nothing where the question gives no part of the points — and
+  // an answer that earns nothing leaves no doubt for the teacher to settle.
+  const share = check.share === 0.5 && snapshot.settings?.partialCredit === false ? 0 : check.share;
+  return { how: check.how, share, doubt: share > 0 ? check.doubt : null, accepted: check.accepted, found: check.found, missing: check.missing };
 }
 
 /** Totals of an attempt from its answers. */

@@ -10,7 +10,7 @@ import { sendBuffer } from '../../lib/exporter.js';
 import { created, idParams, noContent, ok, pageMeta, pageQuery, paging, patchOf, zId, zTitle } from '../../lib/http.js';
 import { extractImportText, MAX_IMPORT_CHARS, parseImport } from '../../lib/questionImport.js';
 import { CUT_OFF_NOTE, QuestionImportError, questionsToJson } from '../../lib/questionJson.js';
-import { QUESTION_TYPES, normalizeQuestion, toEditorShape } from '../../lib/quizScoring.js';
+import { QUESTION_TYPES, keyWordsOf, normalizeQuestion, scoreAnswer, shortAnswerCheck, toEditorShape } from '../../lib/quizScoring.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { uploadLimiter } from '../../middleware/rateLimit.js';
@@ -79,6 +79,46 @@ export async function defaultBankFor(tx, user, cls) {
   const existing = await tx.questionBank.findFirst({ where: { ownerId: user.id, title, deletedAt: null } });
   return existing ?? tx.questionBank.create({ data: { ownerId: user.id, title, subject: cls.course.title } });
 }
+
+// ── Trying an answer ─────────────────────────────────────────────────────────
+const tryBody = z.object({
+  question: z.object({
+    type: z.enum(['SHORT_ANSWER', 'IDENTIFICATION']),
+    text: z.string().max(20_000).default(''),
+    accepted: z.array(z.string().max(300)).max(50).default([]),
+    settings: z.object({ caseSensitive: z.boolean().nullish(), partialCredit: z.boolean().nullish(), reviewMismatch: z.boolean().nullish(), keyWords: z.boolean().nullish() }).passthrough().default({}),
+  }),
+  answer: z.string().max(2000).default(''),
+});
+
+/**
+ * How the system would mark an answer to a typed question, before any student gives it: for the
+ * teacher who is writing the question. Nothing is saved, and the question need not be complete.
+ *
+ * Body: { question: { type: 'SHORT_ANSWER' | 'IDENTIFICATION', text, accepted, settings }, answer }.
+ * Answers: { keyWords, result }.
+ *   keyWords  [{ accepted, keyWords, right, half }] for each accepted answer that is checked by
+ *             its key words (docs/QUIZZES.md), with how many of them an answer needs to be
+ *             right and to be half right; empty otherwise
+ *   result    null without an answer or without accepted answers, else
+ *             { outcome: 'RIGHT' | 'HALF' | 'WRONG' | 'WAITS', how, accepted, found, missing, doubt }:
+ *             what the answer earns, and for a short answer how it was held against the key
+ */
+banksRouter.post('/try-answer', validate({ body: tryBody }), async (req, res) => {
+  const { question, answer } = req.valid.body;
+  const accepted = question.accepted.map((a) => a.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const settings = Object.fromEntries(Object.entries(question.settings).filter(([, value]) => typeof value === 'boolean'));
+  const snapshot = { type: question.type, text: question.text, settings, answerKey: { accepted } };
+  const text = answer.trim();
+  let result = null;
+  if (text && accepted.length > 0) {
+    const scored = scoreAnswer(snapshot, { text }, 1);
+    const outcome = scored.needsManual ? 'WAITS' : scored.autoScore >= 1 ? 'RIGHT' : scored.autoScore > 0 ? 'HALF' : 'WRONG';
+    result = { outcome, how: null, accepted: null, found: [], missing: [], doubt: null, ...shortAnswerCheck(snapshot, { text }) };
+    delete result.share;
+  }
+  ok(res, { keyWords: keyWordsOf(snapshot), result });
+});
 
 // ── Banks ────────────────────────────────────────────────────────────────────
 banksRouter.get('/', async (req, res) => {

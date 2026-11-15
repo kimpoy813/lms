@@ -1,9 +1,10 @@
 import { zipSync, strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
-import { markedBy as shownAsMarkedBy } from '../../../frontend/src/lib/quizMarking.js';
+import { isSentence as shownAsSentence, markedBy as shownAsMarkedBy, usesKeyWords as shownAsUsingKeyWords } from '../../../frontend/src/lib/quizMarking.js';
+import { isSentence } from '../../src/lib/answerMatch.js';
 import { docxToText, extractImportText, parseQuestions } from '../../src/lib/questionImport.js';
 import {
-  attemptTotals, buildSnapshot, correctAnswer, markedBy, normalizeAnswer, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, toEditorShape,
+  attemptTotals, buildSnapshot, correctAnswer, keyWordsOf, markedBy, normalizeAnswer, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, shortAnswerCheck, toEditorShape, usesKeyWords,
 } from '../../src/lib/quizScoring.js';
 import { quizOutcome } from '../../src/modules/quizzes/attemptScore.js';
 
@@ -174,15 +175,81 @@ describe('automatic scoring', () => {
     const asked = snap({ type: 'SHORT_ANSWER', text: 'Why?', accepted: ['gravity'], settings: { reviewMismatch: true } });
     expect(score(asked, { text: 'Gravity' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
     expect(score(asked, { text: 'the wind' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: true });
-    // The key is a whole sentence, which nobody types word for word.
+    // A sentence is checked by its key words, and nothing waits.
     const sentence = snap({ type: 'SHORT_ANSWER', text: 'Why does ice float?', accepted: ['Because ice is less dense than liquid water'] });
     expect(score(sentence, { text: 'because ice is less dense than liquid water.' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
-    expect(score(sentence, { text: 'ice is lighter than water' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: true });
-    // …unless the teacher said that the system marks all of them.
-    const all = snap({ type: 'SHORT_ANSWER', text: 'Why does ice float?', accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } });
-    expect(score(all, { text: 'ice is lighter than water' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    expect(score(sentence, { text: 'Liquid water is denser, so the ice stays on top' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    expect(score(sentence, { text: 'it is not as heavy' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    // …except an answer that has the key words and a "not" that the accepted answer does not have.
+    expect(score(sentence, { text: 'ice is not dense, liquid water is' })).toEqual({ autoScore: 0, isCorrect: null, needsManual: true });
     // An answer that was left empty never waits.
     expect(score(sentence, { text: '   ' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+  });
+
+  it('a short answer that is a sentence is checked by its key words', () => {
+    const question = { type: 'SHORT_ANSWER', text: '<p>What is an algorithm?</p>', accepted: ['An algorithm is a step-by-step procedure for solving a problem'] };
+    const sentence = snap(question);
+    // What the system looks for: the words that carry meaning, without the one the question gives.
+    expect(keyWordsOf(sentence)).toEqual([{ accepted: question.accepted[0], keyWords: ['step', 'procedure', 'solving', 'problem'], right: 3, half: 2 }]);
+    // Nothing is half right where the question gives no part of the points.
+    expect(keyWordsOf(snap({ ...question, settings: { partialCredit: false } }))[0]).toMatchObject({ right: 3, half: null });
+    expect(keyWordsOf(question)).toEqual(keyWordsOf(sentence));
+    // In the student's own words, in any order: right.
+    expect(score(sentence, { text: 'It is a procedure that solves problems step by step.' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    // About half of the key words: half of the points…
+    expect(score(sentence, { text: 'a procedure for a problem' })).toEqual({ autoScore: 5, isCorrect: false, needsManual: false });
+    // …or none, where the question gives no part of the points.
+    expect(score(snap({ ...question, settings: { partialCredit: false } }), { text: 'a procedure for a problem' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    // Repeating the question earns nothing.
+    expect(score(sentence, { text: 'An algorithm is an algorithm' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    // A teacher who looks at the other answers gets every answer that is not right.
+    const asked = snap({ ...question, settings: { reviewMismatch: true } });
+    expect(score(asked, { text: 'a procedure that solves problems step by step' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    expect(score(asked, { text: 'a procedure for a problem' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: true });
+    // Exactly as written: no key words.
+    const exact = snap({ ...question, settings: { caseSensitive: true } });
+    expect(score(exact, { text: 'a procedure that solves problems step by step' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    expect(keyWordsOf(exact)).toEqual([]);
+    // Only a short answer: an identification is a term.
+    expect(score(snap({ ...question, type: 'IDENTIFICATION' }), { text: 'a procedure that solves problems step by step' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    expect(keyWordsOf({ ...question, type: 'IDENTIFICATION' })).toEqual([]);
+    expect(keyWordsOf({ type: 'SHORT_ANSWER', text: 'Why?', accepted: ['gravity'] })).toEqual([]);
+  });
+
+  it('the teacher says whether a short answer is checked by key words', () => {
+    // A phrase, with key words asked for: the words are looked for in what the student wrote.
+    const phrase = { type: 'SHORT_ANSWER', text: 'Name the two parts of the CPU.', accepted: ['control unit, arithmetic logic unit'], settings: { keyWords: true } };
+    expect(keyWordsOf(snap(phrase))).toEqual([{ accepted: phrase.accepted[0], keyWords: ['control', 'unit', 'arithmetic', 'logic'], right: 3, half: 2 }]);
+    expect(score(snap(phrase), { text: 'It has an arithmetic and logic unit, and a unit for control' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    expect(score(snap(phrase), { text: 'the control unit and the memory' })).toEqual({ autoScore: 5, isCorrect: false, needsManual: false });
+    expect(score(snap({ ...phrase, settings: {} }), { text: 'It has an arithmetic and logic unit, and a unit for control' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    expect(shortAnswerCheck(snap(phrase), { text: 'the control unit and the memory' })).toMatchObject({ how: 'KEY_WORDS', share: 0.5, found: ['control', 'unit'], missing: ['arithmetic', 'logic'] });
+    // A sentence, with key words switched off: an answer has to be the accepted answer.
+    const sentence = { type: 'SHORT_ANSWER', text: 'What is an algorithm?', accepted: ['An algorithm is a step-by-step procedure for solving a problem'], settings: { keyWords: false } };
+    expect(keyWordsOf(snap(sentence))).toEqual([]);
+    expect(score(snap(sentence), { text: 'a procedure that solves problems step by step' })).toEqual({ autoScore: 0, isCorrect: false, needsManual: false });
+    expect(score(snap(sentence), { text: 'an algorithm is a step-by-step procedure for solving a problem.' })).toEqual({ autoScore: 10, isCorrect: true, needsManual: false });
+    // The choice travels with the question: stored, shown to the editor, and copied into an attempt.
+    expect(toEditorShape({ ...stored(phrase), choices: [] }).settings).toEqual({ keyWords: true });
+    expect(snap(phrase).settings).toEqual({ keyWords: true });
+  });
+
+  it('says how a short answer was held against its key, for the review', () => {
+    const sentence = snap({ type: 'SHORT_ANSWER', text: 'What is an algorithm?', accepted: ['A step-by-step procedure for solving a problem', 'recipe'] });
+    const first = 'A step-by-step procedure for solving a problem';
+    expect(shortAnswerCheck(sentence, { text: 'Recipe.' })).toEqual({ how: 'SAME', share: 1, doubt: null, accepted: null, found: [], missing: [] });
+    expect(shortAnswerCheck(sentence, { text: 'the step-by-step procedures for solving a problem' })).toEqual({ how: 'WORDS', share: 1, doubt: null, accepted: first, found: [], missing: [] });
+    expect(shortAnswerCheck(sentence, { text: 'a procedure to solve problems' })).toEqual({ how: 'KEY_WORDS', share: 1, doubt: null, accepted: first, found: ['procedure', 'solving', 'problem'], missing: ['step'] });
+    expect(shortAnswerCheck(sentence, { text: 'a procedure' })).toEqual({ how: 'KEY_WORDS', share: 0, doubt: null, accepted: first, found: ['procedure'], missing: ['step', 'solving', 'problem'] });
+    expect(shortAnswerCheck(sentence, { text: 'it is not a procedure for solving problems' })).toMatchObject({ how: 'KEY_WORDS', share: 1, doubt: { why: 'NOT', words: ['procedure'], side: 'ANSWER' } });
+    // What is shown is what was counted.
+    const strict = snap({ type: 'SHORT_ANSWER', text: 'What is an algorithm?', accepted: [first], settings: { partialCredit: false } });
+    expect(shortAnswerCheck(strict, { text: 'a procedure for a problem' })).toMatchObject({ how: 'KEY_WORDS', share: 0, found: ['procedure', 'problem'] });
+    expect(shortAnswerCheck(sentence, { text: 'a procedure for a problem' })).toMatchObject({ how: 'KEY_WORDS', share: 0.5 });
+    // Nothing to say about an answer that was not given, a question without a key, or another type.
+    expect(shortAnswerCheck(sentence, null)).toBeNull();
+    expect(shortAnswerCheck(snap({ type: 'SHORT_ANSWER', text: 'Why?' }), { text: 'x' })).toBeNull();
+    expect(shortAnswerCheck(snap({ type: 'IDENTIFICATION', text: 'x', accepted: ['a'] }), { text: 'a' })).toBeNull();
   });
 
   it('says who marks the answers to a question', () => {
@@ -195,10 +262,19 @@ describe('automatic scoring', () => {
     expect(by({ type: 'SHORT_ANSWER', accepted: [] })).toEqual({ by: 'TEACHER', why: 'NO_KEY' });
     expect(by({ type: 'SHORT_ANSWER', accepted: ['gravity'] })).toEqual({ by: 'SYSTEM', why: null });
     expect(by({ type: 'SHORT_ANSWER', accepted: ['gravity'], settings: { reviewMismatch: true } })).toEqual({ by: 'BOTH', why: 'CHOSEN' });
-    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'] })).toEqual({ by: 'BOTH', why: 'SENTENCE' });
-    // One short wording among them is enough for the system to decide.
-    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water', 'less dense'] })).toEqual({ by: 'SYSTEM', why: null });
-    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } })).toEqual({ by: 'SYSTEM', why: null });
+    // A sentence among the accepted answers is checked by its key words.
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'] })).toEqual({ by: 'SYSTEM', why: 'KEY_WORDS' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water', 'less dense'] })).toEqual({ by: 'SYSTEM', why: 'KEY_WORDS' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: false } })).toEqual({ by: 'SYSTEM', why: 'KEY_WORDS' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'], settings: { reviewMismatch: true } })).toEqual({ by: 'BOTH', why: 'CHOSEN' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'], settings: { caseSensitive: true } })).toEqual({ by: 'SYSTEM', why: null });
+    // The teacher says: key words for a phrase, or none for a sentence.
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['gravity'], settings: { keyWords: true } })).toEqual({ by: 'SYSTEM', why: 'KEY_WORDS' });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['Because ice is less dense than liquid water'], settings: { keyWords: false } })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'SHORT_ANSWER', accepted: ['gravity'], settings: { keyWords: true, caseSensitive: true } })).toEqual({ by: 'SYSTEM', why: null });
+    expect(by({ type: 'SHORT_ANSWER', accepted: [], settings: { keyWords: true } })).toEqual({ by: 'TEACHER', why: 'NO_KEY' });
+    expect(usesKeyWords({ type: 'SHORT_ANSWER', accepted: ['gravity'], settings: { keyWords: true, reviewMismatch: true } })).toBe(true);
+    expect(usesKeyWords({ type: 'IDENTIFICATION', accepted: ['A whole sentence of more than six words here'], settings: { keyWords: true } })).toBe(false);
     // The same answer for a stored question and for the copy an attempt holds.
     const question = stored({ type: 'SHORT_ANSWER', text: 'Why?', accepted: ['gravity'], settings: { reviewMismatch: true } });
     expect(markedBy(question)).toEqual({ by: 'BOTH', why: 'CHOSEN' });
@@ -206,18 +282,25 @@ describe('automatic scoring', () => {
     // The choice is kept only where it means something.
     expect(stored({ type: 'IDENTIFICATION', text: 'x', accepted: ['a'], settings: { reviewMismatch: true } }).settings).toEqual({});
     expect(stored({ type: 'SHORT_ANSWER', text: 'x', accepted: ['a'], settings: { reviewMismatch: false } }).settings).toEqual({ reviewMismatch: false });
+    expect(stored({ type: 'SHORT_ANSWER', text: 'x', accepted: ['a'], settings: { keyWords: true } }).settings).toEqual({ keyWords: true });
+    expect(stored({ type: 'SHORT_ANSWER', text: 'x', accepted: ['a'], settings: { keyWords: 'yes' } }).settings).toEqual({});
+    expect(stored({ type: 'IDENTIFICATION', text: 'x', accepted: ['a'], settings: { keyWords: true } }).settings).toEqual({});
   });
 
   it('is said the same way by the web app, before a question is saved', () => {
     // The builder and the import show who marks a question from their own copy of the rule.
     const sentence = 'Because ice is less dense than liquid water';
     const types = ['MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'MODIFIED_TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER', 'ESSAY', 'MATCHING', 'FILL_BLANKS', 'ORDERING', 'PROGRAMMING', 'FILE_UPLOAD'];
-    const keys = [undefined, [], ['gravity'], [sentence], [sentence, 'less dense'], [sentence, `${sentence} and so it floats`], ['one two three four five six'], ['one two three four five six seven']];
-    const choices = [undefined, {}, { reviewMismatch: true }, { reviewMismatch: false }, { caseSensitive: true }];
+    const keys = [undefined, [], ['gravity'], [sentence], [sentence, 'less dense'], [sentence, `${sentence} and so it floats`], ['one two three four five six'], ['one two three four five six seven'],
+      // Four words and more that state something are a sentence; the name of a thing is not.
+      ['It stores data permanently'], ['It stores data'], ['RAM is volatile memory'], ['IT support staff members'], ['Basic Input Output System'], ['do while loop statement'], ['AND gate and OR gate'], ['Ito ay bahagi ng computer'], ["They can't be changed"], ['IT IS A PROCEDURE']];
+    const choices = [undefined, {}, { reviewMismatch: true }, { reviewMismatch: false }, { caseSensitive: true }, { keyWords: true }, { keyWords: false }, { keyWords: true, caseSensitive: true }, { keyWords: true, reviewMismatch: true }];
     for (const type of types) for (const accepted of keys) for (const settings of choices) {
       const question = { type, ...(accepted ? { accepted } : {}), ...(settings ? { settings } : {}) };
       expect(shownAsMarkedBy(question), JSON.stringify(question)).toEqual(markedBy(question));
+      expect(shownAsUsingKeyWords(question), JSON.stringify(question)).toBe(usesKeyWords(question));
     }
+    for (const accepted of keys.flat().filter(Boolean)) expect(shownAsSentence(accepted), accepted).toBe(isSentence(accepted));
     // A list that is still being typed: empty lines are not answers.
     expect(shownAsMarkedBy({ type: 'SHORT_ANSWER', accepted: ['', '  '] })).toEqual({ by: 'TEACHER', why: 'NO_KEY' });
     expect(shownAsMarkedBy({ type: 'SHORT_ANSWER', accepted: ['gravity', ''] })).toEqual({ by: 'SYSTEM', why: null });

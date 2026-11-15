@@ -119,5 +119,12 @@ describe('comparing a typed answer with the answer key', () => {
     expect(isSentence('Central Processing Unit')).toBe(false);
     expect(isSentence('one two three four five six')).toBe(false);
     expect(isSentence('Because ice is less dense than liquid water')).toBe(true);
+    expect(isSentence('A step-by-step procedure for solving a problem')).toBe(true);
+    // Four words and more that state something are a sentence too.
+    for (const statement of ['It stores data permanently', 'RAM is volatile memory', "They can't be changed", 'Plants make food because they have chlorophyll', 'Ito ay bahagi ng computer', 'IT IS A PROCEDURE']) expect(isSentence(statement), statement).toBe(true);
+    // Three words are a phrase, and so is the name of a thing — whatever words are in it.
+    for (const name of ['It stores data', 'Basic Input Output System', 'American Standard Code for Information Interchange', 'do while loop statement', 'if then else statement', 'AND gate and OR gate', 'IT support staff members', 'arithmetic logic unit and control unit']) expect(isSentence(name), name).toBe(false);
+    expect(isSentence('')).toBe(false);
+    expect(isSentence(null)).toBe(false);
   });
 });

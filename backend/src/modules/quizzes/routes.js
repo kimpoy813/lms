@@ -11,7 +11,7 @@ import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId,
 import { logger } from '../../lib/logger.js';
 import { MAX_IMPORT_QUESTIONS, questionsToJson } from '../../lib/questionJson.js';
 import { arrangeQuestions, hasNamedParts, hasParts, partsInOrder } from '../../lib/quizParts.js';
-import { MANUAL_TYPES, attemptTotals, buildSnapshot, correctAnswer, isAnswered, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, shuffle, toEditorShape } from '../../lib/quizScoring.js';
+import { MANUAL_TYPES, attemptTotals, buildSnapshot, correctAnswer, isAnswered, keyWordsOf, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, shortAnswerCheck, shuffle, toEditorShape } from '../../lib/quizScoring.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { dateKey, timeKey } from '../../lib/time.js';
 import { isPublished, publishedWhere, quizResultsVisible, resolvePublication } from '../../lib/visibility.js';
@@ -106,7 +106,9 @@ const manageView = (quiz, now, arrangement = quizArrangement(quiz)) => ({
   attemptCount: quiz._count.attempts,
   locked: quiz._count.attempts > 0,
   // In the order in which students get them. `part` is an index into `parts` (null: no parts).
-  questions: arrangement.questions.map(({ qq, part }) => ({ ...toEditorShape(qq.question), points: qq.points, bankPoints: qq.question.points, removed: Boolean(qq.question.deletedAt), part })),
+  // `keyWords`: for a short answer that is checked by key words, what the system looks for and how
+  // many of them an answer needs: [{ accepted, keyWords, right, half }].
+  questions: arrangement.questions.map(({ qq, part }) => ({ ...toEditorShape(qq.question), points: qq.points, bankPoints: qq.question.points, removed: Boolean(qq.question.deletedAt), part, keyWords: keyWordsOf(qq.question) })),
   // The parts the quiz is given in: [{ title, first, count, points }]. Empty when it has none.
   parts: arrangement.parts,
   // Are the questions of a part kept together (see lib/quizParts.js)? Then shuffling stays inside each part.
@@ -907,7 +909,8 @@ function reviewAnswer(answer, files, { reveal, scores, part = null }) {
     answered: isAnswered(answer.response),
     ...(scores ? { score: answer.score, autoScore: answer.autoScore, manualScore: answer.manualScore, isCorrect: answer.isCorrect, needsManual: answer.needsManual && answer.manualScore === null, feedback: answer.feedback } : {}),
     // `pieces`: which blanks or pairs were counted as right (null for the other types).
-    ...(reveal ? { correct: correctAnswer(answer.snapshot), pieces: pieceResults(answer.snapshot, answer.response), explanation: answer.snapshot.explanation ?? null } : {}),
+    // `check`: how a short answer was held against its key, with the key words found and missing (null for the other types).
+    ...(reveal ? { correct: correctAnswer(answer.snapshot), pieces: pieceResults(answer.snapshot, answer.response), check: shortAnswerCheck(answer.snapshot, answer.response), explanation: answer.snapshot.explanation ?? null } : {}),
   };
 }
 
@@ -1316,25 +1319,37 @@ function markedAgain(answer) {
   // Everything that was right is still right under today's rules. Should that ever not hold,
   // the score that was given stands: marking again never takes points away.
   if ((result.autoScore ?? 0) < (answer.autoScore ?? 0)) return null;
+  // An answer that waited and still waits has not changed, whatever is noted about its correctness.
+  if (result.needsManual && answer.needsManual) return null;
   return result.autoScore === answer.autoScore && result.isCorrect === answer.isCorrect && result.needsManual === answer.needsManual ? null : result;
 }
 
 /** The attempts whose answers can be marked again: handed in, and not standing as failed for a rule violation. */
 const markableAttempts = (quizId) => ({ quizId, status: { in: FINISHED }, terminatedAt: null });
+/** The questions whose answer is typed and held against a key: where a better comparison can change a mark. */
+const TYPED_ANSWERS = ['SHORT_ANSWER', 'IDENTIFICATION', 'FILL_BLANKS', 'MODIFIED_TRUE_FALSE'];
 
 quizzesRouter.get('/:quizId/results', validate({ params: quizParams }), async (req, res) => {
   const { quiz } = await loadManaged(req, { writable: false });
   const rows = await resultRows(quiz);
   const scored = rows.filter((r) => r.percent !== null);
-  // Answers that wait for the teacher although the system can mark them: handed in before it could.
-  const waiting = await prisma.studentAnswer.findMany({ where: { needsManual: true, manualScore: null, attempt: markableAttempts(quiz.id) }, select: { snapshot: true, response: true, points: true, autoScore: true, isCorrect: true, needsManual: true, manualScore: true, gradedAt: true } });
+  // Answers that marking again would change (POST …/results/recheck): they wait for the teacher
+  // although the system can mark them, or the rules as they are today give them more than they
+  // have. Only typed answers can be among the second kind.
+  const again = await prisma.studentAnswer.findMany({
+    where: {
+      manualScore: null, gradedAt: null, attempt: markableAttempts(quiz.id),
+      OR: [{ needsManual: true }, { isCorrect: false, OR: TYPED_ANSWERS.map((type) => ({ snapshot: { path: ['type'], equals: type } })) }],
+    },
+    select: { snapshot: true, response: true, points: true, autoScore: true, isCorrect: true, needsManual: true, manualScore: true, gradedAt: true },
+  });
   ok(res, {
     quiz: { ...baseView(quiz), status: quiz.status, resultVisibility: quiz.resultVisibility, answerVisibility: quiz.answerVisibility, resultsPublishedAt: quiz.resultsPublishedAt },
     students: rows,
     stats: {
       submitted: rows.filter((r) => r.attempts.some((a) => FINISHED.includes(a.status))).length,
       needsGrading: rows.filter((r) => r.status === 'NEEDS_GRADING').length,
-      canBeMarked: waiting.filter((a) => markedAgain(a)?.needsManual === false).length,
+      canBeMarked: again.filter((a) => markedAgain(a) !== null).length,
       // Students with an attempt that was ended for a rule violation and not yet decided on.
       violations: rows.filter((r) => r.attempts.some((a) => a.terminated)).length,
       average: scored.length === 0 ? null : round(scored.reduce((s, r) => s + r.percent, 0) / scored.length, 1),
@@ -1390,10 +1405,12 @@ attemptsRouter.put(
  * the rules as they are today (lib/answerMatch.js, lib/quizScoring.js).
  *
  * For attempts that were handed in under older rules: an answer that waits for the teacher
- * although the system can mark it is marked, and an answer that was marked wrong for a
- * difference that no longer counts ("harddisk" for "hard disk") is marked right. A score never
- * goes down by this, and a score that the teacher gave is never touched; neither is an essay, a
- * file, a program, or an attempt that stands as failed for a rule violation.
+ * although the system can mark it is marked (a sentence by its key words, lib/keyWords.js), and
+ * an answer that was marked wrong for a difference that no longer counts ("harddisk" for "hard
+ * disk") is marked right. A score never goes down by this, and a score that the teacher gave is
+ * never touched; neither is an essay, a file, a program, or an attempt that stands as failed for
+ * a rule violation. The results of a quiz say how many answers this would change
+ * (stats.canBeMarked).
  */
 quizzesRouter.post('/:quizId/results/recheck', validate({ params: quizParams, body: z.object({}).passthrough() }), async (req, res) => {
   const { quiz, cls } = await loadManaged(req);
@@ -1578,13 +1595,14 @@ const release = (publish) => async (req, res) => {
 quizzesRouter.post('/:quizId/results/publish', validate({ params: quizParams, body: z.object({ confirmPending: z.boolean().default(false) }) }), release(true));
 quizzesRouter.post('/:quizId/results/withhold', validate({ params: quizParams, body: z.object({}).passthrough() }), release(false));
 
-/** How each question performed, across every submitted attempt. */
+/** How each question performed, across every submitted attempt: the questions in the order of the quiz. */
 quizzesRouter.get('/:quizId/analysis', validate({ params: quizParams }), async (req, res) => {
   const { quiz } = await loadManaged(req, { writable: false });
   const answers = await prisma.studentAnswer.findMany({
     // An attempt that stands as failed for a rule violation has answers that were never marked.
     where: { attempt: { quizId: quiz.id, status: { in: FINISHED }, terminatedAt: null } },
     select: { questionId: true, snapshot: true, response: true, score: true, points: true, isCorrect: true, needsManual: true, manualScore: true },
+    orderBy: [{ attemptId: 'asc' }, { position: 'asc' }],
   });
   const byQuestion = new Map();
   for (const a of answers) {
@@ -1608,7 +1626,10 @@ quizzesRouter.get('/:quizId/analysis', validate({ params: quizParams }), async (
       }
     }
   }
-  ok(res, [...byQuestion.values()].map((r) => ({
+  // As the quiz has them; a question that is no longer in the quiz, or was drawn from a bank, after those.
+  const order = new Map(quizArrangement(quiz).questions.map(({ qq }, i) => [qq.question.id, i]));
+  const place = (row) => order.get(row.questionId) ?? order.size;
+  ok(res, [...byQuestion.values()].sort((a, b) => place(a) - place(b)).map((r) => ({
     questionId: r.questionId, type: r.type, text: r.text, responses: r.responses, answered: r.answered, pending: r.pending,
     correctPercent: r.responses - r.pending === 0 ? null : round((r.correct / (r.responses - r.pending)) * 100, 1),
     averagePercent: r.possible === 0 ? null : round((r.earned / r.possible) * 100, 1),

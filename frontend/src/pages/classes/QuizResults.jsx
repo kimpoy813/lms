@@ -96,9 +96,9 @@ export default function QuizResults() {
             )}
 
             {stats.canBeMarked > 0 && (
-              <Alert tone="info" className="mb-4" title={`${plural(stats.canBeMarked, 'answer')} ${stats.canBeMarked === 1 ? 'waits' : 'wait'} for you that the system can check`}
+              <Alert tone="info" className="mb-4" title={`The system can check ${plural(stats.canBeMarked, 'answer')} that ${stats.canBeMarked === 1 ? 'was' : 'were'} handed in earlier`}
                 action={cls.status === 'ARCHIVED' ? null : <Button size="sm" loading={recheck.isPending} onClick={() => recheck.mutate()}>{stats.canBeMarked === 1 ? 'Check it now' : 'Check them now'}</Button>}>
-                {stats.canBeMarked === 1 ? 'It was' : 'They were'} handed in when a short answer that did not match the answer key was left to you. The system now checks such an answer itself: right when it matches an accepted answer, wrong when it does not. Scores you gave yourself stay as they are.
+                {stats.canBeMarked === 1 ? 'It is a short answer' : 'They are short answers'} from before the system checked them the way it does now: right when it is an accepted answer, and a sentence by its key words. Answers that waited for you are marked, and no score goes down. Scores you gave yourself stay as they are.
               </Alert>
             )}
 

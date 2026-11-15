@@ -2,10 +2,10 @@
 
 | Suite | Command | Size | Needs |
 |---|---|---|---|
-| API and unit tests | `npm run test:backend` | 776 tests in 33 files, about two minutes | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
-| Web-app unit tests | `npm run test:frontend` | 318 tests in 12 files, about ten seconds | Nothing |
+| API and unit tests | `npm run test:backend` | 816 tests in 34 files, about two minutes | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
+| Web-app unit tests | `npm run test:frontend` | 322 tests in 13 files, about ten seconds | Nothing |
 | Both of the above | `npm test` | | |
-| Browser tests | `npm run test:e2e` | 66 tests in 14 files, about eight minutes | A Chromium browser and the demo data |
+| Browser tests | `npm run test:e2e` | 70 tests in 15 files, about eight minutes | A Chromium browser and the demo data |
 | Lint | `npm run lint` | | |
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
 | The code runner on a real Vercel account | `npm run judge:check` | 29 checks, about a minute | Vercel credentials; starts eight machines ([below](#the-code-runner-against-a-real-account)) |
@@ -112,24 +112,31 @@ Two files belong to the [import of questions](QUESTION-IMPORT.md):
   question does not enter a quiz twice, a bank counts only the quizzes that still exist, the
   limits, who may import, and a student marked by a key that came from a file.
 
-Four files belong to [how a quiz is given and marked](QUIZZES.md):
+Five files belong to [how a quiz is given and marked](QUIZZES.md):
 
 - `unit/answer-match.test.js` is the comparison of a typed answer with the answer key, as two
   lists: what must be marked right although it is not typed like the key ("the cpu" for "CPU",
   "harddisk" for "hard disk", "eight" for "8"), and what must stay wrong although it looks like
   the key ("ROM" for "RAM", "C" for "C++", "A, B" for "B"). A change that moves a pair from one
   list to the other changes students' scores, and shows here first.
+- `unit/key-words.test.js` is the check of a short answer by its key words: the forms of a
+  word that count as one word, what a key word is, how many of them make an answer right or
+  half right, and the examples of each — with what must stay wrong ("a unit of data made of 16
+  bits"), the five doubts that are left to the teacher ("they are not lost", "more" for "less",
+  two things that changed places) and what must raise no doubt. It also holds what a word or
+  a phrase may differ by, and what it may not ("OR gate" for "AND gate").
 - `unit/quiz-parts.test.js` is the parts of a quiz: which part a question belongs to, that
   shuffling changes the order inside each part and never the parts, and which parts an attempt
   shows.
 - `unit/quiz.test.js` marks every type of question, says who marks a question (the system, the
-  teacher, or both), and checks that the web app's copy of that rule
-  (`frontend/src/lib/quizMarking.js`) says the same.
+  teacher, or both) and whether its key words are looked for, and checks that the web app's
+  copy of those rules (`frontend/src/lib/quizMarking.js`) says the same.
 - `api/quiz-marking-parts.test.js` is both through the API: a whole class takes a shuffled
   quiz part by part, each student in an order of their own; questions drawn at random join the
-  part of their kind; a short answer is marked the moment it is handed in; what waits for the
-  teacher; and answers that were handed in before the system could mark them are marked again
-  without touching a score the teacher gave.
+  part of their kind; a short answer is marked the moment it is handed in, a sentence by its
+  key words; what waits for the teacher; how an answer would be marked, asked before any
+  student gives it; and answers that were handed in before the system could mark them are
+  marked again without touching a score the teacher gave.
 
 Run one file with `cd backend && npx vitest run tests/api/quizzes.test.js`.
 
@@ -151,7 +158,9 @@ counted once, that the screen is kept on or the student told when it cannot be, 
 report is kept until the server has it. `questionFormat.test.js` has the examples of the
 [question format](QUESTION-IMPORT.md) and the request for a chat assistant: that the request
 asks for what was chosen, and that it is told from an answer when it is pasted back by
-mistake. Screens are covered by the browser tests, not by component tests.
+mistake. `quizMarking.test.js` has what a teacher is told when the system leaves an answer to
+them, and what the web app takes for a sentence. Screens are covered by the browser tests, not
+by component tests.
 
 `frontend/src/lib/pyRunner/` has the tests of [Python in the browser](#python-in-the-browser).
 
@@ -166,6 +175,7 @@ Playwright drives the real web app with the demo accounts (`e2e/tests/`):
 | `announcements.spec.js` | A teacher posts to a class; a student in it sees the post, a student outside does not |
 | `quiz.spec.js` | A student takes a quiz and sees the score; the answer key is not sent while the attempt is open |
 | `quiz-parts.spec.js` | [Parts and marking](QUIZZES.md). The teacher sees an examination under the headings of its parts, adds a question to a part, edits one without it leaving its part, and moves a whole part; a student takes the shuffled paper part by part and has the score on handing in, typed answers included; the teacher finds nothing left to grade |
+| `quiz-key-words.spec.js` | [A sentence checked by its key words](QUIZZES.md#a-sentence-is-checked-by-its-key-words). The builder says which questions are checked that way and what it looks for; a student answers in their own words and has the score on handing in, with half the points for half the key words; an answer that says "not" where the key does not waits, and the teacher is shown why and decides; the teacher has the key words of a phrase looked for, and tries an answer before saving |
 | `quiz-rules.spec.js` | [Strict rules](QUIZ-RULES.md) from both sides. The student reads the rules before starting; leaving the page ends the attempt, and the questions and the score are gone; the teacher sees what was recorded and reopens; the student continues with the answers already given and the time that was left. Pasting from outside draws the warning the quiz allows and a screenshot key then ends the attempt, while reload and Back are only stopped; reloading for real and a second browser; another page of the site; the file chooser; a programming question, where the student's own code is cut, pasted and run in the browser and code from elsewhere is counted; the same question when the code editor cannot be downloaded, answered in a plain text box without a reload; a quiz without the rules; a phone-sized screen; the teacher's settings. Leaving a tab and losing the focus are produced the way the page sees them (headless Chromium has one tab that always has the focus); keys, the clipboard, reloading, Back, the second browser, the file chooser and Python are real |
 | `question-import.spec.js` | [Importing questions](QUESTION-IMPORT.md): the reply of a chat assistant is pasted into a new quiz; a mistake in the JSON is named with its line; each question shows the answer that was read, the one given as a number is marked to be checked and the one that fits no choice waits unticked until it is fixed in the editor; the questions are added, recognised when pasted again, and downloaded as the same JSON. An examination takes a question set that lists the wrong answers apart from the correct one, and is called an examination throughout. The request for a chat assistant is copied, and refused when it is pasted in place of the answer. A question bank takes a JSON file |
 | `smoke.spec.js` | Every main page and class tab opens for each role without errors or sideways scrolling; the sign-in page on a phone-sized screen |

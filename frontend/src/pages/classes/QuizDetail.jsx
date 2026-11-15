@@ -219,6 +219,9 @@ function Builder({ quiz }) {
   });
   // Who marks what: the questions that can wait for the teacher.
   const waits = quiz.questions.filter((q) => markedBy(q).by !== 'SYSTEM').length;
+  // Short answers that are checked by their key words: a sentence, or where the teacher asked for it.
+  const keyed = quiz.questions.filter((q) => markedBy(q).why === 'KEY_WORDS').length;
+  const keyedNote = keyed > 0 ? ` ${plural(keyed, 'short answer')} ${keyed === 1 ? 'is' : 'are'} checked by key words: there, an answer that has your words but may say the opposite is left to you.` : '';
   const partNames = [...new Set(quiz.questions.map((q) => q.section).filter(Boolean))];
 
   const poolPoints = quiz.pools.reduce((s, p) => s + p.count * p.pointsEach, 0);
@@ -374,8 +377,8 @@ function Builder({ quiz }) {
           </dl>
           {poolPoints > 0 && <p className="mt-2 text-center text-xs text-faint">includes {formatScore(poolPoints)} points from random questions</p>}
           {quiz.questions.length > 0 && (waits > 0
-            ? <p className="mt-3 flex gap-2 text-[13px] text-soft" data-testid="marking-note"><AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden="true" /><span>{plural(waits, 'question')} can wait for your grade. The system checks all the others the moment a student hands in. A student’s score shows once nothing waits.</span></p>
-            : <p className="mt-3 flex gap-2 text-[13px] text-soft" data-testid="marking-note"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" aria-hidden="true" /><span>The system checks every question the moment a student hands in.{quiz.pools.length > 0 ? ' Random questions are checked the same way, except essays and file uploads.' : ''}</span></p>)}
+            ? <p className="mt-3 flex gap-2 text-[13px] text-soft" data-testid="marking-note"><AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden="true" /><span>{plural(waits, 'question')} can wait for your grade. The system checks all the others the moment a student hands in. A student’s score shows once nothing waits.{keyedNote}</span></p>
+            : <p className="mt-3 flex gap-2 text-[13px] text-soft" data-testid="marking-note"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" aria-hidden="true" /><span>The system checks every question the moment a student hands in.{quiz.pools.length > 0 ? ' Random questions are checked the same way, except essays and file uploads.' : ''}{keyedNote}</span></p>)}
           {quiz.status !== 'DRAFT' && !readOnly && quiz.attemptCount === 0 && <Button variant="ghost" size="sm" className="mt-3 w-full" loading={publish.isPending} onClick={() => publish.mutate('DRAFT')}>Move back to draft</Button>}
         </Card>
         <Card>
