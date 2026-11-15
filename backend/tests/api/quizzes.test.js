@@ -95,7 +95,7 @@ describe('question banks', () => {
     const fixed = pasted.body.data.questions.map((q, i) => (i === 2 ? { ...q, choices: [{ text: 'x', isCorrect: true }, { text: 'y' }] } : q));
     expect((await teacher.post(`/api/question-banks/${id}/questions/bulk`, { questions: fixed })).body.data.saved).toBe(3);
     const again = await teacher.post(`/api/question-banks/${id}/import/preview`, { text: paper });
-    expect(again.body.data.questions[0].warnings.join(' ')).toMatch(/already in this bank/);
+    expect(again.body.data.questions.map((q) => q.duplicate)).toEqual([true, true, true]);
   });
 });
 

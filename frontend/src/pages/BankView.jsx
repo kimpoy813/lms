@@ -1,17 +1,16 @@
 // One question bank: its questions, and importing an existing test paper into it.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Copy, FileUp, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Upload, XCircle } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Copy, Download, FileUp, MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { useParams } from 'react-router';
-import { useAuth } from '../auth/AuthContext.jsx';
 import { toast } from '../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, IconButton, Menu, MenuItem, Modal, PageHeader, Pagination, QueryState, SearchInput, Select, Textarea, useDebounced } from '../components/ui.jsx';
-import { api } from '../lib/api.js';
-import { formatLimit, formatScore, plural } from '../lib/format.js';
+import { Badge, Button, Card, ConfirmDialog, EmptyState, IconButton, Menu, MenuItem, PageHeader, Pagination, QueryState, SearchInput, Select, useDebounced } from '../components/ui.jsx';
+import { api, errorMessage } from '../lib/api.js';
+import { formatScore, plural } from '../lib/format.js';
 import { useAction } from '../lib/query.js';
-import { AnswerKey } from './classes/QuizDetail.jsx';
+import ImportQuestions from './classes/quiz/ImportQuestions.jsx';
 import QuestionEditor from './classes/quiz/QuestionEditor.jsx';
-import { DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './classes/quiz/QuestionParts.jsx';
+import { AnswerKey, DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './classes/quiz/QuestionParts.jsx';
 
 export default function BankView() {
   const { bankId } = useParams();
@@ -28,6 +27,8 @@ export default function BankView() {
   const refresh = () => { client.invalidateQueries({ queryKey: ['question-banks'] }); };
   const remove = useAction((id) => api.delete(`/question-banks/questions/${id}`), { invalidate: [['question-banks']], success: 'Question deleted.', onSuccess: () => setDialog(null) });
   const copy = useAction((id) => api.post(`/question-banks/questions/${id}/copy`, {}), { invalidate: [['question-banks']], success: 'Question duplicated.' });
+  // The whole bank with its answers, in the format the import reads.
+  const download = () => api.download(`/question-banks/${bankId}/export`, undefined, 'questions.json').catch((err) => toast.error(errorMessage(err)));
   const meta = query.data?.meta;
   const setFilter = (name, value) => { setFilters((f) => ({ ...f, [name]: value })); setPage(1); };
 
@@ -36,7 +37,8 @@ export default function BankView() {
       <PageHeader back={{ to: '/question-banks', label: 'Question banks' }} title={bank?.title ?? 'Question bank'} description={bank ? [bank.subject, plural(bank.questionCount, 'question')].filter(Boolean).join(' · ') : null}
         actions={<>
           <Button variant="secondary" icon={Sparkles} to="/ai?tool=questions">Draft with AI</Button>
-          <Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import a test paper</Button>
+          {bank?.questionCount > 0 && <IconButton icon={Download} variant="secondary" label="Download the questions as a JSON file" onClick={download} />}
+          <Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import questions</Button>
           <Button icon={Plus} onClick={() => setDialog({ edit: null })}>New question</Button>
         </>} />
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -47,7 +49,7 @@ export default function BankView() {
       </div>
       <QueryState query={{ ...query, data: query.data?.data }}>
         {(questions) => questions.length === 0 ? (
-          <Card><EmptyState icon={Plus} title={term || filters.type || filters.difficulty || filters.topic ? 'No questions match' : 'This bank is empty'} description={term || filters.type ? null : 'Write a question, or import the questions of an existing test paper.'} action={<div className="flex flex-wrap justify-center gap-2"><Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import a test paper</Button><Button icon={Plus} onClick={() => setDialog({ edit: null })}>New question</Button></div>} /></Card>
+          <Card><EmptyState icon={Plus} title={term || filters.type || filters.difficulty || filters.topic ? 'No questions match' : 'This bank is empty'} description={term || filters.type ? null : 'Write a question, or import questions you already have: as JSON, or a test paper as Word, PDF or text.'} action={<div className="flex flex-wrap justify-center gap-2"><Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import questions</Button><Button icon={Plus} onClick={() => setDialog({ edit: null })}>New question</Button></div>} /></Card>
         ) : (
           <ol className="space-y-3">
             {questions.map((q, i) => (
@@ -82,112 +84,13 @@ export default function BankView() {
         <QuestionEditor question={dialog.edit ?? undefined} onClose={() => setDialog(null)}
           onSave={async (question) => { if (dialog.edit) await api.put(`/question-banks/questions/${dialog.edit.id}`, question); else await api.post(`/question-banks/${bankId}/questions`, question); refresh(); toast.success('Question saved.'); }} />
       )}
-      {dialog?.import && <ImportDialog bankId={bankId} onClose={() => setDialog(null)} onSaved={refresh} />}
+      {dialog?.import && (
+        <ImportQuestions target="bank" previewUrl={`/question-banks/${bankId}/import/preview`} onClose={() => setDialog(null)}
+          onSave={async (questions) => { const r = await api.post(`/question-banks/${bankId}/questions/bulk`, { questions }); refresh(); toast.success(`${plural(r.saved, 'question')} added to the bank.`); }} />
+      )}
       <ConfirmDialog open={Boolean(dialog?.remove)} onClose={() => setDialog(null)} onConfirm={() => remove.mutate(dialog.remove.id)} loading={remove.isPending} title="Delete this question?" confirmLabel="Delete">
         {dialog?.remove?.usedInQuizzes > 0 ? `It is used in ${plural(dialog.remove.usedInQuizzes, 'quiz', 'quizzes')}. Attempts that students already made keep their copy; the question is removed from quizzes nobody has started.` : 'The question is removed from this bank.'}
       </ConfirmDialog>
     </>
-  );
-}
-
-/** Import: upload or paste → review what the parser understood → save the good ones. */
-const IMPORT_LIMIT_BYTES = 10 * 1024 * 1024;
-
-function ImportDialog({ bankId, onClose, onSaved }) {
-  // The server reads documents of up to 10 MB, or less when it accepts only smaller uploads.
-  const { runtime } = useAuth();
-  const importLimit = Math.min(IMPORT_LIMIT_BYTES, runtime.maxUploadBytes ?? IMPORT_LIMIT_BYTES);
-  const [text, setText] = useState('');
-  const [preview, setPreview] = useState(null);
-  const [drafts, setDrafts] = useState([]);
-  const [editing, setEditing] = useState(null);
-  const [error, setError] = useState(null);
-  const fileInput = useRef(null);
-
-  const receive = (result) => { setPreview(result); setDrafts(result.questions.map((q, i) => ({ ...q, key: i, include: q.errors.length === 0 }))); setError(null); };
-  const parse = useAction((file) => (file ? api.postForm(`/question-banks/${bankId}/import/preview`, { file }) : api.post(`/question-banks/${bankId}/import/preview`, { text })), {
-    onSuccess: receive,
-    onError: (err) => { setError(err.fields?.file ?? err.fields?.text ?? err.message); return true; },
-  });
-  // Check the size here: a host that caps request sizes answers with an error page, not a message.
-  const readFile = (file) => {
-    if (file.size > importLimit) setError(`“${file.name}” is larger than ${formatLimit(importLimit)}. Paste the text instead, or split the document.`);
-    else parse.mutate(file);
-  };
-  const chosen = drafts.filter((d) => d.include);
-  const save = useAction(() => api.post(`/question-banks/${bankId}/questions/bulk`, { questions: chosen.map(({ key, include, warnings, errors, number, ...q }) => q) }), {
-    success: (r) => `${plural(r.saved, 'question')} added to the bank.`,
-    onSuccess: () => { onSaved(); onClose(); },
-    onError: (err) => {
-      // The server names the questions that still have problems.
-      const bad = err.details?.questions;
-      if (bad) { setDrafts((list) => { const included = list.filter((d) => d.include); return list.map((d) => { const n = included.indexOf(d); const problem = bad.find((b) => b.index === n); return problem ? { ...d, errors: problem.errors } : d; }); }); setError(err.message); return true; }
-      return false;
-    },
-  });
-
-  return (
-    <Modal open onClose={onClose} size="xl" title="Import a test paper" description={preview ? `${preview.source} — review what was understood before saving.` : 'Reuse a quiz you already have as a Word, PDF or text file.'}
-      footer={preview ? <><Button variant="secondary" onClick={() => { setPreview(null); setDrafts([]); }}>Start over</Button><Button loading={save.isPending} disabled={chosen.length === 0 || chosen.some((d) => d.errors.length > 0)} onClick={() => save.mutate()}>Add {plural(chosen.length, 'question')} to the bank</Button></> : <Button variant="secondary" onClick={onClose}>Cancel</Button>}>
-      {error && <Alert tone="bad" className="mb-4">{error}</Alert>}
-      {!preview ? (
-        <div className="space-y-5">
-          <button type="button" onClick={() => fileInput.current?.click()} disabled={parse.isPending} className="flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed border-line-strong px-4 py-8 text-center hover:border-brand hover:text-brand">
-            <Upload className="size-7 text-brand" aria-hidden="true" />
-            <span className="text-sm font-semibold text-ink">{parse.isPending ? 'Reading the document…' : 'Choose a Word (.docx), PDF or text file'}</span>
-            <span className="text-xs text-faint">Up to {formatLimit(importLimit)}. Nothing is saved until you review the questions.</span>
-          </button>
-          <input ref={fileInput} type="file" hidden accept=".docx,.pdf,.txt,.md" onChange={(e) => { const file = e.target.files?.[0]; if (file) readFile(file); e.target.value = ''; }} />
-          <div>
-            <label htmlFor="import-text" className="mb-1.5 block text-sm font-medium text-ink">…or paste the questions</label>
-            <Textarea id="import-text" rows={8} value={text} onChange={(e) => setText(e.target.value)} className="font-mono text-[13px]" placeholder={'1. Which part of the computer is known as its "brain"?\nA. RAM\n*B. CPU\nC. Hard disk\nD. Monitor\n\n2. True or False: One byte is made of 8 bits.\nAnswer: True'} />
-            <div className="mt-2 flex justify-end"><Button variant="secondary" loading={parse.isPending} disabled={!text.trim()} onClick={() => parse.mutate(null)}>Read pasted text</Button></div>
-          </div>
-          <details className="rounded-xl bg-raised p-3.5 text-[13px] text-soft">
-            <summary className="cursor-pointer font-semibold text-ink">How to prepare the document</summary>
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              <li>Number the questions: <code>1.</code> or <code>1)</code>. Letter the choices: <code>A.</code> <code>B.</code> …</li>
-              <li>Mark the correct choice with a <code>*</code>, or make it <strong>bold</strong> or highlighted in Word, or add a line <code>Answer: B</code>.</li>
-              <li>An answer key at the end (<code>Answer Key</code> then <code>1. B</code>, <code>2. True</code>…) is also understood.</li>
-              <li>Section headings such as “Part II. True or False” or “Identification” set the question type.</li>
-              <li>Scanned pictures of text cannot be read. Pictures and equations need to be added by hand afterwards.</li>
-            </ul>
-          </details>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2 text-sm">
-            <Badge tone="brand">{plural(preview.summary.found, 'question')} found</Badge>
-            <Badge tone="ok" icon={CheckCircle2}>{drafts.filter((d) => d.errors.length === 0 && d.warnings.length === 0).length} ready</Badge>
-            {drafts.some((d) => d.warnings.length > 0 && d.errors.length === 0) && <Badge tone="warn" icon={AlertTriangle}>{drafts.filter((d) => d.warnings.length > 0 && d.errors.length === 0).length} to double-check</Badge>}
-            {drafts.some((d) => d.errors.length > 0) && <Badge tone="bad" icon={XCircle}>{drafts.filter((d) => d.errors.length > 0).length} need fixing</Badge>}
-          </div>
-          {preview.notes.map((n) => <Alert key={n} tone="info">{n}</Alert>)}
-          {drafts.length === 0 ? <EmptyState compact title="No questions were recognised" description="Check that each question starts with a number, then try again." /> : (
-            <ol className="space-y-2.5">
-              {drafts.map((d) => (
-                <li key={d.key} className={cn('rounded-xl border p-3.5', d.errors.length > 0 ? 'border-bad/50' : d.warnings.length > 0 ? 'border-warn/50' : 'border-line', !d.include && 'opacity-55')}>
-                  <div className="flex items-start gap-3">
-                    <input type="checkbox" checked={d.include} onChange={(e) => setDrafts((list) => list.map((x) => (x.key === d.key ? { ...x, include: e.target.checked } : x)))} className="mt-1 size-[18px] shrink-0 accent-[var(--brand-fill)]" aria-label={`Include question ${d.number ?? d.key + 1}`} />
-                    <div className="min-w-0 flex-1">
-                      <p className="mb-1 flex flex-wrap items-center gap-2 text-xs text-faint"><span className="font-semibold text-soft">#{d.number ?? d.key + 1}</span><Badge>{typeLabel(d.type)}</Badge>{d.section && <span>{d.section}</span>}<span>{formatScore(d.points ?? 1)} pt</span></p>
-                      <QuestionText question={d} className="text-sm" />
-                      <AnswerKey q={{ choices: [], pairs: [], items: [], ...d }} />
-                      {d.errors.map((e) => <p key={e} className="mt-1.5 flex items-start gap-1.5 text-[13px] font-medium text-bad"><XCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />{e}</p>)}
-                      {d.warnings.map((w) => <p key={w} className="mt-1.5 flex items-start gap-1.5 text-[13px] text-warn"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />{w}</p>)}
-                    </div>
-                    <Button size="sm" variant={d.errors.length > 0 ? 'primary' : 'ghost'} icon={Pencil} onClick={() => setEditing(d)}>{d.errors.length > 0 ? 'Fix' : 'Edit'}</Button>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-      )}
-      {editing && (
-        <QuestionEditor title={`Question ${editing.number ?? editing.key + 1}`} question={{ ...editing, id: undefined }} onClose={() => setEditing(null)}
-          onSave={async (question) => { setDrafts((list) => list.map((x) => (x.key === editing.key ? { ...x, ...question, errors: [], warnings: [], include: true } : x))); }} />
-      )}
-    </Modal>
   );
 }

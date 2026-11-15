@@ -1,12 +1,16 @@
 // Turns an existing test paper (TXT, DOCX, PDF) into draft questions for the teacher to review.
 // Nothing here writes to the database: the result is a preview, and every question carries the
 // warnings that explain what the parser was unsure about.
+//
+// Questions written as JSON are read by questionJson.js; `parseImport` below tells the two apart.
 import { unzipSync, strFromU8 } from 'fflate';
+import { looksLikeJson, parseQuestionJson } from './questionJson.js';
 import { countBlanks, normalizeAnswer, normalizeQuestion } from './quizScoring.js';
 import { escapeHtml } from './sanitize.js';
 
-export const IMPORT_EXTENSIONS = ['txt', 'md', 'docx', 'pdf'];
-const MAX_TEXT_CHARS = 400_000;
+export const IMPORT_EXTENSIONS = ['json', 'txt', 'md', 'docx', 'pdf'];
+/** The most text one import reads. */
+export const MAX_IMPORT_CHARS = 400_000;
 
 // ── Text extraction ──────────────────────────────────────────────────────────
 
@@ -130,16 +134,19 @@ export async function pdfToText(buffer) {
   return joined;
 }
 
-/** @returns {Promise<string>} */
-export async function extractImportText(buffer, filename) {
+/**
+ * The text of a document, cut at `limit` characters.
+ * @returns {Promise<string>}
+ */
+export async function extractImportText(buffer, filename, { limit = MAX_IMPORT_CHARS } = {}) {
   const extension = String(filename ?? '').toLowerCase().split('.').pop();
   let text;
   if (extension === 'docx') text = docxToText(buffer);
   else if (extension === 'pdf') text = await pdfToText(buffer);
-  else if (extension === 'txt' || extension === 'md') text = new TextDecoder('utf-8').decode(buffer).replace(/^\uFEFF/, '');
+  else if (extension === 'txt' || extension === 'md' || extension === 'json') text = new TextDecoder('utf-8').decode(buffer).replace(/^\uFEFF/, '');
   else if (extension === 'doc') throw new Error('Old .doc files cannot be read. Open the file in Word and save it as .docx, then import that.');
-  else throw new Error('Import a TXT, DOCX or PDF file.');
-  return text.slice(0, MAX_TEXT_CHARS);
+  else throw new Error('Import a JSON, TXT, DOCX or PDF file.');
+  return text.slice(0, limit);
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
@@ -358,4 +365,26 @@ export function parseQuestions(rawText) {
     summary: { found: questions.length, ready: questions.filter((q) => q.errors.length === 0 && q.warnings.length === 0).length, needsReview: questions.filter((q) => q.errors.length > 0 || q.warnings.length > 0).length, sections },
     notes,
   };
+}
+
+/**
+ * Draft questions from what a teacher pasted or uploaded, whichever way it is written: JSON
+ * (questionJson.js) or a test paper as text (above).
+ * @param {string} text
+ * @param {{ filename?: string }} [options] the name of the uploaded file, when there is one
+ * @returns {{ format: 'json' | 'text', questions: Array<object>, summary: object, notes: string[] }}
+ * @throws {import('./questionJson.js').QuestionImportError} JSON that cannot be read
+ */
+export function parseImport(text, { filename = '' } = {}) {
+  if (!looksLikeJson(text, filename)) return { format: 'text', ...parseQuestions(text) };
+  try {
+    return { format: 'json', ...parseQuestionJson(text) };
+  } catch (err) {
+    // A test paper may open with a bracket, or show a piece of JSON in one of its questions.
+    if (!/\.json$/i.test(filename)) {
+      const paper = parseQuestions(text);
+      if (paper.questions.length > 0) return { format: 'text', ...paper };
+    }
+    throw err;
+  }
 }

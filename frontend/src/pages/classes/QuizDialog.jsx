@@ -138,6 +138,8 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
 
         {quiz && <PublishFields status={v.status} publishAt={v.publishAt} onChange={(p) => setV((s) => ({ ...s, ...p }))} error={errors.publishAt ?? errors.status} noun="quiz" />}
 
+        {!quiz && <p className="text-[13px] text-faint">Next, you add the questions: write them, take them from your question bank, or import the ones you already have — pasted as JSON, or as a Word, PDF or text file.</p>}
+
         <ModalActions>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={save.isPending}>{quiz ? 'Save settings' : 'Create and add questions'}</Button>

@@ -22,6 +22,34 @@ export const QUESTION_TYPES = {
 export const typeLabel = (type) => QUESTION_TYPES[type]?.label ?? type;
 export const DIFFICULTY = { EASY: 'Easy', MEDIUM: 'Medium', HARD: 'Hard' };
 
+/**
+ * The answer key as the teacher sees it: in the builder, in a question bank, and for questions
+ * that are being imported (which may still have two choices with the same text).
+ */
+export function AnswerKey({ q }) {
+  const item = 'flex items-center gap-2 text-sm';
+  switch (q.type) {
+    case 'MULTIPLE_CHOICE':
+    case 'MULTIPLE_RESPONSE':
+      return <ul className="mt-2 space-y-1">{(q.choices ?? []).map((c, i) => <li key={`${i}-${c.text}`} className={cn(item, c.isCorrect ? 'font-medium text-ok' : 'text-soft')}>{c.isCorrect ? <Check className="size-4 shrink-0" aria-label="Correct" /> : <span className="size-4 shrink-0" />}{c.text}</li>)}</ul>;
+    case 'TRUE_FALSE':
+    case 'MODIFIED_TRUE_FALSE':
+      if (typeof q.answer !== 'boolean') return <p className="mt-2 text-sm text-faint">No answer yet.</p>;
+      return <p className="mt-2 text-sm text-soft">Answer: <strong className={q.answer ? 'text-ok' : 'text-bad'}>{q.answer ? 'True' : 'False'}</strong>{q.correction?.length > 0 && <> · correction: <strong className="text-ink">{q.correction.join(', ')}</strong></>}</p>;
+    case 'IDENTIFICATION':
+    case 'SHORT_ANSWER':
+      return <p className="mt-2 text-sm text-soft">{q.accepted?.length ? <>Accepted: <strong className="text-ok">{q.accepted.join(', ')}</strong></> : 'No accepted answers listed — you grade the answers.'}</p>;
+    case 'FILL_BLANKS':
+      return <ol className="mt-2 space-y-0.5 text-sm text-soft">{(q.blanks ?? []).map((b, i) => <li key={`${i}-${b.join('|')}`}>({i + 1}) <strong className="text-ok">{b.join(' / ')}</strong></li>)}</ol>;
+    case 'MATCHING':
+      return <ul className="mt-2 space-y-0.5 text-sm text-soft">{(q.pairs ?? []).map((p, i) => <li key={`${i}-${p.left}`}>{p.left} → <strong className="text-ok">{p.right}</strong></li>)}</ul>;
+    case 'ORDERING':
+      return <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-sm text-soft">{(q.items ?? []).map((it, i) => <li key={`${i}-${it}`}>{it}</li>)}</ol>;
+    default:
+      return null;
+  }
+}
+
 const letter = (i) => String.fromCharCode(65 + i);
 const wordCount = (text) => (text.trim() ? text.trim().split(/\s+/).length : 0);
 

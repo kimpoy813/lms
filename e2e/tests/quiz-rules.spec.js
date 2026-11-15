@@ -94,10 +94,13 @@ test.describe('an attempt under strict rules', () => {
     await expect(page.getByText(/failed, with 0 points/)).toBeVisible();
     await expect(page.getByLabel('Eight')).toHaveCount(0);
 
-    // The quiz page says the same, and there is no way into another attempt.
+    // The quiz page says the same, and there is no way into another attempt. The page that is
+    // being left stays on the screen for a moment and says nearly the same, so what is looked
+    // for here are the quiz page's own words, in its own notice.
     await page.getByRole('link', { name: 'Back to the quiz' }).first().click();
-    await expect(page.getByText('Your attempt was ended').first()).toBeVisible();
-    await expect(page.getByText(/Only your teacher can reopen it\./).first()).toBeVisible();
+    const notice = page.getByRole('alert').filter({ hasText: 'Your attempt was ended' });
+    await expect(notice).toContainText('it was recorded that you switched to another tab or app');
+    await expect(notice).toContainText('Only your teacher can reopen it: if something outside your control caused this, tell them what happened.');
     await expect(page.getByRole('button', { name: /^(Start|Resume|Try again|Continue)$/ })).toHaveCount(0);
     await expect(page.getByText('Failed: the attempt was ended for a rule violation')).toBeVisible();
 
