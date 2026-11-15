@@ -6,14 +6,16 @@ import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { Prisma, lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
-import { exportFormat, sendTable } from '../../lib/exporter.js';
+import { exportFormat, sendBuffer, sendTable } from '../../lib/exporter.js';
 import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { logger } from '../../lib/logger.js';
-import { attemptTotals, buildSnapshot, correctAnswer, isAnswered, publicQuestion, sanitizeResponse, scoreAnswer, shuffle, toEditorShape } from '../../lib/quizScoring.js';
+import { MAX_IMPORT_QUESTIONS, questionsToJson } from '../../lib/questionJson.js';
+import { attemptTotals, buildSnapshot, correctAnswer, isAnswered, normalizeQuestion, publicQuestion, sanitizeResponse, scoreAnswer, shuffle, toEditorShape } from '../../lib/quizScoring.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { dateKey, timeKey } from '../../lib/time.js';
 import { isPublished, publishedWhere, quizResultsVisible, resolvePublication } from '../../lib/visibility.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
+import { uploadLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
 import { LANGUAGES, codeRunnerConfigured, judge } from '../../services/codeRunner.js';
@@ -24,7 +26,7 @@ import { fileSummary, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { quizOutcome } from './attemptScore.js';
-import { defaultBankFor, saveQuestion } from './banks.js';
+import { defaultBankFor, questionFingerprint, questionProblems, questionTextKey, readImportRequest, saveQuestion } from './banks.js';
 import { LEAVING_KINDS, MAX_WARNINGS, VIOLATION_KINDS, durationText, pageOpening, reopenClock, rulesApply, secondsLeftWhenEnded, violationOutcome, violationText } from './rules.js';
 
 export const classQuizzesRouter = Router({ mergeParams: true }); // /classes/:classId/quizzes
@@ -439,6 +441,124 @@ quizzesRouter.post('/:quizId/questions', validate({ params: quizParams, body: z.
     await syncColumn(tx, quiz);
   });
   created(res, manageView(await fullQuiz(quiz.id), new Date()));
+});
+
+// ── Many questions at once: import and download ──────────────────────────────
+/** A quiz holds this many questions of its own (random pools come on top). */
+const MAX_QUIZ_QUESTIONS = MAX_IMPORT_QUESTIONS;
+
+/**
+ * Read a file or pasted text into draft questions for this quiz: JSON, or a test paper as a
+ * Word, PDF or text document (docs/QUESTION-IMPORT.md). Nothing is saved: the teacher reviews
+ * the drafts and adds them with POST /:quizId/questions/bulk.
+ *
+ * Send the file as multipart field `file`, or pasted text as { text }.
+ * Answers: { source, format: 'json' | 'text', questions, summary: { found, ready, needsReview, duplicates, sections }, notes }.
+ * Each question is in editor shape with `number`, `warnings` (read, but worth a look), `errors`
+ * (cannot be saved until corrected) and `duplicate: true` when the quiz already has a question
+ * with the same text. In the summary, found = ready + needsReview + duplicates.
+ */
+quizzesRouter.post('/:quizId/import/preview', uploadLimiter, validate({ params: quizParams }), async (req, res) => {
+  const { quiz } = await loadManaged(req);
+  assertEditable(quiz);
+  const have = new Set(quiz.questions.map((qq) => questionTextKey(qq.question.text)));
+  const result = await readImportRequest(req, res, (drafts) => {
+    for (const q of drafts) if (have.has(questionTextKey(q.text))) q.duplicate = true;
+  });
+  ok(res, result);
+});
+
+/**
+ * Add many questions to the quiz at once, in the order given, after the ones it has. All or
+ * nothing: when one of them cannot be saved, none is, and the answer names each with its
+ * errors (422 INVALID_QUESTIONS, details.questions: [{ index, errors }]).
+ *
+ * The questions are kept in a question bank, as with a single new question. One that the bank
+ * holds already — the same text, choices, answer and explanation — is used again instead of
+ * being stored a second time, so importing a file twice does not fill the bank with doubles.
+ * One that this quiz has already, the same in all of those, is passed over: a quiz never gets
+ * the very same question twice. (The same text with other choices or another answer is a
+ * different question, and is added.)
+ *
+ * Answers: { added, reused, skipped, quiz } — `added` questions were put into the quiz, `reused`
+ * of them came from the bank, `skipped` were in the quiz already; `quiz` is the quiz as
+ * GET /:quizId gives it.
+ */
+quizzesRouter.post(
+  '/:quizId/questions/bulk',
+  validate({ params: quizParams, body: z.object({ bankId: zId.optional(), questions: z.array(z.object({ type: z.string() }).passthrough()).min(1).max(MAX_IMPORT_QUESTIONS) }) }),
+  async (req, res) => {
+    const { quiz, cls } = await loadManaged(req);
+    assertEditable(quiz);
+    const { questions } = req.valid.body;
+    const problems = await questionProblems(req.user, questions);
+    if (problems.length > 0) {
+      throw new AppError(422, 'INVALID_QUESTIONS', `${problems.length} question(s) still need to be fixed before they can be added.`, { questions: problems });
+    }
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `quiz:${quiz.id}`);
+      // Read again under the lock: a student may have started, or a second import run, in between.
+      assertEditable({ _count: { attempts: await tx.quizAttempt.count({ where: { quizId: quiz.id } }) } });
+      let bankId = req.valid.body.bankId;
+      if (bankId) {
+        const bank = await tx.questionBank.findFirst({ where: { id: bankId, ownerId: req.user.id, deletedAt: null }, select: { id: true } });
+        if (!bank) throw fieldErrors({ bankId: 'Choose one of your question banks.' });
+      } else {
+        bankId = (await defaultBankFor(tx, req.user, cls)).id;
+      }
+      // What the quiz has is compared by content, whichever bank each question is kept in.
+      const inQuiz = await tx.quizQuestion.findMany({ where: { quizId: quiz.id }, select: { position: true, question: { include: { choices: true } } } });
+      const placed = new Set(inQuiz.map((qq) => questionFingerprint(qq.question)));
+      const inBank = await tx.question.findMany({ where: { bankId, deletedAt: null }, include: { choices: true } });
+      const known = new Map(inBank.map((q) => [questionFingerprint(q), q.id]));
+      let bankPosition = inBank.reduce((max, q) => Math.max(max, q.position), -1);
+      let quizPosition = inQuiz.reduce((max, qq) => Math.max(max, qq.position), -1);
+      const rows = [];
+      const counts = { added: 0, reused: 0, skipped: 0 };
+      for (const input of questions) {
+        const checked = normalizeQuestion(input);
+        const print = questionFingerprint(checked);
+        if (placed.has(print)) {
+          counts.skipped += 1;
+          continue;
+        }
+        let questionId = known.get(print);
+        if (questionId) {
+          counts.reused += 1;
+        } else {
+          bankPosition += 1;
+          questionId = (await saveQuestion(tx, req.user, bankId, input, { position: bankPosition })).id;
+          known.set(print, questionId);
+        }
+        placed.add(print);
+        quizPosition += 1;
+        rows.push({ quizId: quiz.id, questionId, points: checked.data.points, position: quizPosition });
+        counts.added += 1;
+      }
+      if (inQuiz.length + rows.length > MAX_QUIZ_QUESTIONS) {
+        throw new AppError(422, 'TOO_MANY_QUESTIONS', `A quiz holds at most ${MAX_QUIZ_QUESTIONS} questions. This one has ${inQuiz.length}, so ${rows.length} more do not fit.`);
+      }
+      if (rows.length > 0) await tx.quizQuestion.createMany({ data: rows });
+      await syncColumn(tx, quiz);
+      return counts;
+    }, { timeout: 60_000 });
+    created(res, { ...outcome, quiz: manageView(await fullQuiz(quiz.id), new Date()) });
+  },
+);
+
+/**
+ * The questions of a quiz as a JSON file, answers included, in the format the import reads
+ * (docs/QUESTION-IMPORT.md): a copy to keep, to import into another class, or to hand to a
+ * colleague. Questions drawn at random from a bank are not in it: they are not questions of
+ * the quiz but a rule for choosing some.
+ */
+quizzesRouter.get('/:quizId/questions/export', validate({ params: quizParams }), async (req, res) => {
+  const { quiz, cls } = await loadManaged(req, { writable: false });
+  const questions = quiz.questions.filter((qq) => !qq.question.deletedAt).map((qq) => ({ ...toEditorShape(qq.question), points: qq.points }));
+  const file = questionsToJson(questions, { title: quiz.title });
+  // The answers leave the system with this file: who took them, and when, is kept.
+  await audit(req, { action: 'quiz.questions.export', entityType: 'Quiz', entityId: quiz.id, classId: cls.id, summary: `Downloaded the ${questions.length} question(s) of "${quiz.title}" with their answers` });
+  sendBuffer(res, Buffer.from(`${JSON.stringify(file, null, 2)}\n`), `${quiz.title} questions.json`, 'application/json; charset=utf-8');
 });
 
 const poolsBody = z.object({

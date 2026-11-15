@@ -8,9 +8,8 @@ import { Badge, Button, cn, Field, Input, Select } from '../../components/ui.jsx
 import { api } from '../../lib/api.js';
 import { formatScore, plural } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
-import { AnswerKey } from '../classes/QuizDetail.jsx';
 import QuestionEditor from '../classes/quiz/QuestionEditor.jsx';
-import { QuestionText, typeLabel } from '../classes/quiz/QuestionParts.jsx';
+import { AnswerKey, QuestionText, typeLabel } from '../classes/quiz/QuestionParts.jsx';
 import { classLabel } from '../classes/useClass.js';
 
 /**

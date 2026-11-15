@@ -1,17 +1,18 @@
 // One quiz. Teachers build it here (questions, points, random pools); students start or resume it.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarClock, Check, CheckCircle2, ChevronLeft, Clock, Dices, FileQuestion, Library, Lock, Pencil, PlayCircle, Plus, Repeat, Settings2, ShieldAlert, Timer, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarClock, CheckCircle2, ChevronLeft, Clock, Dices, Download, FileQuestion, FileUp, Library, Lock, Pencil, PlayCircle, Plus, Repeat, Settings2, ShieldAlert, Timer, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
 import { Alert, Badge, Button, Card, CardHeader, cn, ConfirmDialog, DescriptionList, EmptyState, Field, IconButton, Input, Modal, QueryState, Select, Spinner } from '../../components/ui.jsx';
-import { api } from '../../lib/api.js';
+import { api, errorMessage } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, formatSpan, plural } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
+import ImportQuestions from './quiz/ImportQuestions.jsx';
 import QuestionEditor from './quiz/QuestionEditor.jsx';
-import { DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './quiz/QuestionParts.jsx';
+import { AnswerKey, DIFFICULTY, QUESTION_TYPES, QuestionText, typeLabel } from './quiz/QuestionParts.jsx';
 import QuizDialog, { ANSWER_VISIBILITY, QUIZ_KINDS, RESULT_VISIBILITY } from './QuizDialog.jsx';
 import { windowText } from './Quizzes.jsx';
 import { RulesForStudents, rulesSummary } from './quiz/Rules.jsx';
@@ -193,10 +194,11 @@ function StudentView({ quiz }) {
 function Builder({ quiz }) {
   const { cls, base } = useClass();
   const client = useQueryClient();
-  const [dialog, setDialog] = useState(null); // 'settings' | 'new' | 'bank' | 'pools' | { edit: question }
+  const [dialog, setDialog] = useState(null); // 'settings' | 'new' | 'bank' | 'pools' | 'import' | { edit: question }
   const key = ['class', cls.id, 'quiz', quiz.id];
   const invalidate = [['class', cls.id, 'quizzes'], key, ['class', cls.id, 'gradebook'], ['dashboard']];
   const readOnly = cls.status === 'ARCHIVED';
+  const noun = quiz.kind === 'EXAM' ? 'examination' : 'quiz';
   const frozen = quiz.locked || readOnly;
 
   const saveItems = useAction((items) => api.put(`/quizzes/${quiz.id}/questions`, { items }), { invalidate, onSuccess: (data) => client.setQueryData(key, data) });
@@ -207,6 +209,19 @@ function Builder({ quiz }) {
 
   const poolPoints = quiz.pools.reduce((s, p) => s + p.count * p.pointsEach, 0);
   const empty = quiz.questions.length === 0 && quiz.pools.length === 0;
+
+  /** Add the questions of an import. The server answers with the quiz as it is afterwards. */
+  const addImported = async (questions) => {
+    const result = await api.post(`/quizzes/${quiz.id}/questions/bulk`, { questions });
+    client.setQueryData(key, result.quiz);
+    for (const queryKey of invalidate) client.invalidateQueries({ queryKey });
+    client.invalidateQueries({ queryKey: ['question-banks'] });
+    const already = result.skipped > 0 ? ` ${plural(result.skipped, 'question')} ${result.skipped === 1 ? 'was' : 'were'} in it already.` : '';
+    if (result.added > 0) toast.success(`${plural(result.added, 'question')} added to the ${noun}.${already}`);
+    else toast.info(`Nothing was added.${already}`);
+  };
+  // The questions with their answers, in the format the import reads.
+  const download = () => api.download(`/quizzes/${quiz.id}/questions/export`, undefined, 'questions.json').catch((err) => toast.error(errorMessage(err)));
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -231,18 +246,25 @@ function Builder({ quiz }) {
         {quiz.status === 'DRAFT' && empty && <Alert tone="warn" title="This quiz has no questions yet">Add questions below. A quiz can be published once it has at least one.</Alert>}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-[15px] font-semibold text-ink">Questions {saveItems.isPending && <Spinner className="ml-1 inline size-4" label="Saving" />}</h2>
+          <h2 className="flex items-center gap-1 text-[15px] font-semibold text-ink">
+            Questions {saveItems.isPending && <Spinner className="ml-1 inline size-4" label="Saving" />}
+            {quiz.questions.length > 0 && <IconButton icon={Download} size="sm" label="Download the questions as a JSON file" onClick={download} />}
+          </h2>
           {!frozen && (
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" icon={Dices} onClick={() => setDialog('pools')}>Random from bank</Button>
               <Button size="sm" variant="secondary" icon={Library} onClick={() => setDialog('bank')}>Add from bank</Button>
+              <Button size="sm" variant="secondary" icon={FileUp} onClick={() => setDialog('import')}>Import</Button>
               <Button size="sm" icon={Plus} onClick={() => setDialog('new')}>New question</Button>
             </div>
           )}
         </div>
 
         {quiz.questions.length === 0 && quiz.pools.length === 0 ? (
-          <Card><EmptyState icon={FileQuestion} title="Start with the first question" description="Write a new question, or reuse questions from your question bank." action={frozen ? null : <Button icon={Plus} onClick={() => setDialog('new')}>New question</Button>} /></Card>
+          <Card>
+            <EmptyState icon={FileQuestion} title="Start with the first question" description="Write the questions here, or import the ones you already have: paste them as JSON, or choose a Word, PDF or text file."
+              action={frozen ? null : <div className="flex flex-wrap justify-center gap-2"><Button variant="secondary" icon={FileUp} onClick={() => setDialog('import')}>Import questions</Button><Button icon={Plus} onClick={() => setDialog('new')}>New question</Button></div>} />
+          </Card>
         ) : (
           <ol className="space-y-3">
             {quiz.questions.map((q, i) => (
@@ -328,6 +350,7 @@ function Builder({ quiz }) {
       {dialog?.edit && <QuestionEditor question={dialog.edit} onClose={() => setDialog(null)} onSave={async (question) => { await api.put(`/question-banks/questions/${dialog.edit.id}`, question); await client.invalidateQueries({ queryKey: key }); toast.success('Question saved.'); }} />}
       {dialog === 'bank' && <BankPicker quiz={quiz} onClose={() => setDialog(null)} onAdd={(picked) => { change((list) => [...list, ...picked.map((q) => ({ questionId: q.id, points: q.points }))]); setDialog(null); }} />}
       {dialog === 'pools' && <PoolsDialog quiz={quiz} invalidate={invalidate} onClose={() => setDialog(null)} />}
+      {dialog === 'import' && <ImportQuestions target="quiz" noun={noun} previewUrl={`/quizzes/${quiz.id}/import/preview`} onSave={addImported} onClose={() => setDialog(null)} />}
     </div>
   );
 }
@@ -342,30 +365,6 @@ function PointsInput({ value, onCommit, disabled }) {
     else setText(String(value));
   };
   return <Input type="number" min="0.25" max="1000" step="any" value={text} disabled={disabled} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} className="h-8 w-16 px-2 text-right tabular-nums" />;
-}
-
-/** The answer key as the teacher sees it in the builder. */
-export function AnswerKey({ q }) {
-  const item = 'flex items-center gap-2 text-sm';
-  switch (q.type) {
-    case 'MULTIPLE_CHOICE':
-    case 'MULTIPLE_RESPONSE':
-      return <ul className="mt-2 space-y-1">{q.choices.map((c) => <li key={c.text} className={cn(item, c.isCorrect ? 'font-medium text-ok' : 'text-soft')}>{c.isCorrect ? <Check className="size-4 shrink-0" aria-label="Correct" /> : <span className="size-4 shrink-0" />}{c.text}</li>)}</ul>;
-    case 'TRUE_FALSE':
-    case 'MODIFIED_TRUE_FALSE':
-      return <p className="mt-2 text-sm text-soft">Answer: <strong className={q.answer ? 'text-ok' : 'text-bad'}>{q.answer ? 'True' : 'False'}</strong>{q.correction?.length > 0 && <> · correction: <strong className="text-ink">{q.correction.join(', ')}</strong></>}</p>;
-    case 'IDENTIFICATION':
-    case 'SHORT_ANSWER':
-      return <p className="mt-2 text-sm text-soft">{q.accepted?.length ? <>Accepted: <strong className="text-ok">{q.accepted.join(', ')}</strong></> : 'No accepted answers listed — you grade the answers.'}</p>;
-    case 'FILL_BLANKS':
-      return <ol className="mt-2 space-y-0.5 text-sm text-soft">{(q.blanks ?? []).map((b, i) => <li key={b.join('|')}>({i + 1}) <strong className="text-ok">{b.join(' / ')}</strong></li>)}</ol>;
-    case 'MATCHING':
-      return <ul className="mt-2 space-y-0.5 text-sm text-soft">{q.pairs.map((p) => <li key={p.left}>{p.left} → <strong className="text-ok">{p.right}</strong></li>)}</ul>;
-    case 'ORDERING':
-      return <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-sm text-soft">{q.items.map((it) => <li key={it}>{it}</li>)}</ol>;
-    default:
-      return null;
-  }
 }
 
 function BankPicker({ quiz, onClose, onAdd }) {
