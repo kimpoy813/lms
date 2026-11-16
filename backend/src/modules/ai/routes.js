@@ -48,7 +48,7 @@ async function quota(userId) {
 /** Permission, provider and daily quota — checked before every model call. */
 async function guard(req) {
   await assertPermission(req.user, 'ai.use');
-  const status = aiStatus();
+  const status = await aiStatus();
   if (!status.configured) throw new AppError(503, 'AI_UNAVAILABLE', status.message);
   const q = await quota(req.user.id);
   if (q.limit === 0) throw new AppError(503, 'AI_UNAVAILABLE', 'AI assistance has been turned off by the administrator.');
@@ -59,7 +59,7 @@ const recordUsage = (userId, requestType, out, requestId = null) =>
   prisma.aIGenerationUsage.create({ data: { userId, requestId, requestType, usageAmount: 1, promptTokens: out.promptTokens, completionTokens: out.completionTokens, estimatedCost: out.estimatedCost, modelIdentifier: out.model } });
 
 aiRouter.get('/status', async (req, res) => {
-  ok(res, { ...aiStatus(), quota: await quota(req.user.id) });
+  ok(res, { ...(await aiStatus()), quota: await quota(req.user.id) });
 });
 
 // ── Shapes of AI output (validated and sanitised before anything is stored) ───
@@ -224,7 +224,29 @@ aiRouter.post('/modules/generate', aiLimiter, validate({ body: generateBody }), 
   }
 
   try {
-    const out = await chatJson({ system: SYSTEM, user: modulePrompt(b, cls, references.text) });
+    const out = await chatJson({
+      system: SYSTEM,
+      user: modulePrompt(b, cls, references.text),
+      task: {
+        kind: 'module',
+        input: {
+          topic: b.topic,
+          title: b.title,
+          subtopics: b.subtopics,
+          objectives: b.objectives,
+          outcomes: b.outcomes,
+          yearLevel: b.yearLevel,
+          difficulty: b.difficulty,
+          durationMinutes: b.durationMinutes,
+          language: b.language,
+          contentLength: b.contentLength,
+          teachingApproach: b.teachingApproach,
+          instructions: b.instructions,
+          includeAssessment: b.includeAssessment,
+          referenceText: references.text,
+        },
+      },
+    });
     await recordUsage(req.user.id, 'MODULE', out, request.id);
     const parsed = moduleShape.safeParse(out.data);
     if (!parsed.success) throw new AppError(502, 'AI_FAILED', 'The AI service returned a module in an unexpected shape. Please try again.');
@@ -290,6 +312,10 @@ aiRouter.post(
         'Answer with one JSON object: { "title": string, "kind": string, "estimatedMinutes": number, "contentHtml": string } using the same HTML tags as the original.',
         `<reference name="current lesson">\n${JSON.stringify({ title: lesson.title, contentHtml: lesson.contentHtml })}\n</reference>`,
       ].join('\n'),
+      task: {
+        kind: 'lesson-rewrite',
+        input: { lesson, instruction: req.valid.body.instruction },
+      },
     });
     await recordUsage(req.user.id, 'SECTION', out, g.generationRequestId);
     const parsed = lessonShape.safeParse(out.data);
@@ -497,6 +523,18 @@ aiRouter.post(
         'Answer with one JSON object: { "questions": [question] }',
         QUESTION_GUIDE,
       ].filter(Boolean).join('\n'),
+      task: {
+        kind: 'questions',
+        input: {
+          topic: b.topic || material?.module.title,
+          source,
+          count: b.count,
+          types: b.types,
+          difficulty: b.difficulty,
+          purpose: b.purpose,
+          avoid: drafted,
+        },
+      },
     });
     await recordUsage(req.user.id, 'QUIZ', out);
     const { kept, rejected } = cleanQuestions(out.data.questions);
@@ -531,6 +569,17 @@ aiRouter.post(
         material ? `Base it on this material, and ask for nothing it has not prepared students for:\n<reference name="module">\n${material.text}\n</reference>` : null,
         `Answer with one JSON object: { "title": string, "instructionsHtml": string (use <p>, <ul>, <ol>, <li>, <strong>)${b.withRubric ? ', "rubric": { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } — criteria points must add up to the assignment points' : ''} }`,
       ].filter(Boolean).join('\n'),
+      task: {
+        kind: 'assignment',
+        input: {
+          topic,
+          moduleTitle: material?.module.title,
+          materialText: material?.text,
+          details: b.details,
+          points: b.points,
+          withRubric: b.withRubric,
+        },
+      },
     });
     await recordUsage(req.user.id, 'ASSIGNMENT', out);
     const shape = z.object({ title: z.string().min(1).max(600), instructionsHtml: z.string().max(100_000), rubric: z.any().optional() }).safeParse(out.data);
@@ -560,6 +609,10 @@ aiRouter.post('/rubric', aiLimiter, validate({ body: z.object({ task: z.string()
   const out = await chatJson({
     system: SYSTEM,
     user: `Draft a grading rubric with ${b.criteriaCount} criteria for this task: ${b.task}\nThe criteria points must add up to ${b.points}.\nAnswer with one JSON object: { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } with 4 levels per criterion from best to weakest.`,
+    task: {
+      kind: 'rubric',
+      input: { task: b.task, points: b.points, criteriaCount: b.criteriaCount },
+    },
   });
   await recordUsage(req.user.id, 'RUBRIC', out);
   const rubric = cleanRubric(out.data);
@@ -575,6 +628,10 @@ aiRouter.post('/assistant', aiLimiter, validate({ body: z.object({ prompt: z.str
     system: `${SYSTEM} Answer in plain text or simple Markdown. Keep it short unless asked otherwise.`,
     user: b.context ? `${b.prompt}\n\n<reference name="selected text">\n${cleanText(b.context, 20_000)}\n</reference>` : b.prompt,
     maxTokens: 1500,
+    task: {
+      kind: 'assistant',
+      input: { prompt: b.prompt, context: b.context },
+    },
   });
   await recordUsage(req.user.id, 'ASSISTANT', out);
   ok(res, { text: cleanText(out.content, 20_000), needsReview: true });

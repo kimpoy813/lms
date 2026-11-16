@@ -29,7 +29,7 @@ export default function Programming() {
         actions={!isStudent && <Button icon={Plus} onClick={() => setDialog({ edit: null })}>New problem</Button>} />
       {status.data && !status.data.configured && (
         <Alert tone="warn" className="mb-5" title="Programs are not run automatically on this server yet">
-          {isStudent ? 'You can read the problems and write code, but it cannot be run or checked here until your school connects a code runner. Code you write in a quiz is still saved with your answers, and your teacher marks it.' : 'An administrator needs to connect a code runner (set CODE_RUNNER_PROVIDER and CODE_RUNNER_URL). Until then you can write problems and add them to quizzes; students’ code in a quiz is saved for you to mark by hand, and practice problems cannot be checked.'}
+          {isStudent ? 'You can read the problems and write code, but it cannot be run or checked here until your school connects a code runner. Code you write in a quiz is still saved with your answers, and your teacher marks it.' : 'An administrator needs to connect a code runner (set CODE_RUNNER_PROVIDER to vercel-sandbox, piston, or local for dev). Until then you can write problems and add them to quizzes; students’ code in a quiz is saved for you to mark by hand, and practice problems cannot be checked.'}
         </Alert>
       )}
       <SearchInput value={search} onChange={setSearch} placeholder="Search problems…" className="mb-4 w-full sm:w-72" />

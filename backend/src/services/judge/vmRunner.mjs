@@ -106,8 +106,9 @@ const quiet = (fn) => {
   }
 };
 
-function which(command) {
-  for (const dir of SAFE_PATH.split(':')) {
+function which(command, isolated = true) {
+  const pathList = isolated ? SAFE_PATH : [SAFE_PATH, process.env.PATH].filter(Boolean).join(path.delimiter);
+  for (const dir of pathList.split(path.delimiter)) {
     const candidate = path.join(dir, command);
     const usable = quiet(() => {
       fs.accessSync(candidate, fs.constants.X_OK);
@@ -283,7 +284,8 @@ async function execute(box, { argv, cwd, stdinFile = '/dev/null', wallMs, memory
     command = which('prlimit') ? ['prlimit', ...limits.filter((l) => !l.startsWith('--nproc')), '--', ...argv] : argv;
   }
 
-  const env = { PATH: SAFE_PATH, HOME: cwd, TMPDIR: '/tmp', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', NO_COLOR: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' };
+  const envPath = box.isolated ? SAFE_PATH : [SAFE_PATH, process.env.PATH].filter(Boolean).join(path.delimiter);
+  const env = { PATH: envPath, HOME: cwd, TMPDIR: '/tmp', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', NO_COLOR: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' };
   const stdin = fs.openSync(stdinFile, 'r');
   const started = Date.now();
   let timedOut = false;
@@ -411,7 +413,7 @@ async function runTest(box, language, source, file, input, index, { timeLimitMs,
 async function judgeProgram(box, job, deadlineAt) {
   const lang = VM_LANGUAGES[job.language];
   if (!lang) throw new Error(`unknown language ${job.language}`);
-  const missing = lang.tools.filter((tool) => !which(tool));
+  const missing = lang.tools.filter((tool) => !which(tool, box.isolated));
   if (missing.length > 0) return { toolchain: false, missing, compile: null, runs: [] };
   const compiled = await compile(box, job.language, String(job.source ?? ''), deadlineAt);
   if (compiled.failed) throw new Error(compiled.failed);
@@ -458,8 +460,9 @@ async function selfTest(box, deadlineAt) {
       languages[language] = { ok: false, compileMs: null, runMs: null, peakKb: null, detail: String(err.message ?? err).slice(0, 300) };
     }
   }
+  const envPath = box.isolated ? SAFE_PATH : [SAFE_PATH, process.env.PATH].filter(Boolean).join(path.delimiter);
   const version = (command, args) => {
-    const r = spawnSync(command, args, { encoding: 'utf8', env: { PATH: SAFE_PATH }, timeout: 15_000 });
+    const r = spawnSync(command, args, { encoding: 'utf8', env: { PATH: envPath }, timeout: 15_000 });
     return r.error ? null : `${r.stdout}\n${r.stderr}`.trim().split('\n')[0].slice(0, 80) || null;
   };
   const versions = { PYTHON: version('python3', ['--version']), JAVASCRIPT: version('node', ['--version']), C: version('gcc', ['--version']), CPP: version('g++', ['--version']), JAVA: version('javac', ['-version']) };

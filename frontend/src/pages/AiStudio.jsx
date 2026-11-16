@@ -5,7 +5,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookOpenCheck, Bot, ClipboardList, Copy, FileQuestion, Layers, Send, Sparkles, Table2, Wand2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { useAuth } from '../auth/AuthContext.jsx';
 import { FileUpload } from '../components/Files.jsx';
 import RichText from '../components/RichText.jsx';
 import { toast } from '../components/toast.jsx';
@@ -44,6 +45,7 @@ function aiError(err, setError) {
 const lines = (text) => text.split('\n').map((l) => l.replace(/^[-•*\d.)\s]+/, '').trim()).filter(Boolean);
 
 export default function AiStudio() {
+  const { isAdmin } = useAuth();
   const [params, setParams] = useSearchParams();
   const client = useQueryClient();
   const tool = TOOLS.some((t) => t.value === params.get('tool')) ? params.get('tool') : 'module';
@@ -54,6 +56,7 @@ export default function AiStudio() {
   if (draftId) return <AiDraftReview generatedId={draftId} onBack={() => setParams({ tool: 'module' })} configured={Boolean(status.data?.configured)} />;
 
   const ready = Boolean(status.data?.configured);
+  const isBuiltin = status.data?.provider === 'builtin';
   const quota = status.data?.quota;
   return (
     <>
@@ -61,7 +64,16 @@ export default function AiStudio() {
         actions={quota && ready ? <Badge tone={quota.remaining > 5 ? 'neutral' : 'warn'}>{quota.remaining} of {quota.limit} requests left today</Badge> : null} />
       {status.data && !ready && (
         <Alert tone="warn" className="mb-5" title="AI assistance is not set up on this server">
-          An administrator needs to connect an AI service (the deployment guide lists the choices, free ones among them). The forms below show what will be available; nothing is drafted until then.
+          {isAdmin
+            ? <>Enable the built-in free assistant or add a free Gemini / Groq API key in <Link className="font-medium underline" to="/admin/settings">Administration → Settings</Link> (no credit card or redeploy required).</>
+            : 'An administrator can enable the built-in free assistant or connect a free AI service under Settings. The forms below show what will be available once enabled.'}
+        </Alert>
+      )}
+      {ready && isBuiltin && (
+        <Alert tone="info" className="mb-5" title="Running with the built-in free assistant (offline, zero key)">
+          {isAdmin
+            ? <>Drafts modules, extracts quiz questions directly from your lessons and files, and builds editable rubrics. You can also connect a free Gemini or Groq key anytime under <Link className="font-medium underline" to="/admin/settings">Settings</Link>.</>
+            : 'Drafts structured modules, extracts quiz and exam questions directly from your lesson text and files, and builds editable rubrics — review and tailor every draft before publishing.'}
         </Alert>
       )}
       <Tabs className="mb-5" value={tool} onChange={(next) => setParams({ tool: next })} tabs={TOOLS} />

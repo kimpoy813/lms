@@ -176,4 +176,5 @@ if (!flags.has('--api-only')) {
   // The dev server forwards /api and /socket.io to the API, so the browser only ever talks to one origin.
   start('web', process.execPath, [cli(frontend, 'vite', 'bin', 'vite.js')], { cwd: frontend, env: { VITE_API_PROXY: process.env.VITE_API_PROXY ?? `http://127.0.0.1:${apiPort}` }, tint: '34' });
 }
+say(`AI: ${process.env.AI_PROVIDER || 'none'} · Code runner: ${process.env.CODE_RUNNER_PROVIDER || 'none'}`);
 say(flags.has('--api-only') ? `API on http://localhost:${apiPort}` : `open http://localhost:5173 (the API listens on port ${apiPort})`);

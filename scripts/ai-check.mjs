@@ -15,6 +15,7 @@
 //
 // Exit code: 0 when the assistant answered, 1 otherwise. The build treats 1 as a warning.
 import { resolveIdentity } from '../backend/src/lib/vercelIdentity.js';
+import { builtinCompletion } from '../backend/src/services/aiBuiltin.js';
 import { AiProviderError, aiTarget, chatCompletion, identityMayGoTo } from '../backend/src/services/aiProvider.js';
 
 const listModels = process.argv.includes('--models') || process.env.AI_CHECK === 'models';
@@ -28,6 +29,21 @@ const { baseUrl, model } = aiTarget({ provider, baseUrl: env('AI_BASE_URL'), mod
 if (provider === 'none') {
   say('AI_PROVIDER is not set: the assistant is switched off, nothing to check.');
   process.exit(0);
+}
+
+const SYSTEM = 'You are an instructional designer helping a college teacher. Answer with one JSON object and nothing else.';
+const QUESTION = 'Answer with this JSON object, filled in: { "ok": true, "capital": the capital city of the Philippines, "question": one short multiple-choice question about photosynthesis, "choices": [four short answers], "correct": the index of the right one }';
+
+if (provider === 'builtin') {
+  const started = Date.now();
+  const out = await builtinCompletion({ messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: QUESTION }], json: true });
+  const data = JSON.parse(out.content);
+  if (data?.ok && /manila/i.test(String(data.capital ?? '')) && Array.isArray(data.choices) && data.choices.length === 4) {
+    say(`✓ Built-in zero-key AI assistant is ready (${out.model}, ${Date.now() - started} ms).`);
+    process.exit(0);
+  }
+  say('✗ Built-in AI assistant returned an unexpected check response.');
+  process.exit(1);
 }
 
 let bearer = env('AI_API_KEY');
@@ -46,9 +62,6 @@ if (!bearer) {
   say(gateway ? '✗ No identity to ask with. On Vercel the build has one by itself; elsewhere run `vercel env pull` first, or set AI_API_KEY to a key of the AI Gateway.' : '✗ AI_API_KEY is not set.');
   process.exit(1);
 }
-
-const SYSTEM = 'You are an instructional designer helping a college teacher. Answer with one JSON object and nothing else.';
-const QUESTION = 'Answer with this JSON object, filled in: { "ok": true, "capital": the capital city of the Philippines, "question": one short multiple-choice question about photosynthesis, "choices": [four short answers], "correct": the index of the right one }';
 
 /** One request the way services/ai.js asks for a draft. */
 async function ask(modelId, { timeoutMs = 60_000 } = {}) {

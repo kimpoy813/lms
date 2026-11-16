@@ -121,12 +121,15 @@ const schema = z.object({
   MAP_TILE_URL: z.string().default('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
   MAP_TILE_ATTRIBUTION: z.string().default('&copy; OpenStreetMap contributors'),
 
+  // builtin: zero-key on-server authoring from module lessons, files, and templates.
   // openai-compatible: any service with an OpenAI-style API and a key (AI_BASE_URL, AI_API_KEY, AI_MODEL).
   // vercel-ai-gateway: Vercel's AI Gateway; on Vercel no key is needed, the project's identity is used.
-  AI_PROVIDER: z.enum(['none', 'openai-compatible', 'vercel-ai-gateway']).default('none'),
+  AI_PROVIDER: z.enum(['none', 'builtin', 'openai-compatible', 'vercel-ai-gateway']).default('none'),
   AI_BASE_URL: z.string().url().optional(),
   AI_API_KEY: optionalString,
   AI_MODEL: optionalString,
+  /** Optional explicit secret used to encrypt admin-configured AI API keys in SystemSetting. */
+  AI_SETTINGS_SECRET: optionalString,
   // For the whole exchange with the service. On Vercel a request is cut off after 120 s
   // (vercel.json), so the default there leaves time to tell the teacher what happened.
   AI_TIMEOUT_MS: z.coerce.number().int().positive().default(onVercel ? 100000 : 120000),
@@ -134,7 +137,7 @@ const schema = z.object({
   AI_INPUT_COST_PER_1K: z.coerce.number().min(0).default(0),
   AI_OUTPUT_COST_PER_1K: z.coerce.number().min(0).default(0),
 
-  CODE_RUNNER_PROVIDER: z.enum(['none', 'piston', 'vercel-sandbox']).default('none'),
+  CODE_RUNNER_PROVIDER: z.enum(['none', 'piston', 'vercel-sandbox', 'local']).default('none'),
   CODE_RUNNER_URL: optionalString,
   CODE_RUNNER_API_KEY: optionalString,
   CODE_RUNNER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -195,9 +198,13 @@ function parseTrustProxy(value) {
 if (isProduction && raw.COOKIE_SAMESITE === 'none' && raw.COOKIE_SECURE === 'false') {
   refuse('COOKIE_SAMESITE=none requires COOKIE_SECURE=true.');
 }
+if (raw.CODE_RUNNER_PROVIDER === 'local' && (onVercel || isProduction)) {
+  refuse('CODE_RUNNER_PROVIDER=local is only for local development; use vercel-sandbox or piston in production.');
+}
 
 // Vercel's AI Gateway is asked with the project's own identity when no key is set.
 const aiGateway = raw.AI_PROVIDER === 'vercel-ai-gateway';
+const aiBuiltin = raw.AI_PROVIDER === 'builtin';
 
 // Programs checked in Vercel Sandbox machines. On Vercel the project's own identity starts them and
 // they run where the function runs; elsewhere an access token and a region have to be given.
@@ -279,14 +286,15 @@ export const env = Object.freeze({
     /** `baseUrl` and `model`: what was set, or the defaults of the provider (services/aiProvider.js). */
     ...aiTarget({ provider: raw.AI_PROVIDER, baseUrl: raw.AI_BASE_URL, model: raw.AI_MODEL }),
     apiKey: raw.AI_API_KEY,
+    settingsSecret: raw.AI_SETTINGS_SECRET,
     /** Asked with the identity of the Vercel project instead of a key (see services/ai.js). */
     usesProjectIdentity: aiGateway && !raw.AI_API_KEY,
     timeoutMs: raw.AI_TIMEOUT_MS,
     maxOutputTokens: raw.AI_MAX_OUTPUT_TOKENS,
     inputCostPer1k: raw.AI_INPUT_COST_PER_1K,
     outputCostPer1k: raw.AI_OUTPUT_COST_PER_1K,
-    /** True when a provider is chosen and there is something to ask it with: a key, or on Vercel the project's identity. */
-    configured: raw.AI_PROVIDER !== 'none' && (Boolean(raw.AI_API_KEY) || (aiGateway && onVercel)),
+    /** True when built-in zero-key mode is active, or a remote provider has credentials. */
+    configured: aiBuiltin || (raw.AI_PROVIDER !== 'none' && (Boolean(raw.AI_API_KEY) || (aiGateway && onVercel))),
   },
 
   codeRunner: {
@@ -297,6 +305,13 @@ export const env = Object.freeze({
     region: sandboxRegion,
     /** Only outside Vercel; on Vercel the project's own identity is used and nothing is stored. */
     vercelAccess,
-    configured: raw.CODE_RUNNER_PROVIDER === 'piston' ? Boolean(raw.CODE_RUNNER_URL) : raw.CODE_RUNNER_PROVIDER === 'vercel-sandbox' ? onVercel || Boolean(vercelAccess) : false,
+    configured:
+      raw.CODE_RUNNER_PROVIDER === 'piston'
+        ? Boolean(raw.CODE_RUNNER_URL)
+        : raw.CODE_RUNNER_PROVIDER === 'vercel-sandbox'
+          ? onVercel || Boolean(vercelAccess)
+          : raw.CODE_RUNNER_PROVIDER === 'local'
+            ? !onVercel && !isProduction
+            : false,
   },
 });
