@@ -1,9 +1,9 @@
 // Administration → Settings: institution-wide options, and the state of optional services.
-import { useQuery } from '@tanstack/react-query';
-import { Bot, CheckCircle2, CircleDashed, Code2, Mail, PlayCircle, RotateCcw, Save, ServerCog, XCircle } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bot, CheckCircle2, CircleDashed, Code2, ExternalLink, Mail, PlayCircle, RotateCcw, Save, ServerCog, SlidersHorizontal, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { Alert, Badge, Button, Card, CardHeader, Field, Input, PageHeader, QueryState, Switch } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, CardHeader, Field, Input, Modal, ModalActions, PageHeader, QueryState, Select, Switch } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatBytes, setTimeZone } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -22,8 +22,12 @@ const GROUP_HELP = {
 
 export default function AdminSettings() {
   const { refresh } = useAuth();
+  const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ['admin', 'settings'], queryFn: () => api.get('/admin/settings') });
   const status = useQuery({ queryKey: ['admin', 'status'], queryFn: () => api.get('/admin/status') });
+  const aiConfig = useQuery({ queryKey: ['admin', 'ai-config'], queryFn: () => api.get('/admin/ai-config') });
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiCheckNonce, setAiCheckNonce] = useState(0);
   const [draft, setDraft] = useState({});
   const [errors, setErrors] = useState({});
   useEffect(() => { if (query.data) setDraft({}); }, [query.data]);
@@ -79,15 +83,15 @@ export default function AdminSettings() {
 
         <div className="space-y-5 xl:sticky xl:top-24 xl:self-start">
           <Card>
-            <CardHeader icon={ServerCog} title="Server" description="Set in the server’s environment file, not here." />
+            <CardHeader icon={ServerCog} title="Server" description="Runtime services and environment defaults." />
             <QueryState query={status} loader={<p className="text-sm text-faint">Loading…</p>}>
               {(s) => (
                 <ul className="space-y-3 text-sm">
                   <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText={s.mailAvailable === false ? 'Not configured. Nothing is e-mailed: when someone forgets a password, open the account under Users and choose “Reset password”.' : 'Not configured. Messages are kept in the development mailbox instead of being sent.'} />
                   <Service icon={Bot} name="AI assistant for teachers" on={s.ai.configured}
-                    onText={`${AI_PROVIDERS[s.ai.provider] ?? s.ai.provider}${s.ai.model ? `, model ${s.ai.model}` : ''}${s.ai.askedWith === 'project identity' ? '. Asked with the identity of this site’s Vercel project; no key is stored.' : '.'}`}
-                    offText="Not set up. The AI studio shows a notice and drafts nothing.">
-                    {s.ai.configured && <AiCheck last={s.ai} />}
+                    onText={`${AI_PROVIDERS[s.ai.provider] ?? s.ai.provider}${s.ai.model ? `, model ${s.ai.model}` : ''}${s.ai.askedWith === 'project identity' ? '. Asked with the identity of this site’s Vercel project; no key is stored.' : s.ai.askedWith === 'built-in' ? '. Runs free on this server with no API key.' : '.'}`}
+                    offText="Not set up. Enable the built-in free assistant or connect a free Gemini / Groq key using Configure below.">
+                    <AiCheck key={aiCheckNonce} last={s.ai} configured={s.ai.configured} onConfigure={() => setAiModalOpen(true)} />
                   </Service>
                   <Service icon={Code2} name="Code runner" on={s.codeRunner.configured} onText={RUNNER_TEXT[s.codeRunner.provider]?.(s.codeRunner) ?? `Provider: ${s.codeRunner.provider}`} offText="Not configured. Programs are not checked: programming answers in quizzes are saved for teachers to mark by hand, and practice problems cannot be submitted. Python can still be tried in the browser while that is switched on under “Programming”.">
                     {s.codeRunner.configured && <CodeRunnerCheck provider={s.codeRunner.provider} />}
@@ -112,6 +116,18 @@ export default function AdminSettings() {
           </Card>
         </div>
       </div>
+      <AiConfigModal
+        open={aiModalOpen}
+        config={aiConfig.data}
+        onClose={() => setAiModalOpen(false)}
+        onSaved={() => {
+          setAiCheckNonce((n) => n + 1);
+          queryClient.invalidateQueries({ queryKey: ['admin', 'status'] });
+          queryClient.invalidateQueries({ queryKey: ['admin', 'ai-config'] });
+          queryClient.invalidateQueries({ queryKey: ['ai', 'status'] });
+          queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+        }}
+      />
     </>
   );
 }
@@ -129,7 +145,11 @@ function Service({ icon: Icon, name, on, onText, offText, children }) {
   );
 }
 
-const AI_PROVIDERS = { 'vercel-ai-gateway': 'Vercel AI Gateway', 'openai-compatible': 'A service with an OpenAI-compatible API' };
+const AI_PROVIDERS = {
+  builtin: 'Built-in free assistant',
+  'vercel-ai-gateway': 'Vercel AI Gateway',
+  'openai-compatible': 'External OpenAI-compatible API',
+};
 
 /** Only a page of Vercel's own is ever made a link (the server checks the same); anything else stays text. */
 function vercelPage(link) {
@@ -154,7 +174,7 @@ function AiFailure({ failure }) {
 }
 
 /** "Is it working?" — asks the AI service one small question and shows what came back. */
-function AiCheck({ last }) {
+function AiCheck({ last, configured, onConfigure }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [failure, setFailure] = useState(null);
@@ -174,8 +194,11 @@ function AiCheck({ last }) {
   const earlier = !result && !failure && last.lastFailure && (!last.lastSuccessAt || last.lastFailureAt > last.lastSuccessAt) ? last.lastFailure : null;
   return (
     <div className="mt-2">
-      <Button size="sm" variant="secondary" icon={PlayCircle} loading={busy} onClick={run}>{busy ? 'Asking…' : 'Check now'}</Button>
-      {!result && !failure && !earlier && <p className="mt-1 text-xs text-faint">Asks the AI service one small question. Takes a few seconds.</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" icon={SlidersHorizontal} onClick={onConfigure}>Configure</Button>
+        {configured && <Button size="sm" variant="secondary" icon={PlayCircle} loading={busy} onClick={run}>{busy ? 'Asking…' : 'Check now'}</Button>}
+      </div>
+      {configured && !result && !failure && !earlier && <p className="mt-1 text-xs text-faint">Asks the AI service one small question. Takes a few seconds.</p>}
       <div aria-live="polite">
         {failure && <p className="mt-2 text-[13px] text-bad">{failure}</p>}
         {earlier && <><p className="mt-2 text-xs text-faint">The last request of a teacher failed:</p><AiFailure failure={earlier} /></>}
@@ -191,7 +214,169 @@ function AiCheck({ last }) {
   );
 }
 
+function AiConfigModal({ open, config, onClose, onSaved }) {
+  const [mode, setMode] = useState('builtin');
+  const [preset, setPreset] = useState('gemini');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [clearApiKey, setClearApiKey] = useState(false);
+  const [fieldErrs, setFieldErrs] = useState({});
+  const [saveErr, setSaveErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const presets = useMemo(() => config?.presets ?? [], [config]);
+
+  useEffect(() => {
+    if (!open || !config) return;
+    setMode(config.mode || 'env');
+    setPreset(config.preset || 'gemini');
+    setBaseUrl(config.baseUrl || '');
+    setModel(config.model || '');
+    setApiKey('');
+    setClearApiKey(false);
+    setFieldErrs({});
+    setSaveErr(null);
+  }, [open, config]);
+
+  const currentPreset = presets.find((p) => p.id === preset);
+
+  const choosePreset = (nextPreset) => {
+    setPreset(nextPreset);
+    const p = presets.find((item) => item.id === nextPreset);
+    if (p) {
+      setBaseUrl(p.baseUrl);
+      setModel(p.defaultModel);
+    }
+    setFieldErrs({});
+  };
+
+  const submit = async (andTest) => {
+    setBusy(true);
+    setTesting(andTest);
+    setFieldErrs({});
+    setSaveErr(null);
+    try {
+      await api.put('/admin/ai-config', {
+        mode,
+        ...(mode === 'openai-compatible' ? { preset, baseUrl, model, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}), ...(clearApiKey ? { clearApiKey: true } : {}) } : { clearApiKey }),
+      });
+      if (andTest) {
+        const res = await api.post('/admin/ai/check', {});
+        onSaved();
+        if (!res.ok) {
+          setSaveErr(res.failure?.message || 'Saved settings, but the test check failed.');
+          return;
+        }
+      } else {
+        onSaved();
+      }
+      onClose();
+    } catch (err) {
+      if (err.fields) setFieldErrs(err.fields);
+      else setSaveErr(err.message);
+    } finally {
+      setBusy(false);
+      setTesting(false);
+    }
+  };
+
+  const envLabel = config?.env?.provider && config.env.provider !== 'none'
+    ? `${AI_PROVIDERS[config.env.provider] ?? config.env.provider}${config.env.model ? ` (${config.env.model})` : ''}`
+    : 'Not configured in environment';
+
+  return (
+    <Modal open={open} onClose={onClose} title="Configure AI assistant" description="Choose the zero-key built-in assistant or connect a free external AI API. Keys stay encrypted on the server and never reach browsers." size="md">
+      {!config ? (
+        <p className="text-sm text-faint">Loading configuration…</p>
+      ) : (
+        <div className="space-y-4">
+          {saveErr && <Alert tone="bad">{saveErr}</Alert>}
+          {config.keyCorrupted && mode === 'openai-compatible' && (
+            <Alert tone="warn">The saved API key could not be decrypted with this server’s secret. Enter a new key below to replace it.</Alert>
+          )}
+          <Field label="AI provider mode">
+            <Select value={mode} onChange={(e) => { setMode(e.target.value); setFieldErrs({}); setSaveErr(null); }}>
+              <option value="builtin">Built-in free assistant (no API key required)</option>
+              <option value="openai-compatible">Free or custom external AI API (Gemini, Groq, OpenRouter, OpenAI)</option>
+              <option value="env">Use server environment variable ({envLabel})</option>
+              <option value="off">Disabled</option>
+            </Select>
+          </Field>
+
+          {mode === 'builtin' && (
+            <Alert tone="info" title="Runs completely on this server ($0)">
+              Drafts modules, extracts quiz and exam questions directly from teachers’ module lessons and uploaded files, and creates editable assignments and rubrics without sending data to any external AI service.
+            </Alert>
+          )}
+
+          {mode === 'openai-compatible' && (
+            <div className="space-y-3 rounded-xl border border-line p-4">
+              <Field label="Provider preset" hint={currentPreset?.notes}>
+                <Select value={preset} onChange={(e) => choosePreset(e.target.value)}>
+                  {presets.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </Select>
+              </Field>
+              {currentPreset?.signupUrl && (
+                <p className="text-xs text-soft">
+                  Need a free key?{' '}
+                  <a className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline" href={currentPreset.signupUrl} target="_blank" rel="noreferrer">
+                    Create one here <ExternalLink className="size-3" aria-hidden="true" />
+                  </a>
+                </p>
+              )}
+              <Field label="API base URL" error={fieldErrs.baseUrl}>
+                <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
+              </Field>
+              <Field label="Model" error={fieldErrs.model}>
+                <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gemini-2.5-flash" />
+              </Field>
+              <Field
+                label="API key"
+                error={fieldErrs.apiKey}
+                hint={config.hasApiKey && !clearApiKey ? `Saved on server (${config.apiKeyHint}). Leave blank to keep existing key.` : 'Stored encrypted in PostgreSQL; never exposed in browsers or audit logs.'}
+              >
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={apiKey}
+                  onChange={(e) => { setApiKey(e.target.value); if (e.target.value) setClearApiKey(false); }}
+                  placeholder={config.hasApiKey && !clearApiKey ? '••••••••••••••••' : 'Paste API key…'}
+                />
+              </Field>
+              {config.hasApiKey && (
+                <div className="flex items-center justify-between text-xs text-soft">
+                  <span>{clearApiKey ? 'Stored key will be removed when you save.' : `Stored key: ${config.apiKeyHint}`}</span>
+                  <button type="button" className="font-medium text-brand hover:underline" onClick={() => setClearApiKey((c) => !c)}>
+                    {clearApiKey ? 'Keep stored key' : 'Clear stored key'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <ModalActions>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+            {mode !== 'off' && (
+              <Button variant="secondary" icon={PlayCircle} loading={busy && testing} disabled={busy && !testing} onClick={() => submit(true)}>
+                Save & test
+              </Button>
+            )}
+            <Button icon={Save} loading={busy && !testing} disabled={busy && testing} onClick={() => submit(false)}>
+              Save settings
+            </Button>
+          </ModalActions>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 const RUNNER_TEXT = {
+  local: () => 'Programs run in a separate local process on this development computer (local development only).',
   'vercel-sandbox': (runner) => `Every program runs in a machine of its own on this site’s Vercel account${runner.region ? ` (region ${runner.region})` : ''}, without network access, and the machine is thrown away afterwards.`,
   piston: () => 'Programs are sent to the Piston server this site was given.',
 };

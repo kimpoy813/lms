@@ -1,11 +1,13 @@
 // Code execution for programming exercises.
 //
-// EduSphere NEVER runs student code inside its own process or on its own host. Code is sent to a
-// judge outside it. Two kinds are supported (CODE_RUNNER_PROVIDER):
+// EduSphere NEVER runs student code inside its own API process. Three backends are supported
+// (CODE_RUNNER_PROVIDER):
 //   - "vercel-sandbox": a throw-away virtual machine per submission on the Vercel account the site
 //     is deployed to (services/judge/vercelSandbox.js). Nothing to host.
 //   - "piston": a server you run, with a Piston-compatible HTTP API
 //     (https://github.com/engineer-man/piston).
+//   - "local": local development only (refused in production and on Vercel). Spawns a separate child
+//     process running vmRunner.mjs inside a temporary workspace.
 // When no judge is configured the feature reports itself as unavailable; programming answers can
 // still be collected and are then graded by the teacher.
 import { env } from '../config/env.js';
@@ -14,6 +16,7 @@ import { AppError, unavailable } from '../lib/errors.js';
 import { MAX_TESTS, clip, compareOutput, scoreResults } from '../lib/judging.js';
 import { logger } from '../lib/logger.js';
 import { platformIdentityToken } from '../lib/vercel.js';
+import { runBatchLocal, selfTestLocal } from './judge/localRunner.js';
 import { JOB_DEADLINE_MS, JudgeUnavailable, createSandboxJudge, describeError, resolveIdentity } from './judge/vercelSandbox.js';
 
 export { compareOutput, scoreResults };
@@ -83,6 +86,7 @@ export function vercelSandboxJudge() {
 }
 
 const usesSandbox = () => !transport && env.codeRunner.provider === 'vercel-sandbox';
+const usesLocal = () => !transport && env.codeRunner.provider === 'local' && env.codeRunner.configured;
 
 /**
  * Housekeeping on the Vercel account: delete the machines of single programs that were never
@@ -115,7 +119,7 @@ export function codeRunnerStatus() {
     languages: Object.entries(LANGUAGES).map(([id, l]) => ({ id, label: l.label })),
     // A judge that checks a whole program in one go has a limit for all its tests together
     // (compiling included). Tests it does not reach count as too slow.
-    totalTimeLimitMs: usesSandbox() ? JOB_DEADLINE_MS : null,
+    totalTimeLimitMs: usesSandbox() || usesLocal() ? JOB_DEADLINE_MS : null,
     message: codeRunnerConfigured() ? null : 'Automatic code checking is not set up on this server.',
   };
 }
@@ -150,6 +154,10 @@ export async function runBatch({ language, code, inputs, timeLimitMs = 3000, mem
     if (usesSandbox()) {
       const out = await vercelSandboxJudge().runBatch({ language, code, inputs: inputs.map((input) => input ?? ''), timeLimitMs, memoryLimitKb });
       logger.info({ language, tests: inputs.length, limits: out.limits, ...out.timings }, 'program checked in a sandbox machine');
+      result = { compileError: out.compileError, runs: out.runs };
+    } else if (usesLocal()) {
+      const out = await runBatchLocal({ language, code, inputs: inputs.map((input) => input ?? ''), timeLimitMs, memoryLimitKb });
+      logger.info({ language, tests: inputs.length, limits: out.limits, ...out.timings }, 'program checked in local dev runner');
       result = { compileError: out.compileError, runs: out.runs };
     } else {
       // One request per input. A program that does not compile says so on the first one.
@@ -193,6 +201,17 @@ export async function checkCodeRunner() {
       const check = await vercelSandboxJudge().selfTest();
       health.lastSuccessAt = new Date().toISOString();
       return { ok: check.ok, ...about, languages: check.languages, versions: check.versions, limits: check.isolation?.limits, timings: check.timings };
+    } catch (err) {
+      const error = unavailableError(err);
+      return { ok: false, ...about, code: error.code, detail: describeError(err) };
+    }
+  }
+  if (usesLocal()) {
+    const about = { provider: 'local' };
+    try {
+      const check = await selfTestLocal();
+      health.lastSuccessAt = new Date().toISOString();
+      return { ok: check.ok, ...(check.detail ? { detail: check.detail } : {}), ...about, languages: check.languages, versions: check.versions, limits: check.isolation?.limits, timings: check.timings };
     } catch (err) {
       const error = unavailableError(err);
       return { ok: false, ...about, code: error.code, detail: describeError(err) };

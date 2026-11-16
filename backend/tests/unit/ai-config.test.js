@@ -3,9 +3,10 @@
 // loads it anew with its own environment.
 import fs from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_GATEWAY_MODEL, VERCEL_AI_GATEWAY_URL } from '../../src/services/aiProvider.js';
+import { DEFAULT_GATEWAY_MODEL, BUILTIN_MODEL, VERCEL_AI_GATEWAY_URL } from '../../src/services/aiProvider.js';
+import { decryptSecret, encryptSecret, validateAiBaseUrl } from '../../src/services/aiConfig.js';
 
-const KEYS = ['VERCEL', 'VERCEL_ENV', 'VERCEL_PROJECT_ID', 'VERCEL_OIDC_TOKEN', 'AI_PROVIDER', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'AI_TIMEOUT_MS'];
+const KEYS = ['VERCEL', 'VERCEL_ENV', 'VERCEL_PROJECT_ID', 'VERCEL_OIDC_TOKEN', 'NODE_ENV', 'AI_PROVIDER', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'AI_TIMEOUT_MS', 'CODE_RUNNER_PROVIDER'];
 const before = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
 afterEach(() => {
   for (const key of KEYS) {
@@ -77,6 +78,51 @@ describe('the AI service in the configuration', () => {
   it('passes over the OpenAI defaults of an old .env when the gateway is chosen', async () => {
     const ai = await aiWith({ AI_PROVIDER: 'vercel-ai-gateway', AI_API_KEY: 'vck_key', AI_BASE_URL: 'https://api.openai.com/v1', AI_MODEL: 'gpt-4o-mini' });
     expect(ai).toMatchObject({ configured: true, baseUrl: VERCEL_AI_GATEWAY_URL, model: DEFAULT_GATEWAY_MODEL });
+  });
+
+  it('supports the built-in zero-key AI mode with no API key required', async () => {
+    const ai = await aiWith({ AI_PROVIDER: 'builtin' });
+    expect(ai).toMatchObject({ provider: 'builtin', configured: true, usesProjectIdentity: false, baseUrl: null, model: BUILTIN_MODEL });
+  });
+});
+
+describe('local code runner guardrails and AI config encryption helpers', () => {
+  it('allows CODE_RUNNER_PROVIDER=local in test/dev and refuses it on Vercel', async () => {
+    for (const key of KEYS) delete process.env[key];
+    process.env.NODE_ENV = 'test';
+    process.env.CODE_RUNNER_PROVIDER = 'local';
+    vi.resetModules();
+    const { env: localEnv } = await import('../../src/config/env.js');
+    expect(localEnv.codeRunner).toMatchObject({ provider: 'local', configured: true });
+
+    process.env.VERCEL = '1';
+    process.env.VERCEL_ENV = 'production';
+    process.env.NODE_ENV = 'production';
+    process.env.CODE_RUNNER_PROVIDER = 'local';
+    vi.resetModules();
+    await expect(import('../../src/config/env.js')).rejects.toThrow(/only for local development/);
+  });
+
+  it('encrypts and decrypts saved AI API keys and detects tampering', () => {
+    const cipher = encryptSecret('AIza-test-free-key-9876');
+    expect(cipher.startsWith('v1:')).toBe(true);
+    expect(cipher).not.toContain('AIza-test-free-key-9876');
+    expect(decryptSecret(cipher)).toEqual({ ok: true, corrupted: false, value: 'AIza-test-free-key-9876' });
+    expect(decryptSecret(`${cipher.slice(0, -4)}AAAA`)).toEqual({ ok: false, corrupted: true, value: null });
+  });
+
+  it('validates custom AI base URLs cleanly', () => {
+    expect(validateAiBaseUrl('https://generativelanguage.googleapis.com/v1beta/openai/', { onVercel: true })).toEqual({
+      ok: true,
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    });
+    expect(validateAiBaseUrl('http://api.example.com/v1', { onVercel: false }).ok).toBe(false);
+    expect(validateAiBaseUrl('https://user:pass@api.example.com/v1', { onVercel: false }).ok).toBe(false);
+    expect(validateAiBaseUrl('http://127.0.0.1:11434/v1', { onVercel: false })).toEqual({
+      ok: true,
+      url: 'http://127.0.0.1:11434/v1',
+    });
+    expect(validateAiBaseUrl('http://127.0.0.1:11434/v1', { onVercel: true }).ok).toBe(false);
   });
 });
 

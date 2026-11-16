@@ -9,7 +9,8 @@ import { fullName, ok, pageMeta, pageQuery, paging, zDateTime, zId } from '../..
 import { requireRole } from '../../middleware/auth.js';
 import { aiLimiter, codeRunLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
-import { aiHealth, checkAi } from '../../services/ai.js';
+import { aiHealth, aiStatus, checkAi } from '../../services/ai.js';
+import { getAdminAiConfigView, updateAiConfig, updateAiConfigSchema } from '../../services/aiConfig.js';
 import { audit } from '../../services/audit.js';
 import { checkCodeRunner, codeRunnerConfigured, codeRunnerHealth } from '../../services/codeRunner.js';
 import { mailAvailable, mailConfigured } from '../../services/mail.js';
@@ -54,15 +55,18 @@ adminSystemRouter.patch('/settings', validate({ body: z.object({ values: z.recor
 });
 
 adminSystemRouter.get('/status', async (req, res) => {
+  const ai = await aiStatus();
   ok(res, {
     environment: env.nodeEnv,
     demoAccountsEnabled: env.demoAccountsEnabled,
     mailConfigured: mailConfigured(),
     mailAvailable: mailAvailable(),
     ai: {
-      configured: env.ai.configured, provider: env.ai.provider, model: env.ai.configured ? env.ai.model : null,
-      // "key" or "project identity": never the key itself.
-      askedWith: env.ai.configured ? (env.ai.usesProjectIdentity ? 'project identity' : 'key') : null,
+      configured: ai.configured,
+      provider: ai.provider,
+      model: ai.configured ? ai.model : null,
+      // "built-in", "key", "project identity", or null: never the key itself.
+      askedWith: ai.askedWith,
       // What this instance of the API saw last. Each instance of a hosted function has its own view.
       ...aiHealth(),
     },
@@ -96,6 +100,28 @@ adminSystemRouter.post('/code-runner/check', codeRunLimiter, async (req, res) =>
  */
 adminSystemRouter.post('/ai/check', aiLimiter, async (req, res) => {
   ok(res, await checkAi());
+});
+
+adminSystemRouter.get('/ai-config', async (req, res) => {
+  ok(res, await getAdminAiConfigView());
+});
+
+adminSystemRouter.put('/ai-config', validate({ body: updateAiConfigSchema }), async (req, res) => {
+  const view = await updateAiConfig(req.valid.body, req.user.id);
+  await audit(req, {
+    action: 'ai.config.update',
+    entityType: 'SystemSetting',
+    entityId: 'ai.providerConfig',
+    summary: `Updated AI assistant settings (${view.effective.provider}${view.effective.model ? ` · ${view.effective.model}` : ''})`,
+    after: {
+      mode: view.mode,
+      preset: view.preset,
+      baseUrl: view.mode === 'openai-compatible' ? view.baseUrl : null,
+      model: view.mode === 'openai-compatible' ? view.model : null,
+      hasApiKey: view.hasApiKey,
+    },
+  });
+  ok(res, view);
 });
 
 // ── Role permissions ──────────────────────────────────────────────────────────

@@ -31,9 +31,49 @@ export const VERCEL_FREE_TIER_MODELS = 'https://vercel.com/ai-gateway/models?fre
  * the likely models, and "Check now" under Administration → Settings says whether this one answers.
  */
 export const DEFAULT_GATEWAY_MODEL = 'meta/muse-ember';
+export const BUILTIN_MODEL = 'edusphere-builtin-v1';
 
 const OPENAI_URL = 'https://api.openai.com/v1';
 const OPENAI_MODEL = 'gpt-4o-mini';
+
+/**
+ * Free-tier friendly OpenAI-compatible presets offered in Administration -> Settings.
+ * Admins can pick a preset or enter any custom OpenAI-compatible base URL & model.
+ */
+export const AI_PRESETS = Object.freeze({
+  gemini: Object.freeze({
+    id: 'gemini',
+    label: 'Google AI Studio (Gemini — free tier, no card)',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    defaultModel: 'gemini-2.5-flash',
+    signupUrl: 'https://aistudio.google.com/apikey',
+    notes: 'Free with a Google account; no credit card required.',
+  }),
+  groq: Object.freeze({
+    id: 'groq',
+    label: 'Groq (Llama — free tier, no card)',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    defaultModel: 'llama-3.3-70b-versatile',
+    signupUrl: 'https://console.groq.com/keys',
+    notes: 'Fast free inference without a credit card (free tier limits tokens per minute on very large modules).',
+  }),
+  openrouter: Object.freeze({
+    id: 'openrouter',
+    label: 'OpenRouter (:free models — no card)',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    defaultModel: 'meta-llama/llama-3.3-70b-instruct:free',
+    signupUrl: 'https://openrouter.ai/keys',
+    notes: 'Choose a model ending in :free to stay at $0.',
+  }),
+  custom: Object.freeze({
+    id: 'custom',
+    label: 'Custom OpenAI-compatible API',
+    baseUrl: OPENAI_URL,
+    defaultModel: OPENAI_MODEL,
+    signupUrl: null,
+    notes: 'Works with any OpenAI-compatible chat completions endpoint (including local Ollama).',
+  }),
+});
 
 /**
  * Where a configuration points and which model it asks for.
@@ -45,6 +85,7 @@ const OPENAI_MODEL = 'gpt-4o-mini';
  * @param {{ provider?: string, baseUrl?: string, model?: string }} configured
  */
 export function aiTarget({ provider, baseUrl, model }) {
+  if (provider === 'builtin') return { baseUrl: null, model: BUILTIN_MODEL };
   const givenUrl = String(baseUrl ?? '').trim().replace(/\/+$/, '');
   const givenModel = String(model ?? '').trim();
   if (provider !== 'vercel-ai-gateway') return { baseUrl: givenUrl || OPENAI_URL, model: givenModel || OPENAI_MODEL };

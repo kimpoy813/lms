@@ -7,6 +7,7 @@ import { excerpt } from '../../lib/sanitize.js';
 import { addDays, dateKey, startOfDay, weekdayOf } from '../../lib/time.js';
 import { publishedWhere, quizResultsVisible } from '../../lib/visibility.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { aiConfigured } from '../../services/ai.js';
 import { mailAvailable, mailConfigured } from '../../services/mail.js';
 import { getSetting, getTimeZone, SETTING_DEFINITIONS } from '../../services/settings.js';
 import { assessRisk, attendanceTotals, missingWork, rateOf, riskThresholds } from '../analytics/service.js';
@@ -306,7 +307,7 @@ async function adminDashboard(user) {
       mailConfigured: mailConfigured(),
       /** False where nothing can be e-mailed: forgotten passwords are then replaced by an administrator. */
       mailAvailable: mailAvailable(),
-      aiConfigured: env.ai.configured,
+      aiConfigured: await aiConfigured(),
       codeRunnerConfigured: env.codeRunner.configured,
       storageBytes: storage._sum.sizeBytes ?? 0,
       storedFiles: storage._count._all,

@@ -399,8 +399,8 @@ Set these when you want the features (see `backend/.env.example` for all variabl
 | Feature | Variables | Notes |
 |---|---|---|
 | E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Needed for password-reset links, e-mail verification and e-mail notifications. See [Without an e-mail server](#without-an-e-mail-server) |
-| AI authoring | `AI_PROVIDER=vercel-ai-gateway` (on Vercel nothing else), or `AI_PROVIDER=openai-compatible` with `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | See [The AI assistant](#the-ai-assistant). A daily limit per teacher is set in **Settings** |
-| Code judge | `CODE_RUNNER_PROVIDER=vercel-sandbox` (on Vercel nothing else), or `CODE_RUNNER_PROVIDER=piston` with `CODE_RUNNER_URL`, `CODE_RUNNER_API_KEY` | Vercel Sandbox: a machine per program on your Vercel account, see [Checking students' programs](#checking-students-programs). Piston: a server you run; keep it isolated from the database and the API host |
+| AI authoring | `AI_PROVIDER=builtin` (zero-key offline assistant), `AI_PROVIDER=vercel-ai-gateway`, or `AI_PROVIDER=openai-compatible` (also configurable anytime under **Administration → Settings**) | See [The AI assistant](#the-ai-assistant). A daily limit per teacher is set in **Settings** |
+| Code judge | `CODE_RUNNER_PROVIDER=vercel-sandbox` (on Vercel nothing else), `CODE_RUNNER_PROVIDER=piston`, or `CODE_RUNNER_PROVIDER=local` (development only) | Vercel Sandbox: a machine per program on your Vercel account, see [Checking students' programs](#checking-students-programs). Piston: a server you run; keep it isolated from the database and the API host. `local` runs child processes on the developer's machine during `npm run dev` and is refused in production and on Vercel |
 | Map tiles | `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION` | The default is OpenStreetMap's public tile server; check its usage policy or use your own provider |
 
 E-mail, AI authoring, a Piston server and map tiles were never exercised against a real service
@@ -419,13 +419,13 @@ the text of the chosen module's lessons (shortened to about 24,000 characters) �
 instructions for the draft. Names, grades, submissions and other records of students are never
 sent. Choose a service whose terms your school accepts for its teaching material.
 
-There are three ways to connect one. None of them was tried with a real service during
-development, apart from Vercel's refusal described below.
+There are four ways to connect one (and administrators can also switch modes or save an encrypted external API key directly in **Administration → Settings → Server → AI assistant → Configure** without redeploying):
 
 | | Set | Cost | Good to know |
 |---|---|---|---|
+| **Built-in free assistant** | `AI_PROVIDER=builtin` (or select **Built-in free assistant** in **Settings**) | Free ($0), no card, no key | Runs on EduSphere's server with zero external calls. Extracts quiz/exam items from lesson text & uploaded files and drafts editable modules, assignments, and rubrics |
 | **Vercel's AI Gateway** | `AI_PROVIDER=vercel-ai-gateway` | $5 of credit a month is included, for a part of the models. **Vercel wants a payment card on the account first**, and says it does not charge it for this | No key: on Vercel the gateway is asked with the project's own identity, as the code runner is. From another host, put a key of the gateway into `AI_API_KEY` |
-| **A service with a free plan and a key** | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | Free within the limits of the plan, no card | You create the key in an account of your own; see the two examples below |
+| **A service with a free plan and a key** | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` (or preset in **Settings**) | Free within the limits of the plan, no card | You create the key in an account of your own (Google AI Studio / Gemini, Groq, OpenRouter `:free` models) |
 | **Any other OpenAI-compatible service** | the same four | As that service charges | OpenAI itself is the default address (`https://api.openai.com/v1`, model `gpt-4o-mini`) |
 
 **Vercel's AI Gateway, in detail.** What Vercel's pages said on 2026-11-13
