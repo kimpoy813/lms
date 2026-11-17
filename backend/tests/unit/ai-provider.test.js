@@ -24,6 +24,16 @@ describe('what a refusal of the AI service means', () => {
     expect(kindOf(404, { error: { message: 'Model not found', type: 'model_not_found' } }).link).toBeNull();
     // Another service that wants the account verified is not called Vercel.
     expect(kindOf(403, { error: { message: 'Please verify your account at https://console.example/verify first.' } })).toMatchObject({ kind: 'verification', message: 'The AI service wants the account verified, or a payment method added, before it answers.', link: 'https://console.example/verify' });
+    // Google AI Studio / Gemini returns an array body when its free tier is unavailable on a project — never claim it is Vercel's credit.
+    const gemini403 = readProviderError(
+      403,
+      JSON.stringify([{ error: { code: 403, message: 'The Gemini API free tier is not available for this project. To use the Gemini API, please set up billing at https://aistudio.google.com/billing' } }]),
+      headers(),
+      { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+    );
+    expect(gemini403).toMatchObject({ kind: 'verification', link: 'https://aistudio.google.com/billing' });
+    expect(gemini403.message).not.toContain('Vercel');
+    expect(gemini403.detail).toContain('HTTP 403 403: The Gemini API free tier is not available for this project.');
     expect(kindOf(403, { error: { message: 'Provider not allowed by the team', type: 'forbidden' } })).toMatchObject({ kind: 'restricted', link: null });
     expect(kindOf(404, { error: { message: 'Model not found', type: 'model_not_found' } }).kind).toBe('model');
     // More than the model takes at once; a complaint about the length of the answer asked for is something else.

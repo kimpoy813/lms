@@ -43,11 +43,11 @@ const OPENAI_MODEL = 'gpt-4o-mini';
 export const AI_PRESETS = Object.freeze({
   gemini: Object.freeze({
     id: 'gemini',
-    label: 'Google AI Studio (Gemini — free tier, no card)',
+    label: 'Google AI Studio (Gemini — free tier where eligible)',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.5-flash',
     signupUrl: 'https://aistudio.google.com/apikey',
-    notes: 'Free with a Google account; no credit card required.',
+    notes: 'Free tier in eligible Google AI Studio projects/regions (some projects/regions require billing); try Groq or Built-in if Gemini returns HTTP 403.',
   }),
   groq: Object.freeze({
     id: 'groq',
@@ -155,11 +155,12 @@ function retryAfter(header) {
  * Vercel documents for its AI Gateway (https://vercel.com/docs/ai-gateway/faq, "Why did my AI
  * Gateway request fail?"); other services use the same status codes the same way.
  */
-export function readProviderError(status, bodyText, headers) {
+export function readProviderError(status, bodyText, headers, { baseUrl } = {}) {
   let error = null;
   try {
-    const body = JSON.parse(bodyText);
-    error = body?.error && typeof body.error === 'object' ? body.error : typeof body?.error === 'string' ? { message: body.error } : body;
+    const parsed = JSON.parse(bodyText);
+    const root = Array.isArray(parsed) ? parsed[0] : parsed;
+    error = root?.error && typeof root.error === 'object' ? root.error : typeof root?.error === 'string' ? { message: root.error } : root;
   } catch {
     // not JSON: the text itself is the detail
   }
@@ -168,6 +169,7 @@ export function readProviderError(status, bodyText, headers) {
   const detail = `HTTP ${status}${type ? ` ${type}` : ''}${said ? `: ${said}` : ''}`;
   const about = `${type} ${said}`.toLowerCase();
   const options = { status, detail };
+  const isGateway = !baseUrl || identityMayGoTo(baseUrl);
 
   if (status === 401) return new AiProviderError('identity', 'The AI service did not accept the key or identity it was given.', options);
   if (status === 402) {
@@ -176,13 +178,23 @@ export function readProviderError(status, bodyText, headers) {
       : new AiProviderError('credit', 'The credit for the AI service is used up.', options);
   }
   if (status === 403) {
+    const link = /https:\/\/[^\s"'<>)]+/.exec(`${error?.url ?? ''} ${error?.link ?? ''} ${error?.message ?? ''} ${bodyText}`)?.[0] ?? null;
     if (about.includes('customer_verification_required') || /payment method|verif/.test(about)) {
-      const link = /https:\/\/[^\s"'<>)]+/.exec(`${error?.url ?? ''} ${error?.link ?? ''} ${error?.message ?? ''} ${bodyText}`)?.[0] ?? null;
       // Vercel's own word for it; another service asking for the same is not Vercel.
       const message = about.includes('customer_verification_required')
         ? 'Vercel wants a payment method on the account before its free credit can be used.'
         : 'The AI service wants the account verified, or a payment method added, before it answers.';
       return new AiProviderError('verification', message, { ...options, link });
+    }
+    if (!isGateway || /billing|paid tier|free tier is not available/.test(about)) {
+      if (/billing|paid tier|free.?tier/.test(about)) {
+        return new AiProviderError(
+          'verification',
+          'This API key’s provider requires billing enabled or a free-tier-eligible project (switch to Built-in free assistant or Groq if you do not want billing).',
+          { ...options, link },
+        );
+      }
+      return new AiProviderError('restricted', 'The account does not allow this request.', options);
     }
     if (/free.?tier/.test(about)) {
       return new AiProviderError('model', 'This model is not among those Vercel’s free credit covers. Set AI_MODEL to one that is.', { ...options, link: VERCEL_FREE_TIER_MODELS });
@@ -253,7 +265,7 @@ export async function chatCompletion({ baseUrl, bearer, model, messages, json = 
         throw new AiProviderError('network', 'The AI service could not be reached.', { detail: oneLine(err?.cause?.message ?? err?.message) });
       }
       if (res.ok) break;
-      const refusal = readProviderError(res.status, raw, res.headers);
+      const refusal = readProviderError(res.status, raw, res.headers, { baseUrl });
       // Each adjustment is tried once, so this ends after at most three more requests.
       const adjustment = res.status === 400 && refusal.kind === 'failed' ? ADJUSTMENTS.find((a) => a.applies(request) && a.named.test(refusal.detail)) : null;
       if (!adjustment) throw refusal;
