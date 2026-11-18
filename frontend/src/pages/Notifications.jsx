@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, CheckCheck, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import PushNotificationsCard from '../components/PushNotificationsCard.jsx';
 import { Button, Card, cn, EmptyState, IconButton, PageHeader, Pagination, QueryState, Segmented } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { formatDateTime, relativeTime } from '../lib/format.js';
@@ -26,6 +27,7 @@ export default function Notifications() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Notifications" description={meta?.unread ? `${meta.unread} unread` : 'You are all caught up.'} actions={<Button variant="secondary" icon={CheckCheck} loading={readAll.isPending} disabled={!meta?.unread} onClick={() => readAll.mutate()}>Mark all as read</Button>} />
+      <PushNotificationsCard compact />
       <Segmented className="mb-4" label="Show" value={unread ? 'UNREAD' : 'ALL'} onChange={(v) => { setUnread(v === 'UNREAD'); setPage(1); }} options={[{ value: 'ALL', label: 'All' }, { value: 'UNREAD', label: 'Unread' }]} />
       <QueryState query={{ ...query, data: query.data?.data }}>
         {(list) => list.length === 0 ? <Card><EmptyState icon={Bell} title={unread ? 'No unread notifications' : 'No notifications yet'} description="Grades, announcements, deadlines and requests will appear here." /></Card> : (

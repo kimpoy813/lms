@@ -517,6 +517,30 @@ a message that would never arrive:
 
 Nothing has to be changed when SMTP settings are added later: the pages and settings come back.
 
+### Object storage (Cloudflare R2 / AWS S3)
+
+To move uploaded attachments out of PostgreSQL (`FileBlob`) onto S3-compatible object storage
+such as Cloudflare R2, set `STORAGE_DRIVER=s3` along with `S3_BUCKET`, `S3_REGION` (`auto` for
+Cloudflare R2), `S3_ENDPOINT` (`https://<account-id>.r2.cloudflarestorage.com`),
+`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and optionally `S3_PREFIX` (`edusphere` by default)
+and `S3_FORCE_PATH_STYLE=true` (set `false` for AWS S3 virtual-hosted URLs).
+
+### Web Push notifications (VAPID)
+
+Generate a VAPID key pair once (`npx web-push generate-vapid-keys`) and set `VAPID_PUBLIC_KEY`,
+`VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` (`mailto:admin@yourschool.edu`) in the environment.
+Users can then enable browser and PWA push notifications from **Notifications** or **Profile**,
+receiving grade, deadline, announcement, and live attendance alerts even when the app is closed.
+
+### GitHub Actions CI & Cron
+
+- `.github/workflows/ci.yml` automatically runs `npm run db:generate`, `npm run lint`,
+  `npm run test:backend`, `npm run test:frontend`, and `npm run build` on pull requests and pushes
+  to `main`.
+- `.github/workflows/cron.yml` pings `/api/internal/cron` every 10 minutes. Add `CRON_SECRET` in
+  GitHub **Settings → Secrets and variables → Actions** (matching the `CRON_SECRET` set on
+  Vercel) so the workflow authenticates instead of skipping.
+
 ## After the first start
 
 Sign in as the administrator. The dashboard shows **Getting your school started**: seven steps

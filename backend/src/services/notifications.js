@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js';
 import { emitToUser } from './realtime.js';
 import { getSetting } from './settings.js';
 import { mailConfigured, sendMail } from './mail.js';
+import { pushConfigured, sendPushToUsers } from './push.js';
 
 /**
  * Notify users.
@@ -41,13 +42,17 @@ export async function notify(userIds, notification, options = {}) {
       link: notification.link ?? null,
     });
   }
-  // E-mail copies are optional and never block or fail the calling request. Inside a transaction
-  // they wait a tick, so that the rows are usually committed by the time the e-mails go out.
-  if (mailConfigured()) {
+  // E-mail copies and Web Push alerts are optional and never block or fail the calling request.
+  // Inside a transaction they wait a tick, so that the rows are usually committed by the time
+  // deliveries run.
+  if (mailConfigured() || pushConfigured()) {
     runInBackground(async () => {
       if (options.tx) await new Promise((resolve) => setImmediate(resolve));
-      await sendEmailCopies(ids, notification);
-    }, 'sending notification e-mails');
+      await Promise.all([
+        mailConfigured() ? sendEmailCopies(ids, notification) : Promise.resolve(),
+        pushConfigured() ? sendPushToUsers(ids, notification) : Promise.resolve(),
+      ]);
+    }, 'delivering notification copies');
   }
 }
 

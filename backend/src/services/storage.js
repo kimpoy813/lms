@@ -22,6 +22,7 @@ import { prisma } from '../db/prisma.js';
 import { AppError, badRequest } from '../lib/errors.js';
 import { checkUpload, sanitizeFilename } from '../lib/fileTypes.js';
 import { logger } from '../lib/logger.js';
+import { s3Delete, s3GetBuffer, s3GetStream, s3Head, s3PutBuffer } from '../lib/s3.js';
 
 const filesDir = path.join(env.storageDir, 'files');
 // Uploads land here first (also with the database driver): the type check and the checksum read
@@ -126,7 +127,31 @@ const databaseBackend = {
   },
 };
 
-const backend = env.storageDriver === 'database' ? databaseBackend : diskBackend;
+// ── storage backend: S3 / Cloudflare R2 ─────────────────────────────────────────────────────────
+const s3Key = (storedName) => {
+  const clean = assertStoredName(storedName);
+  return `files/${clean.slice(0, 2)}/${clean}`;
+};
+
+const s3Backend = {
+  async adopt(tmpPath, storedName, contentType) {
+    await this.write(await fsp.readFile(tmpPath), storedName, contentType);
+    await fsp.rm(tmpPath, { force: true });
+  },
+  async write(buffer, storedName, contentType = 'application/octet-stream') {
+    await s3PutBuffer(env.s3, s3Key(storedName), buffer, contentType);
+  },
+  stream: (storedName, range) => s3GetStream(env.s3, s3Key(storedName), range),
+  read: (storedName) => s3GetBuffer(env.s3, s3Key(storedName)),
+  remove: (storedName) => s3Delete(env.s3, s3Key(storedName)),
+  exists: (storedName) => s3Head(env.s3, s3Key(storedName)),
+  async usedBytes() {
+    const total = await prisma.file.aggregate({ where: { deletedAt: null }, _sum: { sizeBytes: true } });
+    return total._sum.sizeBytes ?? 0;
+  },
+};
+
+const backend = env.storageDriver === 's3' ? s3Backend : env.storageDriver === 'database' ? databaseBackend : diskBackend;
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
 export function openFileStream(file, range) {
@@ -238,7 +263,7 @@ export async function persistUploads(files, ownerId, options = {}) {
 
   const rows = [];
   for (const item of prepared) {
-    await backend.adopt(item.tmpPath, item.storedName);
+    await backend.adopt(item.tmpPath, item.storedName, item.mimeType);
     rows.push(
       await prisma.file.create({
         data: {
@@ -263,7 +288,7 @@ export async function persistBuffer(buffer, { ownerId, originalName }) {
   if (!verdict.ok) throw new AppError(415, 'FILE_TYPE_REJECTED', verdict.reason);
   await assertRoomFor(buffer.length);
   const storedName = randomBytes(24).toString('hex');
-  await backend.write(buffer, storedName);
+  await backend.write(buffer, storedName, verdict.mime);
   return prisma.file.create({
     data: {
       ownerId,

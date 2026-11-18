@@ -12,7 +12,24 @@ let listeners;
 let stored; // what is in the cache: key → body
 let network; // path → { ok, body } or 'down'
 let asked; // what went to the network
-let skipCalls;
+  let skipCalls;
+  let shownNotifications;
+  let openedWindows;
+  let windowClients;
+
+  const self = {
+    location: { origin: ORIGIN },
+    addEventListener: (name, fn) => { listeners[name] = fn; },
+    skipWaiting: async () => { skipCalls += 1; },
+    registration: {
+      showNotification: async (title, options) => { shownNotifications.push({ title, options }); },
+    },
+    clients: {
+      claim: async () => {},
+      matchAll: async () => windowClients,
+      openWindow: async (url) => { openedWindows.push(url); return { url }; },
+    },
+  };
 
 /** Starts the worker's script the way a browser would, and lets it install itself. */
 async function start() {
@@ -20,6 +37,9 @@ async function start() {
   stored = new Map();
   asked = [];
   skipCalls = 0;
+  shownNotifications = [];
+  openedWindows = [];
+  windowClients = [];
   const cache = {
     addAll: async (paths) => { for (const path of paths) stored.set(path, `shell:${path}`); },
     put: async (key, response) => { stored.set(typeof key === 'string' ? key : new URL(key.url).pathname, response.body); },
@@ -32,12 +52,6 @@ async function start() {
       const path = typeof key === 'string' ? key : new URL(key.url).pathname;
       return stored.has(path) ? { ok: true, body: stored.get(path), fromCache: true } : undefined;
     },
-  };
-  const self = {
-    location: { origin: ORIGIN },
-    addEventListener: (name, fn) => { listeners[name] = fn; },
-    skipWaiting: async () => { skipCalls += 1; },
-    clients: { claim: async () => {} },
   };
   const fetch = async (request) => {
     const path = new URL(request.url).pathname;
@@ -140,5 +154,38 @@ describe('the service worker', () => {
     const before = skipCalls;
     listeners.message({ data: { type: 'SKIP_WAITING' } });
     expect(skipCalls).toBe(before + 1);
+  });
+
+  it('displays Web Push notifications and navigates cleanly on notification clicks', async () => {
+    let pushWait;
+    listeners.push({
+      data: { json: () => ({ title: 'Grade returned', body: 'CS 101 Midterm', link: '/classes/c1/grades', tag: 'grades' }) },
+      waitUntil: (p) => { pushWait = p; },
+    });
+    await pushWait;
+    expect(shownNotifications).toEqual([
+      {
+        title: 'Grade returned',
+        options: expect.objectContaining({ body: 'CS 101 Midterm', tag: 'grades', data: { url: '/classes/c1/grades' } }),
+      },
+    ]);
+
+    let clickWait;
+    listeners.notificationclick({
+      notification: { data: { url: '/classes/c1/grades' }, close: () => {} },
+      waitUntil: (p) => { clickWait = p; },
+    });
+    await clickWait;
+    expect(openedWindows).toEqual([`${ORIGIN}/classes/c1/grades`]);
+
+    // Ignores cross-origin target URLs defensively
+    openedWindows.length = 0;
+    let crossClick;
+    listeners.notificationclick({
+      notification: { data: { url: 'https://evil.example/phish' }, close: () => {} },
+      waitUntil: (p) => { crossClick = p; },
+    });
+    expect(crossClick).toBeUndefined();
+    expect(openedWindows).toEqual([]);
   });
 });

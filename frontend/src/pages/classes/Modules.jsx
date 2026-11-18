@@ -1,12 +1,14 @@
 // Lessons tab: the class's modules, each with its lessons and resources.
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronDown, Circle, Copy, FilePlus2, FolderPlus, Lock, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronDown, Circle, Copy, Download, FilePlus2, FolderPlus, Lock, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Users, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import { PublishFields, StatusBadge } from '../../components/Publish.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, ProgressBar, QueryState, Select, Table, Td, Textarea, Th, Tr } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, fromLocalInput, plural, toLocalInput } from '../../lib/format.js';
+import { isLessonSavedOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
 import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
@@ -61,6 +63,7 @@ export default function Modules() {
 }
 
 function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, readOnly }) {
+  const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const navigate = useNavigate();
   const [open, setOpen] = useState(true);
@@ -139,6 +142,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
                       <span className="block text-xs text-faint">{LESSON_KINDS[l.kind] ?? 'Lesson'}{l.estimatedMinutes ? ` · ${l.estimatedMinutes} min` : ''}{lessonLocked ? ' · finish the previous lesson first' : ''}</span>
                     </span>
                     {canManage && l.status === 'DRAFT' && <Badge tone="warn">Draft</Badge>}
+                    {isLessonSavedOffline(user?.id, l.id) && <Badge tone="ok" icon={Download}>Offline</Badge>}
                   </>
                 );
                 return (

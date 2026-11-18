@@ -840,46 +840,60 @@ attendanceRouter.post('/corrections/:correctionId/reject', requireRole('TEACHER'
 });
 
 // ── Summary and exports ──────────────────────────────────────────────────────
-classAttendanceRouter.get('/summary', validate({ params: classParams }), async (req, res) => {
+const monthQuery = z.string().regex(/^\d{4}-\d{2}$/, 'Use YYYY-MM format').optional();
+
+classAttendanceRouter.get('/summary', validate({ params: classParams, query: z.object({ month: monthQuery }) }), async (req, res) => {
   const { classId } = req.valid.params;
   const access = await loadClassAccess(req.user, classId);
   // A student receives only their own row.
-  const summary = await classAttendanceSummary(classId, access.isStudent ? { studentId: req.user.id } : {});
+  const summary = await classAttendanceSummary(classId, {
+    ...(access.isStudent ? { studentId: req.user.id } : {}),
+    month: req.valid.query.month,
+  });
   ok(res, summary);
 });
 
 const LETTER = { PRESENT: 'P', LATE: 'L', ABSENT: 'A', EXCUSED: 'E' };
 
-classAttendanceRouter.get('/export', validate({ params: classParams, query: z.object({ format: exportFormat }) }), async (req, res) => {
+function formatMonthHeading(month) {
+  if (!month) return null;
+  const [y, m] = month.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 1)));
+}
+
+classAttendanceRouter.get('/export', validate({ params: classParams, query: z.object({ format: exportFormat, month: monthQuery }) }), async (req, res) => {
   const { classId } = req.valid.params;
   const { cls } = await requireClassManager(req.user, classId);
   await assertPermission(req.user, 'attendance.export');
-  const { format } = req.valid.query;
+  const { format, month } = req.valid.query;
   const tz = await getTimeZone();
-  const summary = await classAttendanceSummary(classId);
-  // A PDF page cannot hold one column per meeting for a whole term, so it carries the totals;
-  // the spreadsheet formats include every session.
-  const perSession = format !== 'pdf' || summary.sessions.length <= 10;
+  const summary = await classAttendanceSummary(classId, { month });
+  const monthLabel = formatMonthHeading(month);
+  // A PDF page fits up to ~22 daily columns cleanly in landscape (e.g. a monthly SF2 register);
+  // longer whole-term exports carry totals in PDF while spreadsheets carry every session.
+  const perSession = format !== 'pdf' || summary.sessions.length <= (month ? 22 : 10);
   const columns = [
-    { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.3 },
-    { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.6 },
+    { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.2 },
+    { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.3 },
     ...(perSession
       ? summary.sessions.map((session) => ({
-          header: `${session.date.slice(5)} ${timeKey(session.startTime, tz)}`,
+          header: month ? session.date.slice(8) : `${session.date.slice(5)} ${timeKey(session.startTime, tz)}`,
           value: (s) => LETTER[s.statuses[session.id]] ?? '',
-          width: 12, pdfWidth: 0.9, align: 'center',
+          width: month ? 6 : 12,
+          pdfWidth: month ? 0.55 : 0.9,
+          align: 'center',
         }))
       : []),
-    { header: 'Present', value: (s) => s.present, pdfWidth: 0.9, align: 'right' },
-    { header: 'Late', value: (s) => s.late, pdfWidth: 0.8, align: 'right' },
-    { header: 'Absent', value: (s) => s.absent, pdfWidth: 0.9, align: 'right' },
-    { header: 'Excused', value: (s) => s.excused, pdfWidth: 0.9, align: 'right' },
-    { header: 'Rate %', value: (s) => s.rate ?? '', pdfWidth: 0.9, align: 'right' },
+    { header: 'Present', value: (s) => s.present, pdfWidth: 0.75, align: 'right' },
+    { header: 'Late', value: (s) => s.late, pdfWidth: 0.65, align: 'right' },
+    { header: 'Absent', value: (s) => s.absent, pdfWidth: 0.75, align: 'right' },
+    { header: 'Excused', value: (s) => s.excused, pdfWidth: 0.8, align: 'right' },
+    { header: 'Rate %', value: (s) => s.rate ?? '', pdfWidth: 0.85, align: 'right' },
   ];
-  await audit(req, { action: 'attendance.export', entityType: 'Class', entityId: classId, classId, summary: `Exported attendance (${format.toUpperCase()})` });
+  await audit(req, { action: 'attendance.export', entityType: 'Class', entityId: classId, classId, summary: `Exported${month ? ` ${month}` : ''} attendance (${format.toUpperCase()})` });
   await sendTable(res, format, {
-    filename: `attendance-${cls.course.code}${cls.section ? `-${cls.section.name}` : ''}`,
-    title: `Attendance — ${classLabel(cls)}`,
+    filename: `attendance-${cls.course.code}${cls.section ? `-${cls.section.name}` : ''}${month ? `-${month}` : ''}`,
+    title: `Attendance${monthLabel ? ` (${monthLabel})` : ''} — ${classLabel(cls)}`,
     subtitle: `${cls.course.title} · ${cls.semester.name}, ${cls.semester.academicYear.name}`,
     meta: [`${summary.sessions.length} session(s) · ${summary.students.length} student(s) · P = present, L = late, A = absent, E = excused`, `Generated ${dateKey(new Date(), tz)} (${tz})`],
     columns,

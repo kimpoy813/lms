@@ -1,6 +1,6 @@
 // Administration → Settings: institution-wide options, and the state of optional services.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, CheckCircle2, CircleDashed, Code2, ExternalLink, Mail, PlayCircle, RotateCcw, Save, ServerCog, SlidersHorizontal, XCircle } from 'lucide-react';
+import { Bell, Bot, CheckCircle2, CircleDashed, Code2, ExternalLink, Mail, PlayCircle, RotateCcw, Save, ServerCog, SlidersHorizontal, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, Modal, ModalActions, PageHeader, QueryState, Select, Switch } from '../../components/ui.jsx';
@@ -88,6 +88,7 @@ export default function AdminSettings() {
               {(s) => (
                 <ul className="space-y-3 text-sm">
                   <Service icon={Mail} name="E-mail (SMTP)" on={s.mailConfigured} onText="Verification, password-reset and notification e-mails are sent." offText={s.mailAvailable === false ? 'Not configured. Nothing is e-mailed: when someone forgets a password, open the account under Users and choose “Reset password”.' : 'Not configured. Messages are kept in the development mailbox instead of being sent.'} />
+                  <Service icon={Bell} name="Web Push (VAPID)" on={Boolean(s.pushConfigured)} onText="Installed PWA and browser devices can opt in to push alerts for grades, deadlines, and attendance." offText="Not configured. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable browser and PWA push alerts." />
                   <Service icon={Bot} name="AI assistant for teachers" on={s.ai.configured}
                     onText={`${AI_PROVIDERS[s.ai.provider] ?? s.ai.provider}${s.ai.model ? `, model ${s.ai.model}` : ''}${s.ai.askedWith === 'project identity' ? '. Asked with the identity of this site’s Vercel project; no key is stored.' : s.ai.askedWith === 'built-in' ? '. Runs free on this server with no API key.' : '.'}`}
                     offText="Not set up. Enable the built-in free assistant or connect a free Gemini / Groq key using Configure below.">
@@ -102,7 +103,7 @@ export default function AdminSettings() {
                     {s.reducePhotosOverBytes > 0 && <p>Photos over <span className="font-medium text-ink">{formatBytes(s.reducePhotosOverBytes)}</span> are made smaller on the sender’s device before they are sent</p>}
                     {s.storage && (
                       <p>
-                        Uploaded files: <span className="font-medium text-ink">{s.storage.driver === 'database' ? 'kept in the database' : 'kept on the server’s disk'}</span>
+                        Uploaded files: <span className="font-medium text-ink">{s.storage.driver === 's3' ? 'kept in object storage (S3 / R2)' : s.storage.driver === 'database' ? 'kept in the database' : 'kept on the server’s disk'}</span>
                         {s.storage.usedBytes !== null && <> — {formatBytes(s.storage.usedBytes)}{s.storage.quotaBytes ? ` of ${formatBytes(s.storage.quotaBytes)}` : ''} used</>}
                       </p>
                     )}

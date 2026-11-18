@@ -17,10 +17,19 @@ export default function AdminEnrollments() {
   const term = useDebounced(search.trim());
   const students = useQuery({ queryKey: ['admin', 'students', term, page], queryFn: () => api.list('/admin/students', { search: term || undefined, page, pageSize: 20 }), placeholderData: (prev) => prev });
   const classes = useQuery({ queryKey: ['admin', 'classes', 'active'], queryFn: () => api.get('/classes', { status: 'ACTIVE', pageSize: 200 }) });
+  const sections = useQuery({ queryKey: ['admin', 'sections'], queryFn: () => api.get('/catalog/sections') });
 
   return (
     <>
-      <PageHeader title="Enrolment" description="Enrol a student in a class, move them to another section, or drop them. Teachers can also manage their own class lists." />
+      <PageHeader
+        title="Enrolment"
+        description="Enrol a student in a class, move them to another section, or enrol an entire block section in one click."
+        actions={
+          <Button variant="secondary" icon={Users} onClick={() => setDialog({ type: 'section' })}>
+            Enrol whole section
+          </Button>
+        }
+      />
       <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search students by name, e-mail or student number…" className="mb-4 w-full sm:w-96" />
       <QueryState query={{ ...students, data: students.data?.data }}>
         {(rows) => rows.length === 0 ? (
@@ -56,8 +65,77 @@ export default function AdminEnrollments() {
         )}
       </QueryState>
       <Pagination meta={students.data?.meta} onPage={setPage} />
-      {dialog && <EnrolmentDialog {...dialog} classes={classes.data ?? []} onClose={() => setDialog(null)} />}
+      {dialog?.type === 'section'
+        ? <SectionEnrolDialog classes={classes.data ?? []} sections={sections.data ?? []} onClose={() => setDialog(null)} />
+        : dialog && <EnrolmentDialog {...dialog} classes={classes.data ?? []} onClose={() => setDialog(null)} />}
     </>
+  );
+}
+
+function SectionEnrolDialog({ classes, sections, onClose }) {
+  const [sectionId, setSectionId] = useState('');
+  const [classId, setClassId] = useState('');
+  const [error, setError] = useState(null);
+  const selectedSection = sections.find((s) => s.id === sectionId);
+  const activeSections = sections.filter((s) => s.isActive !== false);
+
+  const action = useAction(() => api.post('/admin/enrollments/section', { sectionId, classId }), {
+    invalidate: [['admin', 'students'], ['admin', 'users'], ['class'], ['dashboard']],
+    success: (r) =>
+      r.enrolledCount > 0
+        ? `Enrolled ${r.enrolledCount} student${r.enrolledCount === 1 ? '' : 's'} from ${r.sectionName} into ${r.classLabel}.${r.alreadyEnrolledCount > 0 ? ` (${r.alreadyEnrolledCount} already enrolled)` : ''}`
+        : `All ${r.totalInSection} students in ${r.sectionName} are already enrolled in ${r.classLabel}.`,
+    onSuccess: onClose,
+    onError: (err) => { setError(err.fields ? Object.values(err.fields)[0] : err.message); return true; },
+  });
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      title="Enrol whole section"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button loading={action.isPending} disabled={!sectionId || !classId} onClick={() => { setError(null); action.mutate(); }}>
+            Enrol section
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="bad">{error}</Alert>}
+        <p className="text-sm text-soft">Enrols every active student assigned to the chosen section into an active class. Students already enrolled are skipped automatically.</p>
+        <Field label="Section" hint={selectedSection ? `${selectedSection.studentCount ?? 0} student${selectedSection.studentCount === 1 ? '' : 's'} assigned` : undefined}>
+          <Select value={sectionId} onChange={(e) => {
+            const nextId = e.target.value;
+            setSectionId(nextId);
+            if (!classId && nextId) {
+              const match = classes.find((c) => c.section?.id === nextId);
+              if (match) setClassId(match.id);
+            }
+          }}>
+            <option value="">Choose a section…</option>
+            {activeSections.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.program?.code ? ` (${s.program.code})` : ''} · {s.studentCount ?? 0} students
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Class">
+          <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
+            <option value="">Choose a class…</option>
+            {classes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {classLabel(c)} — {c.teacher?.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+    </Modal>
   );
 }
 

@@ -5,7 +5,7 @@
 // grades, attendance, and messages are private and must always come from the server.
 // What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
 // page has to come from the server with its own security headers, and is not the app's page.
-const VERSION = 'edusphere-v2';
+const VERSION = 'edusphere-v3';
 const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 const SHELL_SET = new Set(SHELL);
 
@@ -93,4 +93,43 @@ self.addEventListener('fetch', (event) => {
         .catch(() => caches.match(request)),
     );
   }
+});
+
+self.addEventListener('push', (event) => {
+  let data;
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data?.text?.() ?? '' };
+  }
+  const title = data.title || 'EduSphere';
+  const options = {
+    body: data.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/maskable-192.png',
+    tag: data.tag || 'edusphere-notification',
+    data: { url: data.link || '/' },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const rawUrl = event.notification.data?.url || '/';
+  const targetUrl = new URL(rawUrl, self.location.origin);
+  if (targetUrl.origin !== self.location.origin) return;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
+          if ('navigate' in client && client.url !== targetUrl.href) {
+            client.navigate(targetUrl.href);
+          }
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl.href);
+      return undefined;
+    }),
+  );
 });

@@ -424,6 +424,7 @@ model User {
   aiRequests             AIGenerationRequest[]
   aiModulesReviewed      AIGeneratedModule[]
   aiUsage                AIGenerationUsage[]
+  pushSubscriptions      PushSubscription[]
 
   @@index([role, status])
   @@index([lastName, firstName])
@@ -1802,6 +1803,21 @@ model Notification {
 
   @@index([userId, readAt, createdAt])
   @@index([userId, createdAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ───────────────────────── Messaging & discussions ─────────────────────────

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { _resetPwaForTest, canInstallPwa, initPwaListeners, promptInstallPwa, subscribeInstallPrompt } from './pwa.js';
+import { _resetPwaForTest, canInstallPwa, initPwaListeners, promptInstallPwa, subscribeInstallPrompt, urlBase64ToUint8Array } from './pwa.js';
 
 describe('pwa install helpers', () => {
   beforeEach(() => {
@@ -33,5 +33,10 @@ describe('pwa install helpers', () => {
 
     unsubSub();
     unsubListeners();
+  });
+
+  it('decodes base64url VAPID public keys to Uint8Array', () => {
+    const bytes = urlBase64ToUint8Array('AQID');
+    expect([...bytes]).toEqual([1, 2, 3]);
   });
 });

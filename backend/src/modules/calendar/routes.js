@@ -6,16 +6,18 @@
 // plus consultation scheduling and a personal to-do list.
 import { Router } from 'express';
 import { z } from 'zod';
+import { env } from '../../config/env.js';
 import { lockKey, prisma } from '../../db/prisma.js';
 import { conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
 import { created, fullName, idParams, noContent, ok, patchOf, zDateTime, zId, zTitle } from '../../lib/http.js';
+import { buildIcsCalendar } from '../../lib/ics.js';
 import { plainText } from '../../lib/sanitize.js';
 import { addDays, atTime, dateKey, weekdayOf } from '../../lib/time.js';
 import { publishedWhere } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { notify } from '../../services/notifications.js';
-import { getTimeZone } from '../../services/settings.js';
+import { getSettings, getTimeZone } from '../../services/settings.js';
 import { classIdsFor, classLabel, requireWritableClassManager } from '../classes/access.js';
 
 export const calendarRouter = Router();
@@ -27,6 +29,75 @@ const MAX_RANGE_DAYS = 62;
 const classInclude = { course: { select: { code: true, title: true } }, section: { select: { name: true } } };
 
 // ── Feed ─────────────────────────────────────────────────────────────────────
+async function collectCalendarItems(user, { from, to, classId, tz }) {
+  const now = new Date();
+  // Administrators see institution events (and one class when they ask for it), not every class meeting.
+  let classIds = user.role === 'ADMIN' && !classId ? [] : await classIdsFor(user, { includeArchived: false });
+  if (classId) classIds = classIds.filter((id) => id === classId);
+  const classes = await prisma.class.findMany({ where: { id: { in: classIds } }, include: { ...classInclude, schedules: true } });
+  const labelOf = new Map(classes.map((c) => [c.id, classLabel(c)]));
+  const colorOf = new Map(classes.map((c) => [c.id, c.color]));
+  const forStudents = user.role === 'STUDENT';
+
+  const [events, assignments, quizzes, slots, bookings] = await Promise.all([
+    prisma.calendarEvent.findMany({
+      where: {
+        startAt: { lt: to }, endAt: { gte: from },
+        OR: [
+          ...(classId ? [] : [{ scope: 'INSTITUTION' }, { scope: 'PERSONAL', ownerId: user.id }]),
+          { scope: 'CLASS', classId: { in: classIds } },
+        ],
+      },
+      orderBy: { startAt: 'asc' }, take: 1000,
+    }),
+    prisma.assignment.findMany({ where: { classId: { in: classIds }, deletedAt: null, dueAt: { gte: from, lt: to }, ...(forStudents ? publishedWhere(now) : {}) }, select: { id: true, classId: true, title: true, dueAt: true, status: true } }),
+    prisma.quiz.findMany({ where: { classId: { in: classIds }, deletedAt: null, availableUntil: { gte: from, lt: to }, ...(forStudents ? publishedWhere(now) : {}) }, select: { id: true, classId: true, title: true, kind: true, availableUntil: true, status: true } }),
+    user.role === 'TEACHER' && !classId
+      ? prisma.consultationSlot.findMany({ where: { teacherId: user.id, startAt: { lt: to }, endAt: { gte: from } }, include: { bookings: { where: { status: 'BOOKED' }, include: { student: { select: { firstName: true, lastName: true } } } } } })
+      : [],
+    user.role === 'STUDENT' && !classId
+      ? prisma.consultationBooking.findMany({ where: { studentId: user.id, status: 'BOOKED', slot: { startAt: { lt: to }, endAt: { gte: from } } }, include: { slot: { include: { teacher: { select: { firstName: true, lastName: true } } } } } })
+      : [],
+  ]);
+
+  const items = [];
+  for (const e of events) {
+    const canEdit = e.ownerId === user.id || (e.scope === 'INSTITUTION' && user.role === 'ADMIN') || (e.scope === 'CLASS' && user.role === 'ADMIN');
+    items.push({
+      id: `event:${e.id}`, eventId: e.id, kind: 'EVENT', type: e.type, scope: e.scope, title: e.title, description: e.description, location: e.location,
+      startAt: e.startAt, endAt: e.endAt, allDay: e.allDay, classId: e.classId, classLabel: e.classId ? labelOf.get(e.classId) : null, color: e.classId ? colorOf.get(e.classId) : null, canEdit,
+    });
+  }
+  // Weekly class meetings, expanded for every day of the range (institution timezone).
+  const lastDay = dateKey(new Date(to.getTime() - 1), tz);
+  for (let day = dateKey(from, tz), guard = 0; day <= lastDay && guard <= MAX_RANGE_DAYS + 1; day = addDays(day, 1), guard += 1) {
+    const weekday = weekdayOf(day);
+    for (const cls of classes) {
+      for (const s of cls.schedules) {
+        if (s.dayOfWeek !== weekday) continue;
+        const startAt = atTime(day, s.startTime, tz);
+        const endAt = atTime(day, s.endTime, tz);
+        if (endAt < from || startAt >= to) continue;
+        items.push({ id: `meeting:${cls.id}:${day}:${s.startTime}`, kind: 'CLASS_MEETING', type: 'CLASS_MEETING', title: cls.course.title, location: s.room ?? cls.room ?? null, startAt, endAt, allDay: false, classId: cls.id, classLabel: labelOf.get(cls.id), color: cls.color, link: `/classes/${cls.id}` });
+      }
+    }
+  }
+  for (const a of assignments) {
+    items.push({ id: `assignment:${a.id}`, kind: 'ASSIGNMENT_DUE', type: 'DEADLINE', title: `Due: ${a.title}`, startAt: a.dueAt, endAt: a.dueAt, allDay: false, classId: a.classId, classLabel: labelOf.get(a.classId), color: colorOf.get(a.classId), draft: a.status === 'DRAFT', link: `/classes/${a.classId}/assignments/${a.id}` });
+  }
+  for (const q of quizzes) {
+    items.push({ id: `quiz:${q.id}`, kind: 'QUIZ_CLOSES', type: q.kind === 'EXAM' ? 'EXAM' : 'DEADLINE', title: `${q.kind === 'EXAM' ? 'Exam' : 'Quiz'} closes: ${q.title}`, startAt: q.availableUntil, endAt: q.availableUntil, allDay: false, classId: q.classId, classLabel: labelOf.get(q.classId), color: colorOf.get(q.classId), draft: q.status === 'DRAFT', link: `/classes/${q.classId}/quizzes/${q.id}` });
+  }
+  for (const s of slots) {
+    items.push({ id: `slot:${s.id}`, kind: 'CONSULTATION', type: 'CONSULTATION', title: s.bookings.length > 0 ? `Consultation: ${s.bookings.map((b) => fullName(b.student)).join(', ')}` : 'Consultation hours (open)', location: s.location, startAt: s.startAt, endAt: s.endAt, allDay: false, link: '/consultations' });
+  }
+  for (const b of bookings) {
+    items.push({ id: `booking:${b.id}`, kind: 'CONSULTATION', type: 'CONSULTATION', title: `Consultation with ${fullName(b.slot.teacher)}`, location: b.slot.location, startAt: b.slot.startAt, endAt: b.slot.endAt, allDay: false, link: '/consultations' });
+  }
+  items.sort((a, b) => a.startAt - b.startAt || a.title.localeCompare(b.title));
+  return items;
+}
+
 calendarRouter.get(
   '/',
   validate({ query: z.object({ from: zDateTime, to: zDateTime, classId: zId.optional() }) }),
@@ -35,73 +106,43 @@ calendarRouter.get(
     if (to <= from) throw fieldErrors({ to: 'The end of the range must be after its start.' });
     if (to.getTime() - from.getTime() > MAX_RANGE_DAYS * 86_400_000) throw fieldErrors({ to: `Choose a range of at most ${MAX_RANGE_DAYS} days.` });
     const tz = await getTimeZone();
-    const now = new Date();
-    const user = req.user;
-    // Administrators see institution events (and one class when they ask for it), not every class meeting.
-    let classIds = user.role === 'ADMIN' && !classId ? [] : await classIdsFor(user, { includeArchived: false });
-    if (classId) classIds = classIds.filter((id) => id === classId);
-    const classes = await prisma.class.findMany({ where: { id: { in: classIds } }, include: { ...classInclude, schedules: true } });
-    const labelOf = new Map(classes.map((c) => [c.id, classLabel(c)]));
-    const colorOf = new Map(classes.map((c) => [c.id, c.color]));
-    const forStudents = user.role === 'STUDENT';
-
-    const [events, assignments, quizzes, slots, bookings] = await Promise.all([
-      prisma.calendarEvent.findMany({
-        where: {
-          startAt: { lt: to }, endAt: { gte: from },
-          OR: [
-            ...(classId ? [] : [{ scope: 'INSTITUTION' }, { scope: 'PERSONAL', ownerId: user.id }]),
-            { scope: 'CLASS', classId: { in: classIds } },
-          ],
-        },
-        orderBy: { startAt: 'asc' }, take: 1000,
-      }),
-      prisma.assignment.findMany({ where: { classId: { in: classIds }, deletedAt: null, dueAt: { gte: from, lt: to }, ...(forStudents ? publishedWhere(now) : {}) }, select: { id: true, classId: true, title: true, dueAt: true, status: true } }),
-      prisma.quiz.findMany({ where: { classId: { in: classIds }, deletedAt: null, availableUntil: { gte: from, lt: to }, ...(forStudents ? publishedWhere(now) : {}) }, select: { id: true, classId: true, title: true, kind: true, availableUntil: true, status: true } }),
-      user.role === 'TEACHER' && !classId
-        ? prisma.consultationSlot.findMany({ where: { teacherId: user.id, startAt: { lt: to }, endAt: { gte: from } }, include: { bookings: { where: { status: 'BOOKED' }, include: { student: { select: { firstName: true, lastName: true } } } } } })
-        : [],
-      user.role === 'STUDENT' && !classId
-        ? prisma.consultationBooking.findMany({ where: { studentId: user.id, status: 'BOOKED', slot: { startAt: { lt: to }, endAt: { gte: from } } }, include: { slot: { include: { teacher: { select: { firstName: true, lastName: true } } } } } })
-        : [],
-    ]);
-
-    const items = [];
-    for (const e of events) {
-      const canEdit = e.ownerId === user.id || (e.scope === 'INSTITUTION' && user.role === 'ADMIN') || (e.scope === 'CLASS' && user.role === 'ADMIN');
-      items.push({
-        id: `event:${e.id}`, eventId: e.id, kind: 'EVENT', type: e.type, scope: e.scope, title: e.title, description: e.description, location: e.location,
-        startAt: e.startAt, endAt: e.endAt, allDay: e.allDay, classId: e.classId, classLabel: e.classId ? labelOf.get(e.classId) : null, color: e.classId ? colorOf.get(e.classId) : null, canEdit,
-      });
-    }
-    // Weekly class meetings, expanded for every day of the range (institution timezone).
-    const lastDay = dateKey(new Date(to.getTime() - 1), tz);
-    for (let day = dateKey(from, tz), guard = 0; day <= lastDay && guard <= MAX_RANGE_DAYS + 1; day = addDays(day, 1), guard += 1) {
-      const weekday = weekdayOf(day);
-      for (const cls of classes) {
-        for (const s of cls.schedules) {
-          if (s.dayOfWeek !== weekday) continue;
-          const startAt = atTime(day, s.startTime, tz);
-          const endAt = atTime(day, s.endTime, tz);
-          if (endAt < from || startAt >= to) continue;
-          items.push({ id: `meeting:${cls.id}:${day}:${s.startTime}`, kind: 'CLASS_MEETING', type: 'CLASS_MEETING', title: cls.course.title, location: s.room ?? cls.room ?? null, startAt, endAt, allDay: false, classId: cls.id, classLabel: labelOf.get(cls.id), color: cls.color, link: `/classes/${cls.id}` });
-        }
-      }
-    }
-    for (const a of assignments) {
-      items.push({ id: `assignment:${a.id}`, kind: 'ASSIGNMENT_DUE', type: 'DEADLINE', title: `Due: ${a.title}`, startAt: a.dueAt, endAt: a.dueAt, allDay: false, classId: a.classId, classLabel: labelOf.get(a.classId), color: colorOf.get(a.classId), draft: a.status === 'DRAFT', link: `/classes/${a.classId}/assignments/${a.id}` });
-    }
-    for (const q of quizzes) {
-      items.push({ id: `quiz:${q.id}`, kind: 'QUIZ_CLOSES', type: q.kind === 'EXAM' ? 'EXAM' : 'DEADLINE', title: `${q.kind === 'EXAM' ? 'Exam' : 'Quiz'} closes: ${q.title}`, startAt: q.availableUntil, endAt: q.availableUntil, allDay: false, classId: q.classId, classLabel: labelOf.get(q.classId), color: colorOf.get(q.classId), draft: q.status === 'DRAFT', link: `/classes/${q.classId}/quizzes/${q.id}` });
-    }
-    for (const s of slots) {
-      items.push({ id: `slot:${s.id}`, kind: 'CONSULTATION', type: 'CONSULTATION', title: s.bookings.length > 0 ? `Consultation: ${s.bookings.map((b) => fullName(b.student)).join(', ')}` : 'Consultation hours (open)', location: s.location, startAt: s.startAt, endAt: s.endAt, allDay: false, link: '/consultations' });
-    }
-    for (const b of bookings) {
-      items.push({ id: `booking:${b.id}`, kind: 'CONSULTATION', type: 'CONSULTATION', title: `Consultation with ${fullName(b.slot.teacher)}`, location: b.slot.location, startAt: b.slot.startAt, endAt: b.slot.endAt, allDay: false, link: '/consultations' });
-    }
-    items.sort((a, b) => a.startAt - b.startAt || a.title.localeCompare(b.title));
+    const items = await collectCalendarItems(req.user, { from, to, classId, tz });
     ok(res, items, { timeZone: tz });
+  },
+);
+
+calendarRouter.get(
+  '/export.ics',
+  validate({
+    query: z.object({
+      from: zDateTime.optional(),
+      to: zDateTime.optional(),
+      classId: zId.optional(),
+      includeMeetings: z.enum(['true', 'false', '1', '0']).optional(),
+    }),
+  }),
+  async (req, res) => {
+    const now = new Date();
+    const from = req.valid.query.from ?? new Date(now.getTime() - 14 * 86_400_000);
+    const to = req.valid.query.to ?? new Date(from.getTime() + 45 * 86_400_000);
+    if (to <= from) throw fieldErrors({ to: 'The end of the range must be after its start.' });
+    if (to.getTime() - from.getTime() > MAX_RANGE_DAYS * 86_400_000) throw fieldErrors({ to: `Choose a range of at most ${MAX_RANGE_DAYS} days.` });
+    const includeMeetings = req.valid.query.includeMeetings !== 'false' && req.valid.query.includeMeetings !== '0';
+    const [settings, tz] = await Promise.all([getSettings(), getTimeZone()]);
+    const allItems = await collectCalendarItems(req.user, { from, to, classId: req.valid.query.classId, tz });
+    const events = includeMeetings ? allItems : allItems.filter((item) => item.kind !== 'CLASS_MEETING');
+    const ics = buildIcsCalendar({
+      name: `${settings['institution.name'] || 'EduSphere'} Calendar`,
+      timeZone: tz,
+      appUrl: env.appUrl,
+      events,
+    });
+    const buffer = Buffer.from(ics, 'utf8');
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="edusphere-calendar.ics"');
+    res.setHeader('Content-Length', String(buffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(buffer);
   },
 );
 
