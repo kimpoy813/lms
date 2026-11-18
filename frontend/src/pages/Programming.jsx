@@ -1,6 +1,6 @@
 // Coding problems: teachers write them (statement + test cases); students practise.
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Code2, MoreHorizontal, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Code2, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
@@ -14,7 +14,7 @@ import { useAction } from '../lib/query.js';
 import { classLabel } from './classes/useClass.js';
 
 export default function Programming() {
-  const { isStudent } = useAuth();
+  const { isStudent, can } = useAuth();
   const [search, setSearch] = useState('');
   const [dialog, setDialog] = useState(null);
   const term = useDebounced(search.trim());
@@ -22,11 +22,17 @@ export default function Programming() {
   const query = useQuery({ queryKey: ['programming', 'problems', term], queryFn: () => api.get('/programming/problems', { search: term || undefined }) });
   const remove = useAction((id) => api.delete(`/programming/problems/${id}`), { invalidate: [['programming']], success: 'Problem deleted.', onSuccess: () => setDialog(null) });
   const label = (id) => status.data?.languages.find((l) => l.id === id)?.label ?? id;
+  const canUseAi = !isStudent && can('ai.use');
 
   return (
     <>
       <PageHeader title={isStudent ? 'Coding practice' : 'Coding problems'} description={isStudent ? 'Practice problems shared by your teachers. Your program is checked against test cases.' : 'Write a problem once, then share it with a class for practice or use it as a question in a quiz.'}
-        actions={!isStudent && <Button icon={Plus} onClick={() => setDialog({ edit: null })}>New problem</Button>} />
+        actions={!isStudent && (
+          <div className="flex flex-wrap items-center gap-2">
+            {canUseAi && <Button variant="secondary" icon={Sparkles} to="/ai?tool=programming">Draft with AI</Button>}
+            <Button icon={Plus} onClick={() => setDialog({ edit: null })}>New problem</Button>
+          </div>
+        )} />
       {status.data && !status.data.configured && (
         <Alert tone="warn" className="mb-5" title="Programs are not run automatically on this server yet">
           {isStudent ? 'You can read the problems and write code, but it cannot be run or checked here until your school connects a code runner. Code you write in a quiz is still saved with your answers, and your teacher marks it.' : 'An administrator needs to connect a code runner (set CODE_RUNNER_PROVIDER to vercel-sandbox, piston, or local for dev). Until then you can write problems and add them to quizzes; students’ code in a quiz is saved for you to mark by hand, and practice problems cannot be checked.'}

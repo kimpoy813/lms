@@ -87,3 +87,8 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
 }
+
+/** Optional auth accessor for shared components (such as RichEditor) that may render in isolated tests. */
+export function useOptionalAuth() {
+  return useContext(AuthContext);
+}

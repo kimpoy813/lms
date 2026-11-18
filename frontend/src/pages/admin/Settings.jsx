@@ -332,7 +332,7 @@ function AiConfigModal({ open, config, onClose, onSaved }) {
                 <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
               </Field>
               <Field label="Model" error={fieldErrs.model}>
-                <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gemini-2.5-flash" />
+                <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gemini-3.5-flash-lite" />
               </Field>
               <Field
                 label="API key"

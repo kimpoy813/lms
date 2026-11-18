@@ -37,7 +37,10 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
   // A quiz or an examination made of the chosen questions. They are kept in a question bank too,
   // as every question of a quiz is.
   const classes = useQuery({ queryKey: ['classes', { status: 'ACTIVE', term: '' }], queryFn: () => api.get('/classes', { status: 'ACTIVE' }), enabled: Boolean(quiz) });
-  const suggestedTitle = quiz ? `${quiz.module?.title ?? defaultBankTitle ?? 'Untitled'}: ${quiz.noun}`.slice(0, 200) : '';
+  const [quizKind, setQuizKind] = useState(quiz?.kind ?? 'QUIZ');
+  useEffect(() => { if (quiz?.kind) setQuizKind(quiz.kind); }, [quiz?.kind]);
+  const noun = quizKind === 'EXAM' ? 'examination' : quizKind === 'PRACTICE' ? 'practice quiz' : (quiz?.noun ?? 'quiz');
+  const suggestedTitle = quiz ? `${quiz.module?.title ?? defaultBankTitle ?? 'Untitled'}: ${noun}`.slice(0, 200) : '';
   const [quizTitle, setQuizTitle] = useState(suggestedTitle);
   const [quizClassId, setQuizClassId] = useState(quiz?.module?.classId ?? '');
   // The suggestion follows the form above until the teacher has typed a title of their own.
@@ -48,12 +51,16 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
     const bank = bankId && bankId !== 'new' ? bankId : (await api.post('/question-banks', { title: defaultBankTitle || quizTitle.trim() || 'AI drafts' })).id;
     // The questions first: a question that still has a mistake is reported before anything is created.
     const saved = await api.post(`/question-banks/${bank}/questions/bulk`, { questions: chosen.map(({ key, include, ...q }) => q) });
-    const made = await api.post(`/classes/${quizClassId}/quizzes`, { title: quizTitle.trim(), kind: quiz.kind, ...(quiz.module?.classId === quizClassId ? { moduleId: quiz.module.id } : {}) });
+    const made = await api.post(`/classes/${quizClassId}/quizzes`, {
+      title: quizTitle.trim(),
+      kind: quizKind,
+      ...(quiz.module?.id && quiz.module?.classId === quizClassId ? { moduleId: quiz.module.id } : {}),
+    });
     await api.put(`/quizzes/${made.id}/questions`, { items: saved.questionIds.map((questionId, i) => ({ questionId, points: Number(chosen[i].points) > 0 ? Number(chosen[i].points) : 1 })) });
     return made;
   }, {
     invalidate: [['question-banks'], ['class', quizClassId]],
-    success: () => `Saved as a draft ${quiz.noun}. Set the dates and the time limit, then publish it when you are ready.`,
+    success: () => `Saved as a draft ${noun}. Set the dates and the time limit, then publish it when you are ready.`,
     onSuccess: (made) => navigate(`/classes/${quizClassId}/quizzes/${made.id}`),
   });
 
@@ -81,12 +88,21 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
       </ol>
       {quiz && (
         <div className="mt-4 rounded-xl border border-line bg-raised p-3.5">
-          <p className="text-sm font-semibold text-ink">Make a draft {quiz.noun} of the {plural(chosen.length, 'selected question')}</p>
+          <p className="text-sm font-semibold text-ink">Make a draft {noun} of the {plural(chosen.length, 'selected question')}</p>
           <p className="mt-0.5 text-[13px] text-faint">Students do not see it until you publish it. You can still add, change and remove questions there.</p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
-            <Field label="Title" className="w-full"><Input value={quizTitle} maxLength={200} onChange={(e) => { setTitleTouched(true); setQuizTitle(e.target.value); }} /></Field>
+            <Field label="Title" className={quiz.allowTypeChoice ? 'min-w-0 flex-1 basis-64' : 'w-full'}><Input value={quizTitle} maxLength={200} onChange={(e) => { setTitleTouched(true); setQuizTitle(e.target.value); }} /></Field>
+            {quiz.allowTypeChoice && (
+              <Field label="Type" className="w-full sm:w-44">
+                <Select value={quizKind} onChange={(e) => setQuizKind(e.target.value)}>
+                  <option value="QUIZ">Quiz</option>
+                  <option value="EXAM">Examination</option>
+                  <option value="PRACTICE">Practice quiz</option>
+                </Select>
+              </Field>
+            )}
             <Field label="In the class" className="min-w-0 flex-1 basis-56"><Select value={quizClassId} onChange={(e) => setQuizClassId(e.target.value)}><option value="">Choose a class…</option>{(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}</Select></Field>
-            <Button icon={FilePlus2} className="w-full sm:w-auto" loading={makeQuiz.isPending} disabled={!quizClassId || !quizTitle.trim() || chosen.length === 0 || save.isPending} onClick={() => makeQuiz.mutate()}>Create the {quiz.noun}</Button>
+            <Button icon={FilePlus2} className="w-full sm:w-auto" loading={makeQuiz.isPending} disabled={!quizClassId || !quizTitle.trim() || chosen.length === 0 || save.isPending} onClick={() => makeQuiz.mutate()}>Create the {noun}</Button>
           </div>
         </div>
       )}

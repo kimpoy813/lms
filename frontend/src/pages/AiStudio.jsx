@@ -3,7 +3,7 @@
 // Everything the AI writes is a draft. Nothing reaches students until the teacher has
 // reviewed it and published it like any other content.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpenCheck, Bot, ClipboardList, Copy, FileQuestion, Layers, Send, Sparkles, Table2, Wand2 } from 'lucide-react';
+import { BookOpenCheck, Bot, ClipboardList, Code2, Copy, FileQuestion, Layers, Send, Sparkles, Table2, Wand2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
@@ -25,6 +25,7 @@ const TOOLS = [
   { value: 'questions', label: 'Quiz or exam', icon: FileQuestion },
   { value: 'assignment', label: 'Assignment', icon: ClipboardList },
   { value: 'rubric', label: 'Rubric', icon: Table2 },
+  { value: 'programming', label: 'Coding problem', icon: Code2 },
   { value: 'assistant', label: 'Writing help', icon: Wand2 },
 ];
 
@@ -81,6 +82,7 @@ export default function AiStudio() {
       {tool === 'questions' && <QuestionsTool ready={ready} onDone={refreshQuota} />}
       {tool === 'assignment' && <AssignmentTool ready={ready} onDone={refreshQuota} />}
       {tool === 'rubric' && <RubricTool ready={ready} onDone={refreshQuota} />}
+      {tool === 'programming' && <ProgrammingTool ready={ready} onDone={refreshQuota} />}
       {tool === 'assistant' && <AssistantTool ready={ready} onDone={refreshQuota} />}
       <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Only what you type, attach or choose here is sent to the AI service (for a module you choose: the text of its lessons) — never student names, scores or submissions.</p>
     </>
@@ -412,6 +414,176 @@ function AssistantTool({ ready, onDone }) {
         {answer === null ? <EmptyState compact icon={Bot} title="The answer appears here" /> : (
           // Shown as plain text: the answer is never interpreted as HTML.
           <div className="space-y-3 text-[15px] leading-relaxed text-ink">{paragraphs.map((p, i) => <p key={`${i}-${p.slice(0, 12)}`} className="whitespace-pre-wrap">{p}</p>)}</div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+const CODING_LANGUAGES = [
+  { id: 'PYTHON', label: 'Python 3' },
+  { id: 'JAVASCRIPT', label: 'JavaScript (Node)' },
+  { id: 'C', label: 'C' },
+  { id: 'CPP', label: 'C++' },
+  { id: 'JAVA', label: 'Java' },
+];
+
+function ProgrammingTool({ ready, onDone }) {
+  const navigate = useNavigate();
+  const classes = useTeachingClasses();
+  const [v, setV] = useState({
+    topic: '',
+    difficulty: 'MEDIUM',
+    allowedLanguages: ['PYTHON'],
+    testCount: 5,
+    details: '',
+  });
+  const [draft, setDraft] = useState(null);
+  const [classId, setClassId] = useState('');
+  const [starterLang, setStarterLang] = useState('PYTHON');
+  const [error, setError] = useState(null);
+
+  const toggleLang = (langId, checked) => {
+    setV((s) => ({
+      ...s,
+      allowedLanguages: checked ? [...s.allowedLanguages, langId] : s.allowedLanguages.filter((x) => x !== langId),
+    }));
+  };
+
+  const generate = useAction(
+    () =>
+      api.post('/ai/programming', {
+        topic: v.topic.trim(),
+        difficulty: v.difficulty,
+        allowedLanguages: v.allowedLanguages,
+        testCount: Number(v.testCount) || 5,
+        details: v.details.trim() || undefined,
+      }),
+    {
+      onSuccess: (r) => {
+        onDone();
+        setDraft(r.problem);
+        setStarterLang(r.problem?.allowedLanguages?.[0] ?? 'PYTHON');
+      },
+      onError: (err) => aiError(err, setError),
+    },
+  );
+
+  const createProblem = useAction(
+    () =>
+      api.post('/programming/problems', {
+        title: draft.title,
+        statementHtml: draft.statementHtml,
+        classId: classId || null,
+        allowedLanguages: draft.allowedLanguages,
+        starterCode: draft.starterCode,
+        timeLimitMs: draft.timeLimitMs,
+        memoryLimitKb: draft.memoryLimitKb,
+        partialCredit: draft.partialCredit,
+        testCases: draft.testCases,
+      }),
+    {
+      invalidate: [['programming']],
+      success: 'Coding problem created. You can refine tests or run a solution check there.',
+      onSuccess: (created) => navigate(`/programming/${created.id}`),
+    },
+  );
+
+  return (
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+      <Card className="min-w-0 xl:self-start">
+        <CardHeader icon={Code2} title="Draft a coding problem" description="Problem specification, starter code, and sample/hidden stdin–stdout test cases." />
+        <form onSubmit={(e) => { e.preventDefault(); setError(null); generate.mutate(); }} className="space-y-4">
+          {error && <Alert tone="bad">{error}</Alert>}
+          <Field label="Programming topic or task" hint="Topics like binary search, palindrome check, prime checker, array sum, or matrix row sums generate verified test cases.">
+            <Input value={v.topic} onChange={(e) => setV((s) => ({ ...s, topic: e.target.value }))} required minLength={2} maxLength={300} placeholder="e.g. Binary search in a sorted array" />
+          </Field>
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-medium text-ink">Allowed languages</legend>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {CODING_LANGUAGES.map((l) => (
+                <Checkbox key={l.id} label={l.label} checked={v.allowedLanguages.includes(l.id)} onChange={(e) => toggleLang(l.id, e.target.checked)} />
+              ))}
+            </div>
+          </fieldset>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Difficulty">
+              <Select value={v.difficulty} onChange={(e) => setV((s) => ({ ...s, difficulty: e.target.value }))}>
+                <option value="EASY">Easy</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HARD">Hard</option>
+              </Select>
+            </Field>
+            <Field label="Test cases">
+              <Input type="number" min="2" max="12" value={v.testCount} onChange={(e) => setV((s) => ({ ...s, testCount: e.target.value }))} />
+            </Field>
+          </div>
+          <Field label="Additional notes for students" optional>
+            <Textarea rows={3} value={v.details} onChange={(e) => setV((s) => ({ ...s, details: e.target.value }))} maxLength={2000} placeholder="Constraints, edge cases, or hints to include in the statement." />
+          </Field>
+          <div className="flex justify-end">
+            <Button type="submit" icon={Sparkles} loading={generate.isPending} disabled={!ready || v.topic.trim().length < 2 || v.allowedLanguages.length === 0}>
+              Draft coding problem
+            </Button>
+          </div>
+        </form>
+      </Card>
+
+      <Card className="min-w-0">
+        <CardHeader title="Draft problem" description={draft ? 'Review the statement, starter code, and every test case before saving.' : null} />
+        {!draft ? (
+          <EmptyState compact icon={Code2} title="The drafted problem appears here" />
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <p className="text-lg font-semibold text-ink">{draft.title}</p>
+              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-faint">
+                {draft.allowedLanguages.map((lang) => <Badge key={lang}>{lang}</Badge>)}
+                <span>· {plural(draft.testCases.length, 'test case')}</span>
+              </p>
+            </div>
+            <RichText html={draft.statementHtml} />
+            {Object.keys(draft.starterCode ?? {}).length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-faint">Starter code</span>
+                  {draft.allowedLanguages.length > 1 && (
+                    <Select value={starterLang} onChange={(e) => setStarterLang(e.target.value)} className="h-8 w-40 text-xs">
+                      {draft.allowedLanguages.map((l) => <option key={l} value={l}>{l}</option>)}
+                    </Select>
+                  )}
+                </div>
+                <pre className="max-h-48 overflow-auto rounded-xl bg-[#151826] p-3 font-mono text-xs text-[#e6e8f2]"><code>{draft.starterCode?.[starterLang] ?? ''}</code></pre>
+              </div>
+            )}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-faint">Test cases</p>
+              <ul className="space-y-2">
+                {draft.testCases.map((tc, idx) => (
+                  <li key={idx} className="rounded-xl border border-line p-2.5 text-xs">
+                    <p className="mb-1.5 flex items-center gap-2 font-semibold text-ink">
+                      Test {idx + 1}
+                      {tc.isHidden ? <Badge tone="warn">Hidden</Badge> : <Badge tone="ok">Sample</Badge>}
+                      <span className="ml-auto font-normal text-faint">{tc.comparison} · weight {tc.weight}</span>
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><span className="text-[11px] text-faint">Input</span><pre className="mt-0.5 max-h-20 overflow-auto rounded bg-raised p-1.5 font-mono text-ink">{tc.input || '(none)'}</pre></div>
+                      <div><span className="text-[11px] text-faint">Expected</span><pre className="mt-0.5 max-h-20 overflow-auto rounded bg-raised p-1.5 font-mono text-ink">{tc.expectedOutput}</pre></div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex flex-wrap items-end gap-3 border-t border-line pt-4">
+              <Field label="Share as practice with (optional)" className="min-w-0 flex-1 basis-56">
+                <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
+                  <option value="">Not shared yet (save to library)</option>
+                  {(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}
+                </Select>
+              </Field>
+              <Button loading={createProblem.isPending} onClick={() => createProblem.mutate()}>Create problem</Button>
+            </div>
+          </div>
         )}
       </Card>
     </div>

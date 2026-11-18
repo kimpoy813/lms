@@ -7,8 +7,10 @@ import { created, fullName, idParams, noContent, ok, patchOf, round, zHtml, zId,
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
+import { aiLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
+import { builtinCompletion } from '../../services/aiBuiltin.js';
 import { enrolledStudentIds, notify } from '../../services/notifications.js';
 import { fileSummary } from '../../services/storage.js';
 import { assertClassWritable, classIdsFor, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
@@ -433,12 +435,57 @@ async function lessonDetail(user, lessonId, { markViewed = false } = {}) {
     resources: resources.map((r) => resourceView(r, { manage })),
     previous: neighbour(mod.lessons[index - 1]),
     next: neighbour(mod.lessons[index + 1]),
+    aiStudyCoachEnabled: Boolean(access.cls.aiStudyCoachEnabled),
     ...(manage ? { status: lesson.status } : { completed: Boolean(progress?.completedAt), completedAt: progress?.completedAt ?? null, bookmarked }),
   };
 }
 
 contentRouter.get('/lessons/:lessonId', validate({ params: idParams('lessonId') }), async (req, res) => {
   ok(res, await lessonDetail(req.user, req.valid.params.lessonId, { markViewed: true }));
+});
+
+const studyCoachBody = z
+  .object({
+    mode: z.enum(['summary', 'flashcards', 'practice', 'explain']).default('summary'),
+    question: z.string().trim().min(2).max(600).optional(),
+  })
+  .refine((b) => b.mode !== 'explain' || Boolean(b.question), {
+    message: 'Enter a question about this lesson.',
+    path: ['question'],
+  });
+
+/**
+ * Built-in zero-cost AI Study Coach for students (and previewable by the class teacher).
+ * Strictly scoped to a single published/unlocked lesson's text and never hits external LLMs.
+ */
+contentRouter.post('/lessons/:lessonId/study-coach', aiLimiter, validate({ params: idParams('lessonId'), body: studyCoachBody }), async (req, res) => {
+  const lesson = await lessonDetail(req.user, req.valid.params.lessonId, { markViewed: false });
+  const manage = req.user.role === 'TEACHER' || req.user.role === 'ADMIN';
+  if (!manage && !lesson.aiStudyCoachEnabled) {
+    throw forbidden('The AI Study Coach is turned off for this class.', 'STUDY_COACH_DISABLED');
+  }
+  const b = req.valid.body;
+  const out = await builtinCompletion({
+    json: true,
+    task: {
+      kind: 'study-coach',
+      input: {
+        lessonTitle: lesson.title,
+        moduleTitle: lesson.moduleTitle,
+        contentHtml: lesson.contentHtml,
+        objectives: lesson.objectives,
+        mode: b.mode,
+        question: b.question,
+      },
+    },
+  });
+  let payload;
+  try {
+    payload = JSON.parse(out.content);
+  } catch {
+    payload = { mode: b.mode, lessonTitle: lesson.title };
+  }
+  ok(res, { ...payload, model: out.model });
 });
 
 async function loadManagedLesson(req) {

@@ -24,6 +24,7 @@ import { getSetting, getTimeZone } from '../../services/settings.js';
 import { readStoredFile } from '../../services/storage.js';
 import { classLabel, requireWritableClassManager } from '../classes/access.js';
 import { LESSON_KINDS } from '../content/routes.js';
+import { LANGUAGES } from '../../services/codeRunner.js';
 
 export const aiRouter = Router();
 aiRouter.use(requireAuth, requireRole('TEACHER', 'ADMIN'));
@@ -635,4 +636,83 @@ aiRouter.post('/assistant', aiLimiter, validate({ body: z.object({ prompt: z.str
   });
   await recordUsage(req.user.id, 'ASSISTANT', out);
   ok(res, { text: cleanText(out.content, 20_000), needsReview: true });
+});
+
+const PROGRAMMING_LANGUAGE_IDS = Object.keys(LANGUAGES);
+const programmingSchema = z.object({
+  topic: z.string().trim().min(2).max(300),
+  allowedLanguages: z.array(z.enum(PROGRAMMING_LANGUAGE_IDS)).min(1).max(PROGRAMMING_LANGUAGE_IDS.length).default(['PYTHON']),
+  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).default('MEDIUM'),
+  details: z.string().trim().max(2000).optional(),
+  testCount: z.number().int().min(2).max(12).default(5),
+});
+
+function cleanProgrammingProblem(raw, fallbackLanguages) {
+  if (!raw || typeof raw !== 'object') return null;
+  const title = plainText(raw.title ?? '', 200);
+  if (!title) return null;
+  const allowedLanguages = Array.isArray(raw.allowedLanguages)
+    ? raw.allowedLanguages.filter((l) => PROGRAMMING_LANGUAGE_IDS.includes(l))
+    : [];
+  const langs = allowedLanguages.length ? [...new Set(allowedLanguages)] : fallbackLanguages;
+  const starterCode = {};
+  if (raw.starterCode && typeof raw.starterCode === 'object') {
+    for (const lang of langs) {
+      if (typeof raw.starterCode[lang] === 'string') {
+        starterCode[lang] = raw.starterCode[lang].slice(0, 20_000);
+      }
+    }
+  }
+  const cases = (Array.isArray(raw.testCases) ? raw.testCases : [])
+    .slice(0, 15)
+    .map((tc) => ({
+      input: String(tc?.input ?? '').slice(0, 20_000),
+      expectedOutput: String(tc?.expectedOutput ?? '').slice(0, 20_000),
+      isHidden: Boolean(tc?.isHidden),
+      weight: Math.min(100, Math.max(0.5, Number(tc?.weight) || 1)),
+      comparison: ['EXACT', 'TRIMMED', 'TOKENS'].includes(tc?.comparison) ? tc.comparison : 'TRIMMED',
+    }))
+    .filter((tc) => tc.expectedOutput.length > 0);
+  if (cases.length === 0) return null;
+  // Ensure at least one visible sample test case exists for students.
+  if (cases.every((tc) => tc.isHidden)) cases[0].isHidden = false;
+  return {
+    title,
+    statementHtml: sanitizeRichText(String(raw.statementHtml ?? '').slice(0, 80_000)),
+    allowedLanguages: langs,
+    starterCode,
+    timeLimitMs: Math.min(15_000, Math.max(500, Math.round(Number(raw.timeLimitMs) || 3000))),
+    memoryLimitKb: Math.min(524_288, Math.max(16_384, Math.round(Number(raw.memoryLimitKb) || 131_072))),
+    partialCredit: raw.partialCredit !== false,
+    testCases: cases,
+  };
+}
+
+/** Draft a programming problem with starter code and sample/hidden test cases for teacher review. */
+aiRouter.post('/programming', aiLimiter, validate({ body: programmingSchema }), async (req, res) => {
+  const b = req.valid.body;
+  await guard(req);
+  const out = await chatJson({
+    system: SYSTEM,
+    user: [
+      `Draft a ${b.difficulty.toLowerCase()} college programming problem about: ${b.topic}.`,
+      b.details ? `Teacher guidance: ${cleanText(b.details, 2000)}` : null,
+      `Allowed languages: ${b.allowedLanguages.join(', ')}. Include ${b.testCount} stdin/stdout test cases (at least 2 visible sample tests and the rest hidden).`,
+      'Answer with one JSON object: { "title": string, "statementHtml": string, "allowedLanguages": string[], "starterCode": Record<string, string>, "timeLimitMs": number, "memoryLimitKb": number, "partialCredit": boolean, "testCases": [{ "input": string, "expectedOutput": string, "isHidden": boolean, "weight": number, "comparison": "EXACT"|"TRIMMED"|"TOKENS" }] }.',
+    ].filter(Boolean).join('\n'),
+    task: {
+      kind: 'programming',
+      input: {
+        topic: b.topic,
+        allowedLanguages: b.allowedLanguages,
+        difficulty: b.difficulty,
+        details: b.details,
+        testCount: b.testCount,
+      },
+    },
+  });
+  await recordUsage(req.user.id, 'PROGRAMMING_EXERCISE', out);
+  const problem = cleanProgrammingProblem(out.data, b.allowedLanguages);
+  if (!problem) throw new AppError(502, 'AI_FAILED', 'The AI service returned a programming problem in an unexpected shape. Please try again.');
+  ok(res, { problem, needsReview: true });
 });

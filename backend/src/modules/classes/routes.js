@@ -15,6 +15,7 @@ import { audit } from '../../services/audit.js';
 import { hasPermission } from '../../services/permissions.js';
 import { getSetting } from '../../services/settings.js';
 import { createDefaultGradeSetup } from '../gradebook/defaults.js';
+import { copyModule } from '../content/routes.js';
 import { loadClassAccess, requireClassManager, requireWritableClassManager } from './access.js';
 
 export const classesRouter = Router();
@@ -51,6 +52,7 @@ export function serializeClass(cls, { role, counts } = {}) {
     schedules: (cls.schedules ?? []).map((s) => ({ id: s.id, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime, room: s.room })),
     enrollmentRequiresApproval: cls.enrollmentRequiresApproval,
     classmatesVisible: cls.classmatesVisible,
+    aiStudyCoachEnabled: Boolean(cls.aiStudyCoachEnabled),
     gradesFinalizedAt: cls.gradesFinalizedAt,
     myRole: role,
     // The enrolment code is a secret shared by the teacher — students never receive it from the API.
@@ -194,6 +196,7 @@ const classBody = z.object({
   schedules: z.array(scheduleSchema).max(14).default([]),
   enrollmentRequiresApproval: z.boolean().optional(),
   classmatesVisible: z.boolean().optional(),
+  aiStudyCoachEnabled: z.boolean().optional(),
 });
 
 classesRouter.post('/', requireRole('TEACHER', 'ADMIN'), validate({ body: classBody }), async (req, res) => {
@@ -260,6 +263,7 @@ classesRouter.post('/', requireRole('TEACHER', 'ADMIN'), validate({ body: classB
         enrollmentCode: await uniqueEnrollmentCode(tx),
         enrollmentRequiresApproval: body.enrollmentRequiresApproval ?? false,
         classmatesVisible: body.classmatesVisible ?? classmatesDefault,
+        aiStudyCoachEnabled: body.aiStudyCoachEnabled ?? false,
         schedules: { create: body.schedules.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime, room: s.room || null })) },
       },
       include: listInclude,
@@ -310,6 +314,7 @@ const updateBody = z.object({
   enrollmentCodeEnabled: z.boolean().optional(),
   enrollmentRequiresApproval: z.boolean().optional(),
   classmatesVisible: z.boolean().optional(),
+  aiStudyCoachEnabled: z.boolean().optional(),
   syllabusHtml: zHtml.optional(),
   learningOutcomes: z.array(z.string().trim().min(1).max(500)).max(30).optional(),
   // Administrators may reassign a class to another teacher.
@@ -327,6 +332,7 @@ classesRouter.patch('/:classId', validate({ params: idParams('classId'), body: u
   if (body.enrollmentCodeEnabled !== undefined) data.enrollmentCodeEnabled = body.enrollmentCodeEnabled;
   if (body.enrollmentRequiresApproval !== undefined) data.enrollmentRequiresApproval = body.enrollmentRequiresApproval;
   if (body.classmatesVisible !== undefined) data.classmatesVisible = body.classmatesVisible;
+  if (body.aiStudyCoachEnabled !== undefined) data.aiStudyCoachEnabled = body.aiStudyCoachEnabled;
   if (body.syllabusHtml !== undefined) data.syllabusHtml = sanitizeRichText(body.syllabusHtml);
   if (body.learningOutcomes !== undefined) data.learningOutcomes = body.learningOutcomes.map((o) => plainText(o, 500)).filter(Boolean);
   if (body.sectionId !== undefined) {
@@ -379,6 +385,259 @@ classesRouter.post('/:classId/enrollment-code/regenerate', validate({ params: id
     return row;
   });
   ok(res, updated);
+});
+
+const copyClassBody = z.object({
+  semesterId: zId,
+  sectionId: zId.nullable().optional(),
+  newSectionName: z.string().trim().min(1).max(60).optional(),
+  room: z.string().trim().max(60).nullable().optional(),
+  color: z.enum(CLASS_COLORS).optional(),
+  teacherId: zId.optional(),
+  includeModules: z.boolean().default(true),
+  includeAssignments: z.boolean().default(true),
+  includeQuizzes: z.boolean().default(true),
+  includeGradeSetup: z.boolean().default(true),
+  includeSyllabus: z.boolean().default(true),
+});
+
+// ── Whole-class semester rollover / cloning ───────────────────────────────────
+classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({ params: idParams('classId'), body: copyClassBody }), async (req, res) => {
+  const { classId } = req.valid.params;
+  const body = req.valid.body;
+  await assertPermission(req.user, 'class.create');
+  const { cls: source } = await requireClassManager(req.user, classId);
+
+  if (body.newSectionName && !(await hasPermission(req.user.role, 'catalog.create'))) {
+    throw forbidden('Only the administrator can add new sections. Choose one from the list.', 'PERMISSION_DENIED');
+  }
+  const semester = await prisma.semester.findUnique({ where: { id: body.semesterId } });
+  if (!semester) throw fieldErrors({ semesterId: 'Choose a semester.' });
+
+  let teacherId = source.teacherId;
+  if (req.user.role === 'ADMIN' && body.teacherId) {
+    const teacher = await prisma.user.findFirst({ where: { id: body.teacherId, role: 'TEACHER', status: 'ACTIVE' }, select: { id: true } });
+    if (!teacher) throw fieldErrors({ teacherId: 'Choose an active teacher account.' });
+    teacherId = teacher.id;
+  }
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    let sectionId = body.sectionId !== undefined ? body.sectionId : source.sectionId;
+    if (sectionId) {
+      if (!(await tx.section.findUnique({ where: { id: sectionId }, select: { id: true } }))) {
+        throw fieldErrors({ sectionId: 'Choose a section from the list.' });
+      }
+    } else if (body.newSectionName) {
+      const name = plainText(body.newSectionName, 60);
+      const existing = await tx.section.findFirst({ where: { name: { equals: name, mode: 'insensitive' } } });
+      sectionId = existing ? existing.id : (await tx.section.create({ data: { name } })).id;
+    }
+
+    const duplicate = await tx.class.findFirst({
+      where: { courseId: source.courseId, sectionId, semesterId: body.semesterId, teacherId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw conflict('An active class for this course, section, and semester already exists.', 'DUPLICATE_CLASS');
+    }
+
+    const createdClass = await tx.class.create({
+      data: {
+        courseId: source.courseId,
+        sectionId,
+        semesterId: body.semesterId,
+        teacherId,
+        description: source.description,
+        room: body.room !== undefined ? (body.room ? plainText(body.room, 60) : null) : source.room,
+        color: body.color ?? source.color,
+        enrollmentCode: await uniqueEnrollmentCode(tx),
+        enrollmentRequiresApproval: source.enrollmentRequiresApproval,
+        classmatesVisible: source.classmatesVisible,
+        aiStudyCoachEnabled: source.aiStudyCoachEnabled,
+        syllabusHtml: body.includeSyllabus ? source.syllabusHtml : null,
+        learningOutcomes: body.includeSyllabus ? source.learningOutcomes : [],
+      },
+      include: listInclude,
+    });
+
+    // Grade setup (periods + categories, keeping a source -> target category map for copied items)
+    const categoryMap = new Map();
+    const sourcePeriods = body.includeGradeSetup
+      ? await tx.gradingPeriod.findMany({
+          where: { classId: source.id },
+          orderBy: { position: 'asc' },
+          include: { categories: { orderBy: { position: 'asc' } } },
+        })
+      : [];
+
+    if (sourcePeriods.length > 0) {
+      for (const period of sourcePeriods) {
+        const createdPeriod = await tx.gradingPeriod.create({
+          data: { classId: createdClass.id, name: period.name, weight: period.weight, position: period.position },
+        });
+        for (const cat of period.categories) {
+          const createdCat = await tx.gradeCategory.create({
+            data: { periodId: createdPeriod.id, name: cat.name, kind: cat.kind, weight: cat.weight, position: cat.position },
+          });
+          categoryMap.set(cat.id, createdCat.id);
+        }
+      }
+    } else {
+      await createDefaultGradeSetup(tx, createdClass.id);
+    }
+
+    // Modules & lessons (always copied as DRAFT with prerequisites preserved)
+    const moduleMap = new Map();
+    let moduleCount = 0;
+    if (body.includeModules) {
+      const sourceModules = await tx.learningModule.findMany({
+        where: { classId: source.id, deletedAt: null },
+        orderBy: { position: 'asc' },
+      });
+      for (const [index, mod] of sourceModules.entries()) {
+        const copiedMod = await copyModule(tx, mod, createdClass.id, req.user.id, index);
+        moduleMap.set(mod.id, copiedMod.id);
+      }
+      for (const mod of sourceModules) {
+        if (mod.prerequisiteModuleId && moduleMap.has(mod.prerequisiteModuleId)) {
+          await tx.learningModule.update({
+            where: { id: moduleMap.get(mod.id) },
+            data: { prerequisiteModuleId: moduleMap.get(mod.prerequisiteModuleId) },
+          });
+        }
+      }
+      moduleCount = sourceModules.length;
+    }
+
+    // Assignments (copied as DRAFT without student deadlines)
+    let assignmentCount = 0;
+    if (body.includeAssignments) {
+      const sourceAssignments = await tx.assignment.findMany({
+        where: { classId: source.id, deletedAt: null },
+        include: { gradeItem: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      for (const a of sourceAssignments) {
+        const copiedAssignment = await tx.assignment.create({
+          data: {
+            classId: createdClass.id,
+            moduleId: a.moduleId ? (moduleMap.get(a.moduleId) ?? null) : null,
+            title: a.title,
+            instructionsHtml: a.instructionsHtml,
+            points: a.points,
+            status: 'DRAFT',
+            allowLate: a.allowLate,
+            latePenaltyType: a.latePenaltyType,
+            latePenaltyValue: a.latePenaltyValue,
+            latePenaltyMax: a.latePenaltyMax,
+            allowText: a.allowText,
+            allowFiles: a.allowFiles,
+            maxFiles: a.maxFiles,
+            allowResubmission: a.allowResubmission,
+            rubricId: a.rubricId,
+            createdById: req.user.id,
+          },
+        });
+        if (a.gradeItem && categoryMap.has(a.gradeItem.categoryId)) {
+          await tx.gradeItem.create({
+            data: {
+              classId: createdClass.id,
+              categoryId: categoryMap.get(a.gradeItem.categoryId),
+              title: copiedAssignment.title,
+              maxPoints: copiedAssignment.points,
+              source: 'ASSIGNMENT',
+              assignmentId: copiedAssignment.id,
+            },
+          });
+        }
+      }
+      assignmentCount = sourceAssignments.length;
+    }
+
+    // Quizzes / Exams (copied as DRAFT with questions & random pools preserved)
+    let quizCount = 0;
+    if (body.includeQuizzes) {
+      const sourceQuizzes = await tx.quiz.findMany({
+        where: { classId: source.id, deletedAt: null },
+        include: {
+          questions: { include: { question: { select: { deletedAt: true } } }, orderBy: { position: 'asc' } },
+          pools: { include: { bank: { select: { deletedAt: true } } }, orderBy: { position: 'asc' } },
+          gradeItem: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      for (const q of sourceQuizzes) {
+        const activeQuestions = q.questions.filter((qq) => !qq.question.deletedAt);
+        const activePools = q.pools.filter((p) => !p.bank.deletedAt);
+        const copiedQuiz = await tx.quiz.create({
+          data: {
+            classId: createdClass.id,
+            moduleId: q.moduleId ? (moduleMap.get(q.moduleId) ?? null) : null,
+            title: q.title,
+            instructionsHtml: q.instructionsHtml,
+            kind: q.kind,
+            status: 'DRAFT',
+            timeLimitMinutes: q.timeLimitMinutes,
+            maxAttempts: q.maxAttempts,
+            attemptScoring: q.attemptScoring,
+            passingPercent: q.passingPercent,
+            shuffleQuestions: q.shuffleQuestions,
+            shuffleChoices: q.shuffleChoices,
+            strictMode: q.strictMode,
+            violationWarnings: q.violationWarnings,
+            resultVisibility: q.resultVisibility === 'AFTER_CLOSE' ? 'MANUAL' : q.resultVisibility,
+            answerVisibility: q.answerVisibility,
+            createdById: req.user.id,
+            questions: { create: activeQuestions.map((qq) => ({ questionId: qq.questionId, points: qq.points, position: qq.position })) },
+            pools: { create: activePools.map((p) => ({ bankId: p.bankId, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach, position: p.position })) },
+          },
+        });
+        if (q.gradeItem && categoryMap.has(q.gradeItem.categoryId)) {
+          const totalPoints =
+            activeQuestions.reduce((sum, qq) => sum + qq.points, 0) +
+            activePools.reduce((sum, p) => sum + p.count * p.pointsEach, 0);
+          await tx.gradeItem.create({
+            data: {
+              classId: createdClass.id,
+              categoryId: categoryMap.get(q.gradeItem.categoryId),
+              title: copiedQuiz.title,
+              maxPoints: totalPoints > 0 ? totalPoints : q.gradeItem.maxPoints,
+              source: 'QUIZ',
+              quizId: copiedQuiz.id,
+            },
+          });
+        }
+      }
+      quizCount = sourceQuizzes.length;
+    }
+
+    await audit(
+      req,
+      {
+        action: 'class.copy',
+        entityType: 'Class',
+        entityId: createdClass.id,
+        classId: createdClass.id,
+        summary: `Rolled over ${moduleCount} module(s), ${assignmentCount} assignment(s), and ${quizCount} quiz(zes) from class ${source.course.code}`,
+      },
+      tx,
+    );
+
+    return {
+      createdClass,
+      summary: {
+        modules: moduleCount,
+        assignments: assignmentCount,
+        quizzes: quizCount,
+        periods: sourcePeriods.length,
+      },
+    };
+  });
+
+  created(res, {
+    ...serializeClass(outcome.createdClass, { role: req.user.role, counts: { studentCount: 0, pendingCount: 0 } }),
+    summary: outcome.summary,
+  });
 });
 
 // ── Archive / restore ─────────────────────────────────────────────────────────

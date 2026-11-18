@@ -132,8 +132,20 @@ function Review({ draft, onBack, configured }) {
 
         {questions.length > 0 && (
           <Card>
-            <CardHeader title="Assessment questions" description="These are not added to the module. Save the ones you want to a question bank, then build a quiz from the bank." />
-            <QuestionDrafts drafts={questions} setDrafts={(next) => { setQuestions(next); setDirty(true); }} defaultBankTitle={c.title?.slice(0, 120)} />
+            <CardHeader title="Assessment questions" description="Select the questions you want, then create a draft quiz or examination right away or save them to a question bank." />
+            <QuestionDrafts
+              drafts={questions}
+              setDrafts={(next) => { setQuestions(next); setDirty(true); }}
+              defaultBankTitle={c.title?.slice(0, 120)}
+              quiz={{
+                kind: 'QUIZ',
+                noun: 'quiz',
+                allowTypeChoice: true,
+                module: draft.request.classId
+                  ? { id: draft.moduleId ?? null, title: c.title || draft.request.topic, classId: draft.request.classId, classLabel: draft.request.classLabel }
+                  : null,
+              }}
+            />
           </Card>
         )}
 

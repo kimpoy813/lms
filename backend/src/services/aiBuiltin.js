@@ -8,6 +8,7 @@
 import { BUILTIN_MODEL } from './aiProvider.js';
 import { normalizeAnswer } from '../lib/answerMatch.js';
 import { matchKnowledge } from './aiBuiltinKnowledge.js';
+import { generateProgrammingProblem } from './aiBuiltinProgramming.js';
 
 const STOPWORDS = new Set([
   'the', 'and', 'for', 'that', 'with', 'this', 'from', 'are', 'was', 'were', 'been', 'being',
@@ -1679,6 +1680,132 @@ function generateAssistantText(input = {}) {
   ].join('\n');
 }
 
+function generateStudyCoach(input = {}) {
+  const mode = input.mode || 'summary';
+  const lessonTitle = cleanLine(input.lessonTitle, 200) || 'Lesson';
+  const contentText = stripHtmlKeepBreaks(input.contentHtml ?? '').trim();
+  const objectives = Array.isArray(input.objectives) ? input.objectives.map((o) => cleanLine(o, 300)).filter(Boolean) : [];
+  const sections = contentText ? [{ title: lessonTitle, body: contentText }] : [];
+  const material = sections.length ? analyzeMaterial(sections) : { definitions: [], facts: [], comparisons: [], causes: [], sequences: [] };
+  const sentences = splitSentences(contentText);
+  const packs = matchKnowledge(`${lessonTitle}\n${contentText.slice(0, 1200)}`);
+  const pack = packs[0] ?? null;
+
+  if (mode === 'flashcards') {
+    const cards = [];
+    const seen = new Set();
+    for (const d of material.definitions) {
+      const key = d.term.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cards.push({ front: d.term, back: d.definition, hint: `From "${lessonTitle}"` });
+    }
+    for (const comp of material.comparisons) {
+      const front = `How does ${comp.left} compare with ${comp.right}?`;
+      if (seen.has(front.toLowerCase())) continue;
+      seen.add(front.toLowerCase());
+      cards.push({ front, back: comp.sentence, hint: 'Comparison' });
+    }
+    for (const seq of material.sequences) {
+      const front = `List the steps for: ${seq.label || lessonTitle}`;
+      if (seen.has(front.toLowerCase())) continue;
+      seen.add(front.toLowerCase());
+      cards.push({ front, back: seq.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'), hint: 'Sequence' });
+    }
+    for (const f of material.facts) {
+      if (cards.length >= 8) break;
+      if (!f.keyword) continue;
+      const front = `What role does "${f.keyword}" play in ${lessonTitle}?`;
+      if (seen.has(front.toLowerCase())) continue;
+      seen.add(front.toLowerCase());
+      cards.push({ front, back: f.sentence, hint: 'Key concept' });
+    }
+    if (cards.length === 0 && pack) {
+      for (const d of pack.definitions.slice(0, 6)) {
+        cards.push({ front: d.term, back: d.definition, hint: pack.title });
+      }
+    }
+    if (cards.length === 0 && sentences.length > 0) {
+      for (const [i, s] of sentences.slice(0, 5).entries()) {
+        cards.push({ front: `Key point ${i + 1} from ${lessonTitle}`, back: s, hint: 'Lesson note' });
+      }
+    }
+    return { mode: 'flashcards', lessonTitle, cards: cards.slice(0, 8) };
+  }
+
+  if (mode === 'practice') {
+    const generated = generateQuestions({
+      topic: lessonTitle,
+      source: contentText,
+      count: 4,
+      types: ['MULTIPLE_CHOICE', 'TRUE_FALSE', 'IDENTIFICATION', 'FILL_BLANKS'],
+      difficulty: 'MIXED',
+      purpose: 'PRACTICE',
+    });
+    return {
+      mode: 'practice',
+      lessonTitle,
+      questions: (generated.questions ?? []).slice(0, 4),
+    };
+  }
+
+  if (mode === 'explain') {
+    const question = cleanLine(input.question, 600);
+    const words = question.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+    const scoredSentences = sentences
+      .map((s) => {
+        const lower = s.toLowerCase();
+        const hits = words.reduce((acc, w) => acc + (lower.includes(w) ? 1 : 0), 0);
+        return { s, hits };
+      })
+      .sort((a, b) => b.hits - a.hits);
+
+    const matchingDefs = material.definitions.filter((d) => words.some((w) => d.term.toLowerCase().includes(w) || d.definition.toLowerCase().includes(w)));
+    const relevant = scoredSentences.filter((x) => x.hits > 0).slice(0, 4).map((x) => x.s);
+    const fallbackPoints = relevant.length ? relevant : material.facts.slice(0, 4).map((f) => f.sentence);
+
+    const answerParts = [];
+    if (matchingDefs.length > 0) {
+      answerParts.push(`${matchingDefs[0].term}: ${matchingDefs[0].definition}.`);
+    }
+    if (fallbackPoints.length > 0) {
+      answerParts.push(fallbackPoints[0]);
+    } else if (pack?.definitions?.[0]) {
+      answerParts.push(`${pack.definitions[0].term}: ${pack.definitions[0].definition}`);
+    } else {
+      answerParts.push(`Review the main points of "${lessonTitle}" below and connect them back to your question.`);
+    }
+
+    return {
+      mode: 'explain',
+      lessonTitle,
+      question,
+      answer: answerParts.join(' '),
+      keyPoints: fallbackPoints.slice(0, 4),
+      tip: pack?.pitfalls?.[0] ?? null,
+    };
+  }
+
+  // Default: 'summary'
+  const keyTerms = material.definitions.slice(0, 5).map((d) => ({ term: d.term, definition: d.definition }));
+  const takeaways = (material.facts.length ? material.facts.map((f) => f.sentence) : sentences).slice(0, 5);
+  const summaryText = takeaways.length
+    ? takeaways.slice(0, 2).join(' ')
+    : objectives.length
+      ? `This lesson focuses on: ${objectives.slice(0, 3).join('; ')}.`
+      : `Review "${lessonTitle}" carefully and test yourself using the flashcards or practice check.`;
+
+  return {
+    mode: 'summary',
+    lessonTitle,
+    summary: summaryText,
+    takeaways,
+    keyTerms,
+    objectives: objectives.slice(0, 5),
+    pitfall: pack?.pitfalls?.[0] ?? null,
+  };
+}
+
 /** Handle health check prompt without breaking scripts/ai-check.mjs or checkAi(). */
 function handleFallbackPrompt(userText) {
   const text = String(userText ?? '');
@@ -1721,6 +1848,10 @@ export async function builtinCompletion({ messages = [], json = false, task = nu
     content = JSON.stringify(generateAssignment(task.input));
   } else if (task?.kind === 'rubric') {
     content = JSON.stringify(generateRubric(task.input));
+  } else if (task?.kind === 'programming') {
+    content = JSON.stringify(generateProgrammingProblem(task.input));
+  } else if (task?.kind === 'study-coach') {
+    content = JSON.stringify(generateStudyCoach(task.input));
   } else if (task?.kind === 'assistant') {
     content = generateAssistantText(task.input);
   } else {
@@ -1741,4 +1872,4 @@ export async function builtinCompletion({ messages = [], json = false, task = nu
   };
 }
 
-export { analyzeMaterial, matchKnowledge };
+export { analyzeMaterial, generateProgrammingProblem, generateStudyCoach, matchKnowledge };

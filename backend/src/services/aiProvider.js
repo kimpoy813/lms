@@ -45,7 +45,7 @@ export const AI_PRESETS = Object.freeze({
     id: 'gemini',
     label: 'Google AI Studio (Gemini — free tier where eligible)',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.5-flash-lite',
     signupUrl: 'https://aistudio.google.com/apikey',
     notes: 'Free tier in eligible Google AI Studio projects/regions (some projects/regions require billing); try Groq or Built-in if Gemini returns HTTP 403.',
   }),

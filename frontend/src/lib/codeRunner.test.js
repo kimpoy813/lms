@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { askAgainWhileBusy, browserRunStatus, PYTHON_IN_BROWSER_BYTES, runnerProblem, totalTimeHint } from './codeRunner.js';
+import { askAgainWhileBusy, browserRunStatus, coldStartNotice, PYTHON_IN_BROWSER_BYTES, runnerProblem, totalTimeHint } from './codeRunner.js';
 import { classicWorkerSource } from './pyRunner/sandbox.js';
 
 const busy = (retryAfterSeconds) => Object.assign(new Error('busy'), { code: 'CODE_RUNNER_BUSY', details: retryAfterSeconds === undefined ? undefined : { retryAfterSeconds } });
@@ -124,5 +124,18 @@ describe('Python in the browser', () => {
     expect(() => new Function(classic)).not.toThrow();
     expect(() => new Function(source)).toThrow(SyntaxError);
     expect(classicWorkerSource('export function a() {}\nexport async function b() {}\nexport const c = 1;\nexport class D {}\n  // export const inside = 2;\n')).toBe('function a() {}\nasync function b() {}\nconst c = 1;\nclass D {}\n  // export const inside = 2;\n');
+  });
+});
+
+describe('coldStartNotice', () => {
+  it('stays quiet for non-sandbox runners and before the cold-start threshold', () => {
+    expect(coldStartNotice({ provider: 'local' }, 5000)).toBeNull();
+    expect(coldStartNotice({ provider: 'piston' }, 5000)).toBeNull();
+    expect(coldStartNotice({ provider: 'vercel-sandbox' }, 900)).toBeNull();
+  });
+
+  it('shows progressive cold-start messages for vercel-sandbox runs', () => {
+    expect(coldStartNotice({ provider: 'vercel-sandbox' }, 2000)).toMatch(/isolated sandbox/i);
+    expect(coldStartNotice({ provider: 'vercel-sandbox' }, 7500)).toMatch(/almost ready/i);
   });
 });

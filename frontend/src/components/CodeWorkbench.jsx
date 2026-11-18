@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, CircleSlash, Clock, EyeOff, MonitorSmartphone, Play, RotateCcw, Send, Terminal, XCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
-import { askAgainWhileBusy, browserRunStatus, runnerProblem } from '../lib/codeRunner.js';
+import { askAgainWhileBusy, browserRunStatus, coldStartNotice, runnerProblem } from '../lib/codeRunner.js';
 import { formatPercent, plural } from '../lib/format.js';
 import LazyCodeEditor from './LazyCodeEditor.jsx';
 import RichText from './RichText.jsx';
@@ -83,6 +83,7 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [waiting, setWaiting] = useState(null);
+  const [serverElapsedMs, setServerElapsedMs] = useState(0);
   // Which button the result on screen came from, when it was produced in this browser.
   const [ranHere, setRanHere] = useState(null);
   const shown = useRef(true);
@@ -121,7 +122,9 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
     setBusy(kind);
     setError(null);
     setWaiting(null);
+    setServerElapsedMs(0);
     setRanHere(null);
+    let timer = null;
     try {
       if (kind !== 'submit' && here && !onServer) {
         const result = await tryHere(kind);
@@ -132,6 +135,12 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
           return;
         }
         setWaiting(null);
+      }
+      const startedAt = Date.now();
+      if (problem.runner?.provider === 'vercel-sandbox') {
+        timer = setInterval(() => {
+          if (shown.current) setServerElapsedMs(Date.now() - startedAt);
+        }, 500);
       }
       const body = { language, code, ...(studentAnswerId ? { studentAnswerId } : {}), ...(kind === 'custom' ? { stdin } : {}) };
       // A busy checker is asked again by itself, a few seconds apart.
@@ -147,12 +156,15 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
       setResult(null);
       setError(runnerProblem(err, { inQuiz }));
     } finally {
+      if (timer) clearInterval(timer);
       if (shown.current) {
         setBusy(null);
         setWaiting(null);
+        setServerElapsedMs(0);
       }
     }
   };
+  const statusNotice = waiting ?? (busy ? coldStartNotice(problem.runner, serverElapsedMs) : null);
 
   return (
     <div className="space-y-3">
@@ -182,7 +194,7 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
           <div className="mt-2 flex justify-end"><Button size="sm" variant="secondary" icon={Play} loading={busy === 'custom'} disabled={!code.trim() || !canTry || Boolean(busy)} onClick={() => call('custom')}>Run</Button></div>
         </div>
       )}
-      {waiting && <p role="status" className="flex items-center gap-1.5 text-[13px] text-soft"><Clock className="size-3.5" aria-hidden="true" />{waiting}</p>}
+      {statusNotice && <p role="status" className="flex items-center gap-1.5 text-[13px] text-soft"><Clock className="size-3.5" aria-hidden="true" />{statusNotice}</p>}
       {error && <Alert tone="warn" title="Could not run"><CircleSlash className="mr-1 inline size-3.5" aria-hidden="true" />{error}</Alert>}
       <div aria-live="polite">
         <TestResults result={result} />

@@ -1,5 +1,5 @@
 // Class settings (teacher and administrator): details, schedule, joining, privacy, syllabus, archive.
-import { Archive, ArchiveRestore, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, Copy, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -7,22 +7,24 @@ import LazyEditor from '../../components/LazyEditor.jsx';
 import { Alert, Button, Card, CardHeader, ConfirmDialog, EmptyState, Field, Input, Switch, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { useAction } from '../../lib/query.js';
-import { ColorPicker, ScheduleEditor } from './Classes.jsx';
+import { ColorPicker, CopyClassDialog, ScheduleEditor } from './Classes.jsx';
 import { useClass } from './useClass.js';
 
 export default function ClassSettings() {
   const { cls, canManage } = useClass();
-  const { isAdmin } = useAuth();
+  const { isAdmin, can } = useAuth();
   const navigate = useNavigate();
   const archived = cls.status === 'ARCHIVED';
   const [values, setValues] = useState(() => ({
     description: cls.description ?? '', room: cls.room ?? '', color: cls.color,
     schedules: cls.schedules.map(({ dayOfWeek, startTime, endTime, room }) => ({ dayOfWeek, startTime, endTime, room })),
     enrollmentCodeEnabled: cls.enrollmentCodeEnabled, enrollmentRequiresApproval: cls.enrollmentRequiresApproval, classmatesVisible: cls.classmatesVisible,
+    aiStudyCoachEnabled: Boolean(cls.aiStudyCoachEnabled),
     syllabusHtml: cls.syllabusHtml ?? '', learningOutcomes: cls.learningOutcomes ?? [],
   }));
   const [errors, setErrors] = useState({});
   const [confirm, setConfirm] = useState(null);
+  const [copying, setCopying] = useState(false);
   const set = (name, value) => setValues((v) => ({ ...v, [name]: value }));
   const invalidate = [['class', cls.id], ['classes'], ['dashboard']];
 
@@ -74,6 +76,7 @@ export default function ClassSettings() {
             <Switch checked={values.enrollmentCodeEnabled} onChange={(on) => set('enrollmentCodeEnabled', on)} label="Students can join with the class code" description="Switch this off once everyone has joined." />
             <Switch checked={values.enrollmentRequiresApproval} onChange={(on) => set('enrollmentRequiresApproval', on)} label="Approve students before they join" description="Students who enter the code wait in People until you approve them." />
             <Switch checked={values.classmatesVisible} onChange={(on) => set('classmatesVisible', on)} label="Students can see who their classmates are" description="Only names are shown. Grades, attendance and contact details are never shared between students." />
+            <Switch checked={values.aiStudyCoachEnabled} onChange={(on) => set('aiStudyCoachEnabled', on)} label="Enable AI Study Coach for students" description="Students can open summaries, flashcards, and ungraded quick checks built strictly from published lessons (zero external cost)." />
           </div>
         </Card>
 
@@ -104,6 +107,13 @@ export default function ClassSettings() {
         </div>
       </fieldset>
 
+      {can('class.create') && (
+        <Card>
+          <CardHeader title="Roll over to a new semester" description="Create a fresh class with this course’s syllabus, gradebook setup, and draft copies of your modules, assignments, and quizzes. Students and grades are never carried over." />
+          <Button variant="secondary" icon={Copy} onClick={() => setCopying(true)}>Copy class to new semester…</Button>
+        </Card>
+      )}
+
       <Card className="border-bad/25">
         <CardHeader title={archived ? 'Restore or delete' : 'Archive this class'} description={archived ? 'Restoring makes the class active again.' : 'At the end of the semester, archive the class. Its records stay available but nothing can be changed.'} />
         <div className="flex flex-wrap gap-2">
@@ -111,6 +121,8 @@ export default function ClassSettings() {
           {isAdmin && <Button variant="dangerGhost" icon={Trash2} onClick={() => setConfirm('delete')}>Delete class</Button>}
         </div>
       </Card>
+
+      {copying && <CopyClassDialog cls={cls} onClose={() => setCopying(false)} />}
 
       <ConfirmDialog open={confirm === 'code'} onClose={() => setConfirm(null)} onConfirm={() => regenerate.mutate()} loading={regenerate.isPending} title="Create a new class code?" confirmLabel="Create new code" tone="primary">
         The current code stops working immediately. Students who already joined are not affected.
