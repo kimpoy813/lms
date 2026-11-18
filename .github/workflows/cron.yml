@@ -1,0 +1,34 @@
+name: EduSphere scheduled cron
+
+on:
+  schedule:
+    # Run every 10 minutes so overdue quizzes, attendance sessions, and scheduled posts
+    # close/publish promptly overnight on Vercel Hobby (whose built-in cron is once daily).
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edusphere-cron
+  cancel-in-progress: false
+
+jobs:
+  trigger-cron:
+    name: Run /api/internal/cron
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call EduSphere cron endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.EDUSPHERE_APP_URL || 'https://edusphere-sigma-two.vercel.app' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Skipping: add CRON_SECRET under GitHub Settings -> Secrets and variables -> Actions to enable scheduled cron runs."
+            exit 0
+          fi
+          TARGET="${APP_URL%/}/api/internal/cron"
+          echo "Calling ${TARGET} ..."
+          RESPONSE=$(curl -fsS --max-time 30 -H "Authorization: Bearer ${CRON_SECRET}" "${TARGET}")
+          echo "Cron response: ${RESPONSE}"

@@ -175,4 +175,53 @@ describe('built-in zero-key AI engine (smarter extraction & curriculum knowledge
     const warmup = await runTask('assistant', { prompt: 'Give me a warm-up activity for recursion' });
     expect(warmup).toMatch(/Opening Hook|Base case|Stack/i);
   });
+
+  it('generates multi-language programming problems and test cases for matched and custom topics', async () => {
+    const palindrome = await runTask('programming', {
+      topic: 'Palindrome checker for strings',
+      allowedLanguages: ['PYTHON', 'JAVASCRIPT'],
+      difficulty: 'EASY',
+      testCount: 5,
+    });
+    expect(palindrome.title).toMatch(/palindrome/i);
+    expect(palindrome.allowedLanguages).toEqual(['PYTHON', 'JAVASCRIPT']);
+    expect(palindrome.starterCode.PYTHON).toBeTruthy();
+    expect(palindrome.starterCode.JAVASCRIPT).toBeTruthy();
+    expect(palindrome.testCases).toHaveLength(5);
+    expect(palindrome.testCases.some((t) => !t.isHidden)).toBe(true);
+    expect(palindrome.testCases.some((t) => t.isHidden)).toBe(true);
+
+    const custom = await runTask('programming', {
+      topic: 'Telemetry Sensor Packet Checksum',
+      allowedLanguages: ['C'],
+      testCount: 3,
+    });
+    expect(custom.title).toContain('Telemetry Sensor Packet Checksum');
+    expect(custom.starterCode.C).toContain('#include');
+    expect(custom.testCases).toHaveLength(3);
+  });
+
+  it('generates student study coach summaries, flashcards, ungraded practice, and explanations strictly from lesson text', async () => {
+    const lesson = {
+      lessonTitle: 'TCP vs UDP Transport',
+      contentHtml:
+        '<p>TCP is a connection-oriented transport protocol that guarantees ordered delivery using acknowledgments. Unlike TCP, UDP is connectionless and prioritizes low overhead for streaming.</p>',
+      objectives: ['Contrast TCP and UDP reliability guarantees'],
+    };
+
+    const summary = await runTask('study-coach', { ...lesson, mode: 'summary' });
+    expect(summary.takeaways.length).toBeGreaterThanOrEqual(1);
+    expect(summary.keyTerms.some((t) => t.term === 'TCP')).toBe(true);
+
+    const flashcards = await runTask('study-coach', { ...lesson, mode: 'flashcards' });
+    expect(flashcards.cards.length).toBeGreaterThanOrEqual(2);
+    expect(flashcards.cards[0]).toMatchObject({ front: expect.any(String), back: expect.any(String) });
+
+    const practice = await runTask('study-coach', { ...lesson, mode: 'practice' });
+    expect(practice.questions.length).toBeGreaterThanOrEqual(2);
+    for (const q of practice.questions) expect(normalizeQuestion(q).errors).toEqual([]);
+
+    const explain = await runTask('study-coach', { ...lesson, mode: 'explain', question: 'Why use UDP for streaming?' });
+    expect(explain.answer).toMatch(/UDP|connectionless|streaming/i);
+  });
 });

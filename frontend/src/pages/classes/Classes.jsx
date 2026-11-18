@@ -1,10 +1,10 @@
 // "My classes": what a student is enrolled in, what a teacher teaches, or everything (admin).
 import { useQuery } from '@tanstack/react-query';
-import { Archive, BookOpen, CalendarDays, Check, Clock, KeyRound, MapPin, Plus, Users, X } from 'lucide-react';
+import { Archive, BookOpen, CalendarDays, Check, Clock, Copy, KeyRound, MapPin, Plus, Users, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { Alert, Avatar, Badge, Button, Card, cn, EmptyState, Field, Input, Modal, PageHeader, QueryState, SearchInput, Segmented, Select, Skeleton, Switch, Textarea, useDebounced, useForm } from '../../components/ui.jsx';
+import { Alert, Avatar, Badge, Button, Card, Checkbox, cn, EmptyState, Field, Input, Modal, PageHeader, QueryState, SearchInput, Segmented, Select, Skeleton, Switch, Textarea, useDebounced, useForm } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatClock, plural, relativeTime } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -27,6 +27,7 @@ export default function Classes() {
   const [search, setSearch] = useState('');
   const [joining, setJoining] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [copying, setCopying] = useState(null);
   const term = useDebounced(search.trim());
   const classes = useQuery({ queryKey: ['classes', { status, term }], queryFn: () => api.get('/classes', { status, search: term || undefined }) });
   const mine = useQuery({ queryKey: ['enrollments', 'mine'], queryFn: () => api.get('/enrollments/mine'), enabled: isStudent });
@@ -81,38 +82,52 @@ export default function Classes() {
           </Card>
         ) : (
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {list.map((c) => <li key={c.id}><ClassCard cls={c} showTeacher={c.teacher.id !== user.id} /></li>)}
+            {list.map((c) => <li key={c.id}><ClassCard cls={c} showTeacher={c.teacher.id !== user.id} onCopy={canCreate ? () => setCopying(c) : null} /></li>)}
           </ul>
         )}
       </QueryState>
 
       {joining && <JoinDialog onClose={() => setJoining(false)} />}
       {creating && <CreateClassDialog onClose={() => setCreating(false)} />}
+      {copying && <CopyClassDialog cls={copying} onClose={() => setCopying(null)} />}
     </>
   );
 }
 
-function ClassCard({ cls, showTeacher }) {
+function ClassCard({ cls, showTeacher, onCopy }) {
   const color = classColor(cls.color);
   return (
-    <Link to={`/classes/${cls.id}`} className="group flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card transition-shadow hover:shadow-pop">
-      <div className={cn('relative h-24 bg-gradient-to-br p-4 text-white', color.banner)}>
-        <p className="text-lg font-bold leading-tight tracking-tight">{classLabel(cls)}</p>
-        <p className="mt-0.5 line-clamp-2 text-[13px] text-white/85">{cls.course.title}</p>
-        {cls.status === 'ARCHIVED' && <span className="absolute right-3 top-3 rounded-full bg-black/30 px-2 py-0.5 text-[11px] font-semibold">Archived</span>}
-      </div>
-      <div className="flex flex-1 flex-col gap-2.5 p-4 text-[13px] text-soft">
-        {showTeacher && (
-          <p className="flex items-center gap-2"><Avatar name={cls.teacher.name} fileId={cls.teacher.avatarFileId} size={22} /><span className="truncate font-medium text-ink">{cls.teacher.name}</span></p>
-        )}
-        <p className="flex items-start gap-2"><CalendarDays className="mt-0.5 size-4 shrink-0 text-faint" aria-hidden="true" /><span>{scheduleSummary(cls.schedules)}</span></p>
-        {cls.room && <p className="flex items-center gap-2"><MapPin className="size-4 shrink-0 text-faint" aria-hidden="true" />{cls.room}</p>}
-        <p className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-faint">
-          <span className="flex items-center gap-1.5"><Users className="size-3.5" aria-hidden="true" />{plural(cls.studentCount, 'student')}</span>
-          <span>{cls.semester.name} · {cls.semester.academicYear.name}</span>
-        </p>
-      </div>
-    </Link>
+    <div className="relative h-full">
+      <Link to={`/classes/${cls.id}`} className="group flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card transition-shadow hover:shadow-pop">
+        <div className={cn('relative h-24 bg-gradient-to-br p-4 text-white', color.banner)}>
+          <p className="pr-10 text-lg font-bold leading-tight tracking-tight">{classLabel(cls)}</p>
+          <p className="mt-0.5 line-clamp-2 text-[13px] text-white/85">{cls.course.title}</p>
+          {cls.status === 'ARCHIVED' && <span className="absolute right-3 top-3 rounded-full bg-black/30 px-2 py-0.5 text-[11px] font-semibold">Archived</span>}
+        </div>
+        <div className="flex flex-1 flex-col gap-2.5 p-4 text-[13px] text-soft">
+          {showTeacher && (
+            <p className="flex items-center gap-2"><Avatar name={cls.teacher.name} fileId={cls.teacher.avatarFileId} size={22} /><span className="truncate font-medium text-ink">{cls.teacher.name}</span></p>
+          )}
+          <p className="flex items-start gap-2"><CalendarDays className="mt-0.5 size-4 shrink-0 text-faint" aria-hidden="true" /><span>{scheduleSummary(cls.schedules)}</span></p>
+          {cls.room && <p className="flex items-center gap-2"><MapPin className="size-4 shrink-0 text-faint" aria-hidden="true" />{cls.room}</p>}
+          <p className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-faint">
+            <span className="flex items-center gap-1.5"><Users className="size-3.5" aria-hidden="true" />{plural(cls.studentCount, 'student')}</span>
+            <span>{cls.semester.name} · {cls.semester.academicYear.name}</span>
+          </p>
+        </div>
+      </Link>
+      {onCopy && (
+        <button
+          type="button"
+          onClick={onCopy}
+          title="Roll over / copy class to another semester or section"
+          aria-label={`Copy ${classLabel(cls)} to another semester or section`}
+          className={cn('absolute top-3 z-10 grid size-8 place-items-center rounded-lg bg-black/25 text-white/90 backdrop-blur-sm transition-colors hover:bg-black/45 hover:text-white', cls.status === 'ARCHIVED' ? 'right-20' : 'right-3')}
+        >
+          <Copy className="size-4" aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -310,5 +325,136 @@ export function ScheduleEditor({ value, onChange }) {
       )}
       <Button variant="secondary" size="sm" icon={Plus} onClick={() => onChange([...value, { dayOfWeek: value.at(-1) ? Math.min(6, value.at(-1).dayOfWeek + 2) : 1, startTime: value.at(-1)?.startTime ?? '09:00', endTime: value.at(-1)?.endTime ?? '10:00' }])}>Add a meeting</Button>
     </fieldset>
+  );
+}
+
+export function CopyClassDialog({ cls, onClose }) {
+  const navigate = useNavigate();
+  const { isAdmin, can } = useAuth();
+  const semesters = useQuery({ queryKey: ['catalog', 'semesters'], queryFn: () => api.get('/catalog/semesters') });
+  const sections = useQuery({ queryKey: ['catalog', 'sections'], queryFn: () => api.get('/catalog/sections') });
+  const teachers = useQuery({ queryKey: ['admin', 'users', 'teachers'], queryFn: () => api.get('/admin/users', { role: 'TEACHER', status: 'ACTIVE', pageSize: 100 }), enabled: isAdmin });
+  const mayAddCatalog = can('catalog.create');
+  const [v, setV] = useState({
+    semesterId: '',
+    sectionId: cls.section?.id ?? '',
+    newSectionName: '',
+    room: cls.room ?? '',
+    color: cls.color ?? 'indigo',
+    teacherId: cls.teacher?.id ?? '',
+    includeSyllabus: true,
+    includeGradeSetup: true,
+    includeModules: true,
+    includeAssignments: true,
+    includeQuizzes: true,
+  });
+  const [error, setError] = useState(null);
+
+  const defaultSemester =
+    semesters.data?.find((s) => s.isCurrent && s.id !== cls.semester?.id)?.id ||
+    semesters.data?.find((s) => s.id !== cls.semester?.id)?.id ||
+    semesters.data?.[0]?.id ||
+    '';
+  const semesterId = v.semesterId || defaultSemester;
+
+  const copy = useAction(
+    () =>
+      api.post(`/classes/${cls.id}/copy`, {
+        semesterId,
+        ...(v.sectionId === 'new'
+          ? { newSectionName: v.newSectionName.trim(), sectionId: null }
+          : { sectionId: v.sectionId || null }),
+        room: v.room.trim() || null,
+        color: v.color,
+        ...(isAdmin && v.teacherId ? { teacherId: v.teacherId } : {}),
+        includeSyllabus: v.includeSyllabus,
+        includeGradeSetup: v.includeGradeSetup,
+        includeModules: v.includeModules,
+        includeAssignments: v.includeAssignments,
+        includeQuizzes: v.includeQuizzes,
+      }),
+    {
+      invalidate: [['classes'], ['dashboard']],
+      success: (created) => {
+        const s = created.summary;
+        return s
+          ? `Class copied (${plural(s.modules, 'module')}, ${plural(s.assignments, 'assignment')}, ${plural(s.quizzes, 'quiz')} imported as drafts).`
+          : 'Class copied to the new semester.';
+      },
+      onSuccess: (created) => {
+        onClose();
+        navigate(`/classes/${created.id}`);
+      },
+      onError: (err) => {
+        setError(err.fields ? Object.values(err.fields).join(' ') : err.message);
+        return true;
+      },
+    },
+  );
+
+  const ready = Boolean(semesterId) && (v.sectionId !== 'new' || Boolean(v.newSectionName.trim()));
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Roll over ${classLabel(cls)}`}
+      description="Copies course structure and materials into a fresh class. Enrolments, attendance, and grades stay with the original class."
+      size="md"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button icon={Copy} loading={copy.isPending} disabled={!ready} onClick={() => { setError(null); copy.mutate(); }}>Create class copy</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="bad">{error}</Alert>}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Target semester">
+            <Select value={semesterId} onChange={(e) => setV((s) => ({ ...s, semesterId: e.target.value }))}>
+              {(semesters.data ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.label}{s.isCurrent ? ' (current)' : ''}{s.id === cls.semester?.id ? ' — same term' : ''}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Section">
+            <Select value={v.sectionId} onChange={(e) => setV((s) => ({ ...s, sectionId: e.target.value }))}>
+              <option value="">No section</option>
+              {(sections.data ?? []).filter((s) => s.isActive).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {mayAddCatalog && <option value="new">＋ Add a new section…</option>}
+            </Select>
+          </Field>
+        </div>
+        {v.sectionId === 'new' && (
+          <Field label="New section name">
+            <Input value={v.newSectionName} onChange={(e) => setV((s) => ({ ...s, newSectionName: e.target.value }))} placeholder="e.g. BSIT 2A" />
+          </Field>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Room" optional>
+            <Input value={v.room} onChange={(e) => setV((s) => ({ ...s, room: e.target.value }))} placeholder="Room 204" />
+          </Field>
+          {isAdmin && (
+            <Field label="Teacher">
+              <Select value={v.teacherId} onChange={(e) => setV((s) => ({ ...s, teacherId: e.target.value }))}>
+                {(teachers.data ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </Select>
+            </Field>
+          )}
+        </div>
+        <Field label="Colour">
+          <ColorPicker value={v.color} onChange={(c) => setV((s) => ({ ...s, color: c }))} />
+        </Field>
+        <fieldset className="space-y-2 rounded-xl border border-line bg-raised/50 p-3.5">
+          <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-faint">What to copy</legend>
+          <Checkbox label="Syllabus & learning outcomes" checked={v.includeSyllabus} onChange={(e) => setV((s) => ({ ...s, includeSyllabus: e.target.checked }))} />
+          <Checkbox label="Grading periods & category weights" checked={v.includeGradeSetup} onChange={(e) => setV((s) => ({ ...s, includeGradeSetup: e.target.checked }))} />
+          <Checkbox label="Modules, lessons & attached resources (as drafts)" checked={v.includeModules} onChange={(e) => setV((s) => ({ ...s, includeModules: e.target.checked }))} />
+          <Checkbox label="Assignments & rubrics (as drafts without due dates)" checked={v.includeAssignments} onChange={(e) => setV((s) => ({ ...s, includeAssignments: e.target.checked }))} />
+          <Checkbox label="Quizzes & examinations (as drafts without schedules)" checked={v.includeQuizzes} onChange={(e) => setV((s) => ({ ...s, includeQuizzes: e.target.checked }))} />
+        </fieldset>
+      </div>
+    </Modal>
   );
 }

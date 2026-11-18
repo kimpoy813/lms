@@ -1,7 +1,7 @@
 // One module: its lesson list on the left, the selected lesson on the right.
 // Teachers write and edit lessons here; students read them and mark them as completed.
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, CheckCircle2, ChevronLeft, Circle, Clock, FilePlus2, Lock, Pencil, Plus, Printer, Save, Target, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, CheckCircle2, ChevronLeft, Circle, Clock, FilePlus2, HelpCircle, Layers, Lock, Pencil, Plus, Printer, RotateCcw, Save, Sparkles, Target, Trash2, Undo2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import LazyEditor from '../../components/LazyEditor.jsx';
@@ -157,6 +157,10 @@ function Lesson({ mod, lessonId }) {
 
             <RichText html={lesson.contentHtml} className="text-[15.5px]" empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
 
+            {(lesson.aiStudyCoachEnabled || canManage) && Boolean(lesson.contentHtml?.trim()) && (
+              <StudyCoachPanel lessonId={lesson.id} lessonTitle={lesson.title} canManage={canManage} enabledForStudents={lesson.aiStudyCoachEnabled} />
+            )}
+
             {(lesson.resources.length > 0 || (canManage && !readOnly)) && (
               <section className="mt-8 border-t border-line pt-5" aria-labelledby="lesson-resources">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -268,5 +272,259 @@ function LessonEditor({ mod, lesson, onDone }) {
         <Button icon={Save} loading={save.isPending} disabled={!values.title.trim()} onClick={() => save.mutate()}>Save lesson</Button>
       </div>
     </Card>
+  );
+}
+
+function StudyCoachPanel({ lessonId, lessonTitle, canManage, enabledForStudents }) {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState('summary');
+  const [question, setQuestion] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [data, setData] = useState({});
+  const [cardIndex, setCardIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [answers, setAnswers] = useState({});
+  const [checked, setChecked] = useState(false);
+
+  const loadMode = async (mode, extra = {}) => {
+    setTab(mode);
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post(`/lessons/${lessonId}/study-coach`, { mode, ...extra });
+      setData((prev) => ({ ...prev, [mode]: res }));
+      if (mode === 'flashcards') {
+        setCardIndex(0);
+        setFlipped(false);
+      }
+      if (mode === 'practice') {
+        setAnswers({});
+        setChecked(false);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openPanel = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !data.summary) loadMode('summary');
+  };
+
+  const summary = data.summary;
+  const cards = data.flashcards?.cards ?? [];
+  const activeCard = cards[cardIndex];
+  const practiceQuestions = data.practice?.questions ?? [];
+  const explain = data.explain;
+
+  return (
+    <section className="no-print mt-8 rounded-2xl border border-brand/25 bg-brand-soft/35 p-4" aria-label="AI Study Coach">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <Sparkles className="size-4 text-brand" aria-hidden="true" />
+            Study Coach
+            {canManage && !enabledForStudents && <Badge tone="warn">Teacher preview</Badge>}
+          </p>
+          <p className="text-xs text-soft">
+            {canManage && !enabledForStudents
+              ? 'Built strictly from this lesson. Turn on “Enable AI Study Coach for students” in Class Settings to share this with enrolled students.'
+              : 'Review key ideas, flip flashcards, or try an ungraded quick check built strictly from this published lesson.'}
+          </p>
+        </div>
+        <Button size="sm" variant={open ? 'secondary' : 'primary'} icon={Sparkles} onClick={openPanel} aria-expanded={open}>
+          {open ? 'Hide Study Coach' : 'Study this lesson'}
+        </Button>
+      </div>
+
+      {open && (
+        <div className="mt-4 space-y-4 border-t border-brand/15 pt-4">
+          <div className="flex flex-wrap gap-2">
+            {[
+              ['summary', 'Key takeaways'],
+              ['flashcards', 'Flashcards'],
+              ['practice', 'Quick check'],
+              ['explain', 'Ask about this lesson'],
+            ].map(([mode, label]) => (
+              <Button
+                key={mode}
+                size="sm"
+                variant={tab === mode ? 'primary' : 'secondary'}
+                disabled={busy}
+                onClick={() => {
+                  setTab(mode);
+                  if (mode !== 'explain' && !data[mode]) loadMode(mode);
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+
+          {error && <Alert tone="bad">{error}</Alert>}
+          {busy && <p className="text-sm text-soft" role="status">Preparing study material…</p>}
+
+          {tab === 'summary' && summary && !busy && (
+            <div className="space-y-3 rounded-xl border border-line bg-surface p-4 text-sm">
+              <p className="font-medium text-ink">{summary.summary}</p>
+              {summary.takeaways?.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-faint">Key takeaways</p>
+                  <ul className="list-disc space-y-1 pl-5 text-soft">
+                    {summary.takeaways.map((t, i) => <li key={i}>{t}</li>)}
+                  </ul>
+                </div>
+              )}
+              {summary.keyTerms?.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-faint">Key terms</p>
+                  <dl className="grid gap-2 sm:grid-cols-2">
+                    {summary.keyTerms.map((k, i) => (
+                      <div key={i} className="rounded-lg bg-raised/70 p-2.5">
+                        <dt className="font-semibold text-ink">{k.term}</dt>
+                        <dd className="text-xs text-soft">{k.definition}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
+              {summary.pitfall && <Alert tone="info" title="Common pitfall to watch out for">{summary.pitfall}</Alert>}
+            </div>
+          )}
+
+          {tab === 'flashcards' && !busy && (
+            cards.length === 0 ? (
+              <p className="text-sm text-soft">Not enough structured definitions or key facts in this lesson for flashcards yet.</p>
+            ) : (
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setFlipped((f) => !f)}
+                  className="flex min-h-[9rem] w-full flex-col items-center justify-center rounded-xl border border-line bg-surface p-5 text-center shadow-card transition-colors hover:border-brand"
+                >
+                  <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand">
+                    <Layers className="size-3.5" aria-hidden="true" />
+                    {flipped ? 'Answer' : activeCard?.hint || 'Term / Prompt'} ({cardIndex + 1} of {cards.length})
+                  </span>
+                  <span className="max-w-xl whitespace-pre-wrap text-base font-medium text-ink">
+                    {flipped ? activeCard?.back : activeCard?.front}
+                  </span>
+                  <span className="mt-2 text-xs text-faint">Click card to {flipped ? 'see prompt' : 'reveal answer'}</span>
+                </button>
+                <div className="flex items-center justify-between">
+                  <Button size="sm" variant="secondary" disabled={cardIndex === 0} onClick={() => { setCardIndex((i) => i - 1); setFlipped(false); }}>Previous</Button>
+                  <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => setFlipped((f) => !f)}>Flip</Button>
+                  <Button size="sm" variant="secondary" disabled={cardIndex >= cards.length - 1} onClick={() => { setCardIndex((i) => i + 1); setFlipped(false); }}>Next</Button>
+                </div>
+              </div>
+            )
+          )}
+
+          {tab === 'practice' && !busy && (
+            practiceQuestions.length === 0 ? (
+              <p className="text-sm text-soft">Not enough facts in this lesson to generate self-check questions yet.</p>
+            ) : (
+              <div className="space-y-3 rounded-xl border border-line bg-surface p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-faint">Ungraded self-check for “{lessonTitle}”</p>
+                  <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => loadMode('practice')}>New set</Button>
+                </div>
+                <ol className="space-y-3">
+                  {practiceQuestions.map((q, idx) => {
+                    const userVal = answers[idx];
+                    const isMcq = q.type === 'MULTIPLE_CHOICE' || q.type === 'TRUE_FALSE';
+                    const correctChoiceIdx = Array.isArray(q.choices) ? q.choices.findIndex((c) => c.isCorrect) : -1;
+                    const accepted = q.answerKey?.accepted ?? (Array.isArray(q.answerKey?.blanks) ? q.answerKey.blanks[0] : []);
+                    const expectedText = Array.isArray(accepted) ? accepted[0] : '';
+                    const isCorrect = checked && (isMcq
+                      ? Number(userVal) === correctChoiceIdx
+                      : String(userVal ?? '').trim().toLowerCase() === String(expectedText ?? '').trim().toLowerCase());
+
+                    return (
+                      <li key={idx} className="rounded-xl border border-line p-3 text-sm">
+                        <p className="font-medium text-ink">{idx + 1}. {q.text}</p>
+                        {isMcq && Array.isArray(q.choices) ? (
+                          <div className="mt-2 space-y-1.5">
+                            {q.choices.map((ch, cIdx) => (
+                              <label key={cIdx} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[13px]', Number(userVal) === cIdx ? 'border-brand bg-brand-soft/40' : 'border-line')}>
+                                <input
+                                  type="radio"
+                                  name={`coach-q-${idx}`}
+                                  disabled={checked}
+                                  checked={Number(userVal) === cIdx}
+                                  onChange={() => setAnswers((a) => ({ ...a, [idx]: cIdx }))}
+                                />
+                                <span>{ch.text}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <Input
+                            className="mt-2"
+                            disabled={checked}
+                            value={userVal ?? ''}
+                            onChange={(e) => setAnswers((a) => ({ ...a, [idx]: e.target.value }))}
+                            placeholder="Type your answer…"
+                          />
+                        )}
+                        {checked && (
+                          <p className={cn('mt-2 text-xs font-medium', isCorrect ? 'text-ok' : 'text-bad')}>
+                            {isCorrect ? 'Correct! ' : `Suggested answer: ${isMcq ? (q.choices?.[correctChoiceIdx]?.text ?? '') : expectedText}. `}
+                            {q.explanation && <span className="font-normal text-soft">{q.explanation}</span>}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+                <div className="flex justify-end gap-2">
+                  {checked ? (
+                    <Button size="sm" variant="secondary" onClick={() => { setAnswers({}); setChecked(false); }}>Try again</Button>
+                  ) : (
+                    <Button size="sm" onClick={() => setChecked(true)}>Check answers</Button>
+                  )}
+                </div>
+              </div>
+            )
+          )}
+
+          {tab === 'explain' && (
+            <div className="space-y-3 rounded-xl border border-line bg-surface p-4">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (question.trim().length >= 2) loadMode('explain', { question: question.trim() });
+                }}
+                className="flex flex-wrap gap-2"
+              >
+                <Input
+                  className="min-w-0 flex-1"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  maxLength={600}
+                  placeholder={`Ask a question about “${lessonTitle}”…`}
+                />
+                <Button type="submit" size="sm" icon={HelpCircle} loading={busy} disabled={question.trim().length < 2}>Ask</Button>
+              </form>
+              {explain && !busy && (
+                <div className="space-y-2 rounded-lg bg-raised/70 p-3 text-sm">
+                  <p className="font-medium text-ink">{explain.answer}</p>
+                  {explain.keyPoints?.length > 1 && (
+                    <ul className="list-disc space-y-1 pl-5 text-xs text-soft">
+                      {explain.keyPoints.slice(1).map((pt, i) => <li key={i}>{pt}</li>)}
+                    </ul>
+                  )}
+                  {explain.tip && <p className="text-xs text-faint">Tip: {explain.tip}</p>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

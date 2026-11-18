@@ -20,14 +20,22 @@ export function invalidateAiConfigCache() {
   cache = { at: 0, stored: undefined };
 }
 
-function encryptionKey() {
-  const material = env.ai.settingsSecret ?? env.cronSecret ?? env.databaseUrl;
+function deriveKey(material) {
   return createHmac('sha256', String(material)).update('edusphere:ai-config:v1').digest();
+}
+
+function candidateKeys() {
+  const materials = [];
+  for (const m of [env.ai.settingsSecret, env.cronSecret, env.databaseUrl]) {
+    if (m && !materials.includes(m)) materials.push(m);
+  }
+  if (materials.length === 0) materials.push(undefined);
+  return materials.map(deriveKey);
 }
 
 export function encryptSecret(plaintext) {
   const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  const cipher = createCipheriv('aes-256-gcm', candidateKeys()[0], iv);
   const encrypted = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `v1:${iv.toString('base64url')}:${tag.toString('base64url')}:${encrypted.toString('base64url')}`;
@@ -37,15 +45,28 @@ export function decryptSecret(serialized) {
   if (!serialized || typeof serialized !== 'string') return { ok: false, corrupted: false, value: null };
   const parts = serialized.split(':');
   if (parts.length !== 4 || parts[0] !== 'v1') return { ok: false, corrupted: true, value: null };
+  const [, ivB64, tagB64, dataB64] = parts;
+  let iv;
+  let tag;
+  let data;
   try {
-    const [, ivB64, tagB64, dataB64] = parts;
-    const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivB64, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
-    const plain = Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64url')), decipher.final()]).toString('utf8');
-    return { ok: true, corrupted: false, value: plain };
+    iv = Buffer.from(ivB64, 'base64url');
+    tag = Buffer.from(tagB64, 'base64url');
+    data = Buffer.from(dataB64, 'base64url');
   } catch {
     return { ok: false, corrupted: true, value: null };
   }
+  for (const key of candidateKeys()) {
+    try {
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(tag);
+      const plain = Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+      return { ok: true, corrupted: false, value: plain };
+    } catch {
+      // Try fallback key material (e.g. key encrypted with CRON_SECRET before AI_SETTINGS_SECRET was added).
+    }
+  }
+  return { ok: false, corrupted: true, value: null };
 }
 
 export function secretHint(secret) {

@@ -139,6 +139,29 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
     const help = await teacher.post('/api/ai/assistant', { prompt: 'Summarize in bullets', context: 'Glycolysis breaks down glucose. Pyruvate enters mitochondria.' });
     expect(help.status).toBe(200);
     expect(help.body.data.text).toContain('Glycolysis breaks down glucose');
+
+    // Programming problem + verified test cases generator (#4)
+    const progRes = await teacher.post('/api/ai/programming', {
+      topic: 'Binary search in a sorted array',
+      allowedLanguages: ['PYTHON', 'JAVASCRIPT'],
+      difficulty: 'MEDIUM',
+      testCount: 5,
+    });
+    expect(progRes.status).toBe(200);
+    expect(progRes.body.data.problem).toMatchObject({
+      title: expect.stringMatching(/binary search/i),
+      allowedLanguages: ['PYTHON', 'JAVASCRIPT'],
+    });
+    expect(progRes.body.data.problem.testCases).toHaveLength(5);
+    expect(progRes.body.data.problem.testCases.some((t) => !t.isHidden)).toBe(true);
+    expect(progRes.body.data.problem.testCases.some((t) => t.isHidden)).toBe(true);
+    expect(progRes.body.data.problem.starterCode.PYTHON).toBeTruthy();
+
+    const savedProblem = await teacher.post('/api/programming/problems', {
+      ...progRes.body.data.problem,
+      classId: cls.id,
+    });
+    expect(savedProblem.status).toBe(201);
   });
 
   it('encrypts saved API keys in PostgreSQL, never exposes them to clients or logs, and routes requests to the external endpoint', async () => {
@@ -147,12 +170,16 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
     const mockUrl = `http://127.0.0.1:${mockApi.server.address().port}/v1`;
     const secretKey = 'AIzaSy-secret-gemini-test-key-9988';
 
+    // Gemini preset defaults to gemini-3.5-flash-lite
+    const cfgBefore = await admin.get('/api/admin/ai-config');
+    expect(cfgBefore.body.data.presets.find((p) => p.id === 'gemini').defaultModel).toBe('gemini-3.5-flash-lite');
+
     // Requires an API key for non-loopback HTTPS URLs
     const missingKey = await admin.put('/api/admin/ai-config', {
       mode: 'openai-compatible',
       preset: 'gemini',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash-lite',
     });
     expect(missingKey.status).toBe(422);
     expect(missingKey.body.error.details.fields.apiKey).toBeTruthy();
@@ -162,7 +189,7 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
       mode: 'openai-compatible',
       preset: 'custom',
       baseUrl: mockUrl,
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash-lite',
       apiKey: secretKey,
     });
     expect(saved.status).toBe(200);
@@ -170,7 +197,7 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
       mode: 'openai-compatible',
       hasApiKey: true,
       apiKeyHint: 'AIza••••9988',
-      effective: { source: 'settings', configured: true, provider: 'openai-compatible', model: 'gemini-2.5-flash', askedWith: 'key', baseUrl: mockUrl },
+      effective: { source: 'settings', configured: true, provider: 'openai-compatible', model: 'gemini-3.5-flash-lite', askedWith: 'key', baseUrl: mockUrl },
     });
     expect(JSON.stringify(saved.body)).not.toContain(secretKey);
 
@@ -186,7 +213,7 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
     // Teacher AI request calls the configured external service with the decrypted bearer token
     mockApi.reply = () => ({
       body: {
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash-lite',
         choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ questions: [{ type: 'TRUE_FALSE', text: 'External LLM question.', answer: true, points: 1 }] }) } }],
         usage: { prompt_tokens: 40, completion_tokens: 15 },
       },

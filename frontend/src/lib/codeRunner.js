@@ -50,6 +50,16 @@ export function browserRunStatus({ phase, bytes = 0, index = 0, total = 1 } = {}
 }
 
 /**
+ * Status hint while waiting on a remote sandboxed runner (`vercel-sandbox`) that can experience
+ * a cold start on the first execution of a session.
+ */
+export function coldStartNotice(runner, elapsedMs = 0) {
+  if (runner?.provider !== 'vercel-sandbox' || elapsedMs < 1500) return null;
+  if (elapsedMs >= 7000) return 'Still preparing the isolated sandbox environment on Vercel — almost ready…';
+  return 'Starting an isolated sandbox on Vercel — the first run can take 5–15 seconds…';
+}
+
+/**
  * For the teacher who sets the time limit of a problem. Said only when it can matter: a program that is slow on every test may not
  * get through all of them, because the checker has a limit for a whole program too.
  */

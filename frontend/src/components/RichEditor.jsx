@@ -7,12 +7,45 @@ import { Youtube } from '@tiptap/extension-youtube';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { StarterKit } from '@tiptap/starter-kit';
 import {
-  Bold, Code2, Heading2, Heading3, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Quote, Redo2, Strikethrough, Table as TableIcon, Underline, Undo2, Unlink, Video,
+  Bold, Code2, Heading2, Heading3, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Quote, Redo2, Sparkles, Strikethrough, Table as TableIcon, Underline, Undo2, Unlink, Video,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useOptionalAuth } from '../auth/AuthContext.jsx';
 import { api, fileUrl } from '../lib/api.js';
 import { toast } from './toast.jsx';
-import { Button, cn, Field, Input, Modal } from './ui.jsx';
+import { Alert, Button, cn, Field, Input, Modal, Textarea } from './ui.jsx';
+
+const AI_QUICK_PROMPTS = [
+  'Improve clarity and flow for college students',
+  'Simplify this explanation for first-year learners',
+  'Summarize key takeaways into concise bullet points',
+  'Add a realistic worked example',
+  'Fix grammar, tone, and formatting',
+];
+
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function aiTextToHtml(text) {
+  const blocks = String(text ?? '').trim().split(/\n{2,}/);
+  return blocks
+    .map((block) => {
+      const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (lines.length && lines.every((l) => /^[-*•]\s+/.test(l))) {
+        return `<ul>${lines.map((l) => `<li>${escapeHtml(l.replace(/^[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
+      }
+      if (lines.length && lines.every((l) => /^\d+[.)]\s+/.test(l))) {
+        return `<ol>${lines.map((l) => `<li>${escapeHtml(l.replace(/^\d+[.)]\s+/, ''))}</li>`).join('')}</ol>`;
+      }
+      return `<p>${lines.map((l) => escapeHtml(l)).join('<br>')}</p>`;
+    })
+    .filter(Boolean)
+    .join('');
+}
 
 function Tool({ icon: Icon, label, active, onClick, disabled }) {
   return (
@@ -24,8 +57,10 @@ function Tool({ icon: Icon, label, active, onClick, disabled }) {
 }
 const Divider = () => <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden="true" />;
 
-export default function RichEditor({ value, onChange, placeholder = 'Write something…', minHeight = 160, allowMedia = true, autoFocus = false, ariaLabel = 'Rich text editor' }) {
-  const [dialog, setDialog] = useState(null); // 'link' | 'video' | 'image'
+export default function RichEditor({ value, onChange, placeholder = 'Write something…', minHeight = 160, allowMedia = true, allowAi, autoFocus = false, ariaLabel = 'Rich text editor' }) {
+  const auth = useOptionalAuth();
+  const canUseAi = allowAi ?? (Boolean(auth?.user) && !auth.isStudent && Boolean(auth.can?.('ai.use')));
+  const [dialog, setDialog] = useState(null); // 'link' | 'video' | 'image' | { ai: { context, hasSelection } }
   const fileInput = useRef(null);
   const lastEmitted = useRef(value ?? '');
 
@@ -101,6 +136,27 @@ export default function RichEditor({ value, onChange, placeholder = 'Write somet
             <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={(e) => { uploadImage(e.target.files?.[0]); e.target.value = ''; }} />
           </>
         )}
+        {canUseAi && (
+          <>
+            <Divider />
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const { from, to, empty } = editor.state.selection;
+                const selected = empty ? '' : editor.state.doc.textBetween(from, to, '\n');
+                const fullText = editor.getText().trim();
+                setDialog({ ai: { context: selected || fullText, hasSelection: !empty } });
+              }}
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand-soft"
+              title="Draft, rewrite, or summarize with AI"
+              aria-label="Ask AI"
+            >
+              <Sparkles className="size-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">Ask AI</span>
+            </button>
+          </>
+        )}
         <span className="ml-auto flex shrink-0">
           <Tool icon={Undo2} label="Undo (Ctrl+Z)" disabled={!state.canUndo} onClick={() => chain().undo().run()} />
           <Tool icon={Redo2} label="Redo (Ctrl+Y)" disabled={!state.canRedo} onClick={() => chain().redo().run()} />
@@ -116,7 +172,131 @@ export default function RichEditor({ value, onChange, placeholder = 'Write somet
         <UrlDialog title="Embed a video" label="YouTube link" placeholder="https://www.youtube.com/watch?v=…" onClose={() => setDialog(null)} hint="The video plays inside the lesson using YouTube’s privacy-enhanced mode."
           onSubmit={(url) => { if (url && !chain().setYoutubeVideo({ src: url }).run()) toast.error('That does not look like a YouTube link.'); }} />
       )}
+      {dialog?.ai && (
+        <AiAssistDialog
+          initialContext={dialog.ai.context}
+          hasSelection={dialog.ai.hasSelection}
+          onClose={() => setDialog(null)}
+          onApply={(text, mode) => {
+            const html = aiTextToHtml(text);
+            if (mode === 'replace') {
+              if (dialog.ai.hasSelection) {
+                chain().deleteSelection().insertContent(html).run();
+              } else {
+                editor.commands.setContent(html, { emitUpdate: true });
+                const emitted = editor.isEmpty ? '' : editor.getHTML();
+                lastEmitted.current = emitted;
+                onChange?.(emitted);
+              }
+            } else {
+              if (dialog.ai.hasSelection) {
+                const { to } = editor.state.selection;
+                chain().setTextSelection(to).insertContent(html).run();
+              } else {
+                chain().focus('end').insertContent(html).run();
+              }
+            }
+            setDialog(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function AiAssistDialog({ initialContext, hasSelection, onClose, onApply }) {
+  const [prompt, setPrompt] = useState('');
+  const [context, setContext] = useState(initialContext ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [suggestion, setSuggestion] = useState(null);
+
+  const runPrompt = async (chosenPrompt) => {
+    const textPrompt = (chosenPrompt ?? prompt).trim();
+    if (textPrompt.length < 3) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post('/ai/assistant', {
+        prompt: textPrompt,
+        context: context.trim() ? context.trim().slice(0, 20_000) : undefined,
+      });
+      setSuggestion(res.text);
+    } catch (err) {
+      setError(err.message || 'AI assistance is currently unavailable.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title="Ask AI writing assistant"
+      description={hasSelection ? 'Working from your selected text. Review the draft before inserting.' : 'Working from this editor’s content (or write an instruction to draft something new).'}
+      footer={
+        suggestion ? (
+          <>
+            <Button variant="secondary" onClick={() => setSuggestion(null)}>Back</Button>
+            <Button variant="secondary" onClick={() => onApply(suggestion, 'insert')}>Insert below</Button>
+            <Button onClick={() => onApply(suggestion, 'replace')}>{hasSelection ? 'Replace selection' : 'Replace content'}</Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button icon={Sparkles} loading={busy} disabled={prompt.trim().length < 3} onClick={() => runPrompt()}>Generate draft</Button>
+          </>
+        )
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="bad">{error}</Alert>}
+        {suggestion ? (
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-faint">Suggested draft</p>
+            <div className="max-h-[45vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-line bg-raised/50 p-3.5 text-sm leading-relaxed text-ink">
+              {suggestion}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-faint">Quick actions</p>
+              <div className="flex flex-wrap gap-1.5">
+                {AI_QUICK_PROMPTS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => { setPrompt(item); runPrompt(item); }}
+                    className="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-soft transition-colors hover:border-brand hover:text-brand disabled:opacity-50"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Field label="Or write your instruction">
+              <Textarea
+                rows={3}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                maxLength={4000}
+                placeholder="e.g. Turn these notes into a clear 3-step student activity…"
+                data-autofocus
+              />
+            </Field>
+            {context.trim() && (
+              <Field label={hasSelection ? 'Selected text' : 'Current editor text'} hint="Included as reference context for the AI.">
+                <Textarea rows={3} value={context} onChange={(e) => setContext(e.target.value)} maxLength={20_000} />
+              </Field>
+            )}
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 

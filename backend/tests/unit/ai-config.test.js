@@ -164,4 +164,29 @@ describe('the identity of the Vercel project', () => {
     expect(result).toMatchObject({ ok: true, askedWith: 'key' });
     expect(sent).toEqual([{ url: 'https://ai.example.com/v1/chat/completions', authorization: 'Bearer key-of-that-service' }]);
   });
+
+  it('decrypts legacy CRON_SECRET-encrypted keys even after adding an independent AI_SETTINGS_SECRET', async () => {
+    const prevCron = process.env.CRON_SECRET;
+    const prevAiSecret = process.env.AI_SETTINGS_SECRET;
+    try {
+      process.env.CRON_SECRET = 'legacy-cron-secret-value-1234';
+      delete process.env.AI_SETTINGS_SECRET;
+      vi.resetModules();
+      const { encryptSecret: legacyEncrypt } = await import('../../src/services/aiConfig.js');
+      const legacyCipher = legacyEncrypt('AIza-legacy-key-777');
+
+      process.env.AI_SETTINGS_SECRET = 'independent-ai-settings-secret-9999';
+      vi.resetModules();
+      const { decryptSecret: newDecrypt, encryptSecret: newEncrypt } = await import('../../src/services/aiConfig.js');
+      expect(newDecrypt(legacyCipher)).toEqual({ ok: true, corrupted: false, value: 'AIza-legacy-key-777' });
+      const freshCipher = newEncrypt('AIza-fresh-key-888');
+      expect(newDecrypt(freshCipher)).toEqual({ ok: true, corrupted: false, value: 'AIza-fresh-key-888' });
+    } finally {
+      if (prevCron === undefined) delete process.env.CRON_SECRET;
+      else process.env.CRON_SECRET = prevCron;
+      if (prevAiSecret === undefined) delete process.env.AI_SETTINGS_SECRET;
+      else process.env.AI_SETTINGS_SECRET = prevAiSecret;
+      vi.resetModules();
+    }
+  });
 });

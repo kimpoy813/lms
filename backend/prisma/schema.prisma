@@ -655,6 +655,7 @@ model Class {
   enrollmentCodeEnabled      Boolean     @default(true)
   enrollmentRequiresApproval Boolean     @default(false)
   classmatesVisible          Boolean     @default(true)
+  aiStudyCoachEnabled        Boolean     @default(false)
   status                     ClassStatus @default(ACTIVE)
   archivedAt                 DateTime?   @db.Timestamptz(3)
   // Grading configuration
