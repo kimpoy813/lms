@@ -720,9 +720,13 @@ classGradebookRouter.post(
 );
 
 // ── Academic record across classes ───────────────────────────────────────────
-async function academicRecord(studentId) {
+async function academicRecord(studentId, { semesterId } = {}) {
   const enrollments = await prisma.enrollment.findMany({
-    where: { studentId, status: 'ENROLLED' },
+    where: {
+      studentId,
+      status: 'ENROLLED',
+      ...(semesterId ? { class: { semesterId } } : {}),
+    },
     include: { class: { include: { course: { select: { id: true, code: true, title: true, units: true } }, section: { select: { id: true, name: true } }, semester: { select: { id: true, name: true, startDate: true, endDate: true, academicYear: { select: { id: true, name: true } } } }, teacher: { select: { firstName: true, lastName: true } } } } },
     orderBy: { class: { semester: { startDate: 'desc' } } },
   });
@@ -733,6 +737,7 @@ async function academicRecord(studentId) {
     const overall = final ? { percent: final.percent, label: final.label, remark: final.remark, isPassing: final.isPassing } : view?.overall ?? null;
     rows.push({
       classId: cls.id,
+      semesterId: cls.semesterId,
       code: cls.course.code,
       title: cls.course.title,
       units: cls.course.units,
@@ -749,8 +754,79 @@ async function academicRecord(studentId) {
   return rows;
 }
 
+async function sendReportCard(res, student, { format, semesterId }) {
+  const rows = await academicRecord(student.id, { semesterId });
+  const [institution, tz] = await Promise.all([getSetting('institution.name'), getTimeZone()]);
+  const totalUnits = rows.reduce((sum, r) => sum + (Number(r.units) || 0), 0);
+  const graded = rows.filter((r) => r.overall && typeof r.overall.percent === 'number');
+  const totalWeightedUnits = graded.reduce((sum, r) => sum + (Number(r.units) > 0 ? Number(r.units) : 1), 0);
+  const weightedPercent =
+    totalWeightedUnits > 0
+      ? round(graded.reduce((sum, r) => sum + r.overall.percent * (Number(r.units) > 0 ? Number(r.units) : 1), 0) / totalWeightedUnits, 2)
+      : null;
+
+  const termLabel = semesterId && rows[0] ? `${rows[0].semester}, ${rows[0].academicYear}` : 'All enrolled terms';
+  const profileParts = [
+    student.studentProfile?.studentNumber ? `Student No. ${student.studentProfile.studentNumber}` : null,
+    student.studentProfile?.program?.code ?? null,
+    student.studentProfile?.section?.name ? `Section ${student.studentProfile.section.name}` : null,
+  ].filter(Boolean);
+
+  await sendTable(res, format, {
+    filename: `report-card-${student.studentProfile?.studentNumber || student.lastName || 'student'}`,
+    title: `Student Report Card — ${fullName(student)}`,
+    subtitle: `${institution || 'EduSphere'} · ${termLabel}`,
+    meta: [
+      ...(profileParts.length > 0 ? [profileParts.join(' · ')] : []),
+      `Generated ${dateKey(new Date(), tz)} (${tz})`,
+    ],
+    columns: [
+      { header: 'Code', value: (r) => r.code, width: 12, pdfWidth: 1.0 },
+      { header: 'Subject', value: (r) => r.title, width: 32, pdfWidth: 2.5 },
+      { header: 'Units', value: (r) => r.units ?? '—', width: 8, pdfWidth: 0.65, align: 'right' },
+      { header: 'Term', value: (r) => `${r.semester} (${r.academicYear})`, width: 22, pdfWidth: 1.7 },
+      {
+        header: 'Periods',
+        value: (r) =>
+          r.periods
+            .filter((p) => p.published && p.percent !== null && p.percent !== undefined)
+            .map((p) => `${p.name}: ${p.percent}%`)
+            .join(' | ') || '—',
+        width: 28,
+        pdfWidth: 2.1,
+      },
+      { header: 'Final %', value: (r) => (r.overall?.percent !== undefined && r.overall?.percent !== null ? r.overall.percent : '—'), width: 10, pdfWidth: 0.85, align: 'right' },
+      { header: 'Grade', value: (r) => r.overall?.label ?? '—', width: 9, pdfWidth: 0.75, align: 'center' },
+      { header: 'Remarks', value: (r) => `${r.overall?.remark ?? (r.overall ? '' : 'In progress')}${r.finalized ? '' : r.overall ? ' (unofficial)' : ''}`, width: 18, pdfWidth: 1.4 },
+    ],
+    rows,
+    landscape: true,
+    footer: 'Confidential student record — handle in accordance with the Data Privacy Act of 2012 (RA 10173).',
+    summary: [
+      `Subjects: ${rows.length} · Total units: ${totalUnits}`,
+      weightedPercent !== null ? `Weighted Average (GWA %): ${weightedPercent}% across ${graded.length} graded subject${graded.length === 1 ? '' : 's'}` : 'No overall grades published yet.',
+    ],
+  });
+}
+
 gradesRouter.get('/mine', requireRole('STUDENT'), async (req, res) => {
   ok(res, await academicRecord(req.user.id));
+});
+
+const reportCardQuery = z.object({ format: z.enum(['pdf', 'csv', 'xlsx']).default('pdf'), semesterId: zId.optional() });
+
+gradesRouter.get('/mine/export', requireRole('STUDENT'), validate({ query: reportCardQuery }), async (req, res) => {
+  const student = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      studentProfile: { select: { studentNumber: true, program: { select: { code: true } }, section: { select: { name: true } } } },
+    },
+  });
+  if (!student) throw notFound('Student');
+  await sendReportCard(res, student, req.valid.query);
 });
 
 gradesRouter.get('/students/:studentId', requireRole('ADMIN'), validate({ params: idParams('studentId') }), async (req, res) => {
@@ -758,4 +834,19 @@ gradesRouter.get('/students/:studentId', requireRole('ADMIN'), validate({ params
   if (!student) throw notFound('Student');
   await audit(req, { action: 'records.view', entityType: 'User', entityId: student.id, summary: `Viewed the academic record of ${fullName(student)}` });
   ok(res, { student: { id: student.id, name: fullName(student), email: student.email, studentNumber: student.studentProfile?.studentNumber ?? null }, classes: await academicRecord(student.id) });
+});
+
+gradesRouter.get('/students/:studentId/export', requireRole('ADMIN'), validate({ params: idParams('studentId'), query: reportCardQuery }), async (req, res) => {
+  const student = await prisma.user.findFirst({
+    where: { id: req.valid.params.studentId, role: 'STUDENT' },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      studentProfile: { select: { studentNumber: true, program: { select: { code: true } }, section: { select: { name: true } } } },
+    },
+  });
+  if (!student) throw notFound('Student');
+  await audit(req, { action: 'records.export', entityType: 'User', entityId: student.id, summary: `Exported report card for ${fullName(student)} (${req.valid.query.format.toUpperCase()})` });
+  await sendReportCard(res, student, req.valid.query);
 });

@@ -1,38 +1,46 @@
 // One module: its lesson list on the left, the selected lesson on the right.
 // Teachers write and edit lessons here; students read them and mark them as completed.
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, CheckCircle2, ChevronLeft, Circle, Clock, FilePlus2, HelpCircle, Layers, Lock, Pencil, Plus, Printer, RotateCcw, Save, Sparkles, Target, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, HelpCircle, Layers, Lock, Pencil, Plus, Printer, RotateCcw, Save, Sparkles, Target, Trash2, Undo2, WifiOff } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
+import { toast } from '../../components/toast.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, Input, PageLoader, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { relativeTime } from '../../lib/format.js';
+import { getOfflineLesson, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
 import { LESSON_KINDS } from './Modules.jsx';
 import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
 
 export default function ModuleView() {
+  const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const { moduleId } = useParams();
   const [params, setParams] = useSearchParams();
   const query = useQuery({ queryKey: ['class', cls.id, 'modules', moduleId], queryFn: () => api.get(`/modules/${moduleId}`) });
   const creating = canManage && params.get('new') === '1';
   const lessonId = params.get('lesson');
+  const offlineFallback = lessonId ? getOfflineLesson(user?.id, lessonId) : null;
+  const effectiveQuery = query.isError && query.error?.code === 'NETWORK' && offlineFallback?.mod?.id === moduleId
+    ? { ...query, isError: false, isSuccess: true, data: offlineFallback.mod }
+    : query;
 
   // Open the first lesson a student has not finished (or simply the first one).
   useEffect(() => {
-    if (!query.data || lessonId || creating) return;
-    const lessons = query.data.lessons;
+    if (!effectiveQuery.data || lessonId || creating) return;
+    const lessons = effectiveQuery.data.lessons;
     const first = (canManage ? lessons[0] : lessons.find((l) => !l.completed && !l.locked) ?? lessons.find((l) => !l.locked));
     if (first) setParams({ lesson: first.id }, { replace: true });
-  }, [query.data, lessonId, creating, canManage, setParams]);
+  }, [effectiveQuery.data, lessonId, creating, canManage, setParams]);
 
   return (
-    <QueryState query={query}>
+    <QueryState query={effectiveQuery}>
       {(mod) => (
         <>
           <div className="no-print mb-4 flex flex-wrap items-center gap-3">
@@ -111,24 +119,61 @@ function LessonList({ mod, activeId }) {
 }
 
 function Lesson({ mod, lessonId }) {
+  const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [dialog, setDialog] = useState(null);
+  const [savedOffline, setSavedOffline] = useState(() => isLessonSavedOffline(user?.id, lessonId));
+  const [savingOffline, setSavingOffline] = useState(false);
   const query = useQuery({ queryKey: ['class', cls.id, 'lesson', lessonId], queryFn: () => api.get(`/lessons/${lessonId}`) });
+  const offlineEntry = getOfflineLesson(user?.id, lessonId);
+  const readingOffline = Boolean(query.isError && query.error?.code === 'NETWORK' && offlineEntry);
+  const effectiveQuery = readingOffline
+    ? { ...query, isError: false, isSuccess: true, data: offlineEntry.lesson }
+    : query;
   const invalidate = [['class', cls.id], ['dashboard']];
   const complete = useAction((done) => (done ? api.post(`/lessons/${lessonId}/complete`) : api.delete(`/lessons/${lessonId}/complete`)), { invalidate });
   const bookmark = useAction((on) => (on ? api.post('/bookmarks', { lessonId }) : api.delete('/bookmarks', { lessonId })), { invalidate: [['class', cls.id, 'lesson', lessonId], ['bookmarks']] });
   const remove = useAction(() => api.delete(`/lessons/${lessonId}`), { invalidate, success: 'Lesson deleted.', onSuccess: () => navigate(`${base}/modules/${mod.id}`, { replace: true }) });
   const readOnly = cls.status === 'ARCHIVED';
 
-  if (query.isError && query.error.code === 'LESSON_LOCKED') {
-    return <Card><EmptyState icon={Lock} title="This lesson is locked" description={query.error.message} /></Card>;
+  useEffect(() => {
+    setSavedOffline(isLessonSavedOffline(user?.id, lessonId));
+  }, [user?.id, lessonId]);
+
+  const toggleOffline = async (lesson) => {
+    setSavingOffline(true);
+    try {
+      if (savedOffline) {
+        await removeOfflineLesson(user?.id, lesson.id);
+        setSavedOffline(false);
+        toast.info('Removed offline copy from this device.');
+      } else {
+        const entry = await saveLessonOffline(user?.id, { mod, lesson });
+        setSavedOffline(true);
+        toast.success(`Saved for offline study${entry.cachedFiles > 0 ? ` (${entry.cachedFiles} file${entry.cachedFiles === 1 ? '' : 's'} cached)` : ''}.`);
+      }
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSavingOffline(false);
+    }
+  };
+
+  if (effectiveQuery.isError && effectiveQuery.error.code === 'LESSON_LOCKED') {
+    return <Card><EmptyState icon={Lock} title="This lesson is locked" description={effectiveQuery.error.message} /></Card>;
   }
   return (
-    <QueryState query={query}>
+    <QueryState query={effectiveQuery}>
       {(lesson) => editing ? <LessonEditor mod={mod} lesson={lesson} onDone={() => setEditing(false)} /> : (
         <article>
+          {readingOffline && (
+            <Alert tone="info" className="mb-4">
+              <WifiOff className="mr-1.5 inline size-4" aria-hidden="true" />
+              You are offline. Reading copy saved on this device {relativeTime(offlineEntry.savedAt)}.
+            </Alert>
+          )}
           <Card className="print:border-0 print:shadow-none">
             <header className="mb-5 border-b border-line pb-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -141,7 +186,18 @@ function Lesson({ mod, lessonId }) {
                   </p>
                   <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink text-balance">{lesson.title}</h1>
                 </div>
-                <div className="no-print flex shrink-0 items-center gap-1.5">
+                <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5">
+                  <Button
+                    variant={savedOffline ? 'soft' : 'ghost'}
+                    size="sm"
+                    icon={savedOffline ? Check : Download}
+                    loading={savingOffline}
+                    aria-pressed={savedOffline}
+                    className={savedOffline ? 'text-ok' : ''}
+                    onClick={() => toggleOffline(lesson)}
+                  >
+                    {savedOffline ? 'Offline ready' : 'Save offline'}
+                  </Button>
                   {!canManage && <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={lesson.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate(!lesson.bookmarked)}>{lesson.bookmarked ? 'Saved' : 'Save'}</Button>}
                   <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} aria-label="Print this lesson" />
                   {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}

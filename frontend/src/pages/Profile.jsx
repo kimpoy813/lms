@@ -4,6 +4,7 @@ import { Camera, KeyRound, Laptop, LogOut, Save, ShieldCheck, Smartphone, Trash2
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
+import PushNotificationsCard from '../components/PushNotificationsCard.jsx';
 import { toast } from '../components/toast.jsx';
 import { Alert, Avatar, Badge, Button, Card, CardHeader, Field, Input, PageHeader, QueryState, Spinner, Switch, Textarea } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
@@ -106,6 +107,7 @@ export default function Profile() {
           <CardHeader title="Notifications" />
           <Switch checked={user.emailNotifications} onChange={(on) => save.mutate({ emailNotifications: on }, { onSuccess: () => toast.success(on ? 'E-mail notifications are on.' : 'E-mail notifications are off.') })} label="Also send important notifications by e-mail" disabled={!runtime.email && !user.emailNotifications}
             description={runtime.email ? 'Announcements, returned grades and attendance requests. You always receive them inside EduSphere.' : 'Not available: this site does not send e-mail. You receive every notification inside EduSphere.'} />
+          <PushNotificationsCard />
         </Card>
 
         <PasswordCard />

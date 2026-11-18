@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, Clock, FileCheck2, Lock, Pencil, Save, Send, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import { FileList, FileUpload } from '../../components/Files.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
@@ -143,36 +144,94 @@ function StudentStatus({ a }) {
   );
 }
 
+function localDraftKey(userId, assignmentId) {
+  return `edusphere.assignmentDraft.${userId || 'anon'}.${assignmentId}`;
+}
+
+function readLocalDraft(key) {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed.text === 'string' && parsed.updatedAt ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalDraft(key, text) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ text, updatedAt: new Date().toISOString() }));
+  } catch {
+    /* ignore storage quota failures */
+  }
+}
+
+function clearLocalDraft(key) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 function SubmissionPanel({ a }) {
+  const { user } = useAuth();
   const { cls } = useClass();
   const s = a.submission;
   const submitted = Boolean(s) && s.status !== 'DRAFT';
   const reviewed = ['GRADED', 'RETURNED'].includes(s?.status);
-  const [text, setText] = useState(s?.textContent ?? '');
+  const draftKey = localDraftKey(user?.id, a.id);
+  const initialLocal = !submitted && !reviewed && a.allowText && a.window.open ? readLocalDraft(draftKey) : null;
+  const serverUpdatedAt = s?.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+  const shouldRestoreLocal = Boolean(
+    initialLocal
+    && initialLocal.text !== (s?.textContent ?? '')
+    && new Date(initialLocal.updatedAt).getTime() > serverUpdatedAt,
+  );
+
+  const [text, setText] = useState(shouldRestoreLocal ? initialLocal.text : (s?.textContent ?? ''));
   const [files, setFiles] = useState(s?.files ?? []);
   const [revising, setRevising] = useState(false);
   const [errors, setErrors] = useState({});
   const [confirm, setConfirm] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
-  const dirty = useRef(false);
+  const [restoredLocalAt, setRestoredLocalAt] = useState(shouldRestoreLocal ? initialLocal.updatedAt : null);
+  const dirty = useRef(shouldRestoreLocal);
   const invalidate = [['class', cls.id], ['dashboard']];
 
   const body = (submit) => ({ textContent: a.allowText ? text : null, fileIds: files.map((f) => f.id), submit });
   const saveDraft = useAction(() => api.put(`/assignments/${a.id}/submission`, body(false)), {
     silent: true,
-    onSuccess: () => { dirty.current = false; setSavedAt(new Date()); },
+    onSuccess: () => {
+      dirty.current = false;
+      setSavedAt(new Date());
+      setRestoredLocalAt(null);
+      clearLocalDraft(draftKey);
+    },
   });
   const submit = useAction(() => api.put(`/assignments/${a.id}/submission`, body(true)), {
     invalidate, success: 'Your work was submitted.',
-    onSuccess: () => { dirty.current = false; setConfirm(false); setRevising(false); },
+    onSuccess: () => {
+      dirty.current = false;
+      setRestoredLocalAt(null);
+      clearLocalDraft(draftKey);
+      setConfirm(false);
+      setRevising(false);
+    },
     onError: (err) => { setConfirm(false); if (err.fields) { setErrors(err.fields); return true; } return false; },
   });
 
-  // Drafts are saved quietly a few seconds after the student stops typing.
+  // Drafts are saved locally immediately (in case of offline drops) and synced to the server
+  // quietly a few seconds after the student stops typing.
   const editable = a.window.open && !reviewed && (!submitted || revising);
   const isDraftStage = editable && !submitted;
   useEffect(() => {
     if (!isDraftStage || !dirty.current) return undefined;
+    if (a.allowText) writeLocalDraft(draftKey, text);
     const t = setTimeout(() => saveDraft.mutate(), 2500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,6 +252,25 @@ function SubmissionPanel({ a }) {
 
       {!a.window.open && !submitted && <Alert tone="warn" title={a.window.reason} className="mb-4"><Lock className="mr-1 inline size-3.5" aria-hidden="true" />Ask your teacher if you need this reopened.</Alert>}
       {a.window.open && a.window.late && !submitted && <Alert tone="warn" className="mb-4" title="The due date has passed">{penaltyText(a)}</Alert>}
+      {isDraftStage && restoredLocalAt && (
+        <Alert tone="info" className="mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>Restored an unsaved draft from this device ({relativeTime(restoredLocalAt)}).</span>
+            <button
+              type="button"
+              onClick={() => {
+                clearLocalDraft(draftKey);
+                setRestoredLocalAt(null);
+                setText(s?.textContent ?? '');
+                dirty.current = false;
+              }}
+              className="text-xs font-semibold underline hover:no-underline"
+            >
+              Discard local draft
+            </button>
+          </div>
+        </Alert>
+      )}
 
       {editable || (reopened && reviewed) ? (
         <div className="space-y-4">

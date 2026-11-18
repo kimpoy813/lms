@@ -16,6 +16,7 @@ import { checkCodeRunner, codeRunnerConfigured, codeRunnerHealth } from '../../s
 import { mailAvailable, mailConfigured } from '../../services/mail.js';
 import { notify } from '../../services/notifications.js';
 import { permissionMatrix, setRolePermission } from '../../services/permissions.js';
+import { pushConfigured } from '../../services/push.js';
 import { getSettings, SETTING_DEFINITIONS, updateSettings } from '../../services/settings.js';
 import { storageUsage } from '../../services/storage.js';
 import { classLabel } from '../classes/access.js';
@@ -61,6 +62,7 @@ adminSystemRouter.get('/status', async (req, res) => {
     demoAccountsEnabled: env.demoAccountsEnabled,
     mailConfigured: mailConfigured(),
     mailAvailable: mailAvailable(),
+    pushConfigured: pushConfigured(),
     ai: {
       configured: ai.configured,
       provider: ai.provider,
@@ -250,6 +252,60 @@ adminSystemRouter.post('/enrollments', validate({ body: z.object({ classId: zId,
   });
   await notify([studentId], { type: 'enrollment.approved', title: `You were enrolled in ${classLabel(cls)}`, link: `/classes/${classId}`, classId });
   ok(res, { id: enrollment.id, status: enrollment.status });
+});
+
+adminSystemRouter.post('/enrollments/section', validate({ body: z.object({ classId: zId, sectionId: zId }) }), async (req, res) => {
+  const { classId, sectionId } = req.valid.body;
+  const cls = await loadActiveClass(classId, 'classId');
+  const section = await prisma.section.findUnique({ where: { id: sectionId }, select: { id: true, name: true } });
+  if (!section) throw fieldErrors({ sectionId: 'Choose a section.' });
+
+  const students = await prisma.user.findMany({
+    where: { role: 'STUDENT', status: 'ACTIVE', anonymizedAt: null, studentProfile: { sectionId } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  if (students.length === 0) {
+    throw fieldErrors({ sectionId: `No active students are assigned to section ${section.name}.` });
+  }
+
+  const existing = await prisma.enrollment.findMany({
+    where: { classId, studentId: { in: students.map((s) => s.id) }, status: 'ENROLLED' },
+    select: { studentId: true },
+  });
+  const enrolledIds = new Set(existing.map((e) => e.studentId));
+  const toEnroll = students.filter((s) => !enrolledIds.has(s.id));
+
+  if (toEnroll.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      for (const student of toEnroll) {
+        await enrollIn(tx, req, cls, student);
+      }
+      await audit(req, {
+        action: 'enrollment.admin_section_enroll',
+        entityType: 'Class',
+        entityId: classId,
+        classId,
+        summary: `Enrolled section ${section.name} (${toEnroll.length} student${toEnroll.length === 1 ? '' : 's'}) in ${classLabel(cls)}`,
+        after: { sectionId, enrolledCount: toEnroll.length, alreadyEnrolledCount: enrolledIds.size },
+      }, tx);
+    });
+    await notify(toEnroll.map((s) => s.id), {
+      type: 'enrollment.approved',
+      title: `You were enrolled in ${classLabel(cls)}`,
+      link: `/classes/${classId}`,
+      classId,
+    });
+  }
+
+  ok(res, {
+    sectionId: section.id,
+    sectionName: section.name,
+    classId,
+    classLabel: classLabel(cls),
+    totalInSection: students.length,
+    enrolledCount: toEnroll.length,
+    alreadyEnrolledCount: enrolledIds.size,
+  });
 });
 
 adminSystemRouter.post(

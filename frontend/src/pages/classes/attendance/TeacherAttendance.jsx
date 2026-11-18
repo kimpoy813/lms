@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router';
 import { useAuth } from '../../../auth/AuthContext.jsx';
 import { FileList } from '../../../components/Files.jsx';
 import { toast } from '../../../components/toast.jsx';
-import { Avatar, Badge, Button, Card, cn, EmptyState, Field, Menu, MenuItem, Modal, QueryState, Tabs, Textarea } from '../../../components/ui.jsx';
+import { Avatar, Badge, Button, Card, cn, EmptyState, Field, Menu, MenuItem, Modal, QueryState, Select, Tabs, Textarea } from '../../../components/ui.jsx';
 import { api } from '../../../lib/api.js';
 import { formatDateKey, formatPercent, formatTime, relativeTime } from '../../../lib/format.js';
 import { useAction } from '../../../lib/query.js';
@@ -74,57 +74,82 @@ export default function TeacherAttendance() {
   );
 }
 
+function formatMonthOption(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 1)));
+}
+
 function Summary({ onOpen }) {
   const { cls, base } = useClass();
   const { can } = useAuth();
-  const query = useQuery({ queryKey: ['class', cls.id, 'attendance', 'summary'], queryFn: () => api.get(`${base}/attendance/summary`) });
+  const [month, setMonth] = useState('');
+  const query = useQuery({
+    queryKey: ['class', cls.id, 'attendance', 'summary', month],
+    queryFn: () => api.get(`${base}/attendance/summary`, month ? { month } : undefined),
+  });
   const exportAs = async (format) => {
     try {
-      await api.download(`${base}/attendance/export`, { format }, `attendance.${format}`);
+      await api.download(
+        `${base}/attendance/export`,
+        { format, ...(month ? { month } : {}) },
+        `attendance${month ? `-${month}` : ''}.${format}`,
+      );
     } catch (err) {
       toast.error(err.message);
     }
   };
   return (
     <QueryState query={query}>
-      {(data) => data.sessions.length === 0 ? <Card><EmptyState icon={Table2} title="Nothing to summarise yet" description="The summary fills in after the first session is closed." /></Card> : (
+      {(data) => data.sessions.length === 0 && !month ? <Card><EmptyState icon={Table2} title="Nothing to summarise yet" description="The summary fills in after the first session is closed." /></Card> : (
         <>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <p className="text-[13px] text-soft">Rate = present + late, out of all recorded meetings. Excused meetings are left out. <span className="whitespace-nowrap">P present · L late · A absent · E excused</span></p>
-            {can('attendance.export') && (
-              <Menu trigger={({ toggle, props }) => <Button variant="secondary" size="sm" icon={Download} onClick={toggle} {...props}>Export</Button>}>
-                <MenuItem onClick={() => exportAs('xlsx')}>Excel (.xlsx)</MenuItem>
-                <MenuItem onClick={() => exportAs('csv')}>CSV</MenuItem>
-                <MenuItem onClick={() => exportAs('pdf')}>PDF</MenuItem>
-              </Menu>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {(data.availableMonths?.length ?? 0) > 0 && (
+                <Select aria-label="Filter attendance by month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-44">
+                  <option value="">All sessions</option>
+                  {data.availableMonths.map((ym) => <option key={ym} value={ym}>{formatMonthOption(ym)}</option>)}
+                </Select>
+              )}
+              {can('attendance.export') && (
+                <Menu trigger={({ toggle, props }) => <Button variant="secondary" size="sm" icon={Download} onClick={toggle} {...props}>Export</Button>}>
+                  <MenuItem onClick={() => exportAs('xlsx')}>Excel (.xlsx){month ? ' (Monthly)' : ''}</MenuItem>
+                  <MenuItem onClick={() => exportAs('csv')}>CSV{month ? ' (Monthly)' : ''}</MenuItem>
+                  <MenuItem onClick={() => exportAs('pdf')}>PDF{month ? ' (Monthly SF2)' : ''}</MenuItem>
+                </Menu>
+              )}
+            </div>
           </div>
-          <div className="overflow-x-auto rounded-2xl border border-line bg-surface shadow-card">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-raised/60 text-xs font-semibold uppercase tracking-wide text-faint">
-                  <th scope="col" className="sticky left-0 z-10 border-b border-line bg-raised px-4 py-2.5 text-left">Student</th>
-                  <th scope="col" className="border-b border-line px-3 py-2.5 text-right">Rate</th>
-                  {data.sessions.map((s) => (
-                    <th key={s.id} scope="col" className="border-b border-line px-1 py-1.5 text-center font-medium normal-case">
-                      <button type="button" onClick={() => onOpen(s.id)} className="rounded px-1 py-1 hover:bg-raised hover:text-brand" title={`${s.title ?? 'Meeting'} · ${formatDateKey(s.date)}`}>
-                        {new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${s.date}T00:00:00Z`))}
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.students.map((st) => (
-                  <tr key={st.id} className="hover:bg-raised/40">
-                    <th scope="row" className="sticky left-0 z-10 border-b border-line bg-surface px-4 py-2 text-left font-medium text-ink whitespace-nowrap">{st.lastName}, {st.firstName}</th>
-                    <td className={cn('border-b border-line px-3 py-2 text-right font-semibold tabular-nums', st.rate === null ? 'text-faint' : st.rate < 80 ? 'text-bad' : 'text-ink')}>{st.rate === null ? '—' : formatPercent(st.rate, 0)}</td>
-                    {data.sessions.map((s) => <td key={s.id} className="border-b border-line px-1 py-1.5"><span className="flex justify-center"><StatusCell status={s.status === 'CANCELLED' ? null : st.statuses[s.id]} /></span></td>)}
+          {data.sessions.length === 0 ? (
+            <Card><EmptyState icon={Table2} title="No sessions in this month" description="Choose another month or All sessions." /></Card>
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-line bg-surface shadow-card">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-raised/60 text-xs font-semibold uppercase tracking-wide text-faint">
+                    <th scope="col" className="sticky left-0 z-10 border-b border-line bg-raised px-4 py-2.5 text-left">Student</th>
+                    <th scope="col" className="border-b border-line px-3 py-2.5 text-right">Rate</th>
+                    {data.sessions.map((s) => (
+                      <th key={s.id} scope="col" className="border-b border-line px-1 py-1.5 text-center font-medium normal-case">
+                        <button type="button" onClick={() => onOpen(s.id)} className="rounded px-1 py-1 hover:bg-raised hover:text-brand" title={`${s.title ?? 'Meeting'} · ${formatDateKey(s.date)}`}>
+                          {new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${s.date}T00:00:00Z`))}
+                        </button>
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {data.students.map((st) => (
+                    <tr key={st.id} className="hover:bg-raised/40">
+                      <th scope="row" className="sticky left-0 z-10 border-b border-line bg-surface px-4 py-2 text-left font-medium text-ink whitespace-nowrap">{st.lastName}, {st.firstName}</th>
+                      <td className={cn('border-b border-line px-3 py-2 text-right font-semibold tabular-nums', st.rate === null ? 'text-faint' : st.rate < 80 ? 'text-bad' : 'text-ink')}>{st.rate === null ? '—' : formatPercent(st.rate, 0)}</td>
+                      {data.sessions.map((s) => <td key={s.id} className="border-b border-line px-1 py-1.5"><span className="flex justify-center"><StatusCell status={s.status === 'CANCELLED' ? null : st.statuses[s.id]} /></span></td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </QueryState>

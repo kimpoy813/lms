@@ -87,12 +87,20 @@ const schema = z.object({
   SERVE_FRONTEND: bool(false),
   FRONTEND_DIST: z.string().default(path.join(backendRoot, '..', 'frontend', 'dist')),
   /**
-   * Where uploaded files are kept: `disk` (STORAGE_DIR) or `database` (a table in PostgreSQL, for
-   * hosts whose disk does not survive a restart). Default: database when SERVERLESS, else disk.
+   * Where uploaded files are kept: `disk` (STORAGE_DIR), `database` (FileBlob in PostgreSQL,
+   * for hosts without persistent disk), or `s3` (S3 / Cloudflare R2 object storage).
+   * Default: database when SERVERLESS, else disk.
    */
-  STORAGE_DRIVER: z.enum(['disk', 'database']).optional(),
-  /** With the disk driver: the files. With the database driver: only short-lived temporary files. */
+  STORAGE_DRIVER: z.enum(['disk', 'database', 's3']).optional(),
+  /** With the disk driver: the files. With the database/s3 drivers: only short-lived temporary files. */
   STORAGE_DIR: optionalString,
+  S3_BUCKET: optionalString,
+  S3_REGION: z.string().default('auto'),
+  S3_ENDPOINT: z.string().url().optional(),
+  S3_ACCESS_KEY_ID: optionalString,
+  S3_SECRET_ACCESS_KEY: optionalString,
+  S3_PREFIX: z.string().default('edusphere'),
+  S3_FORCE_PATH_STYLE: bool(true),
   /** Largest single upload. Default 25; 4 when SERVERLESS (Vercel refuses request bodies over 4.5 MB). */
   MAX_UPLOAD_MB: z.coerce.number().positive().max(500).optional(),
   /** Total space for uploads in megabytes, 0 = no limit. Default: 300 with the database driver, else 0. */
@@ -151,6 +159,11 @@ const schema = z.object({
   // Optional Android TWA Digital Asset Links for Google Play packaging via PWABuilder.
   ANDROID_TWA_PACKAGE: optionalString,
   ANDROID_TWA_SHA256: optionalString,
+
+  // Optional Web Push (VAPID) notifications for PWA & mobile devices.
+  VAPID_PUBLIC_KEY: optionalString,
+  VAPID_PRIVATE_KEY: optionalString,
+  VAPID_SUBJECT: z.string().default('mailto:admin@edusphere.local'),
 });
 
 /**
@@ -205,6 +218,9 @@ if (isProduction && raw.COOKIE_SAMESITE === 'none' && raw.COOKIE_SECURE === 'fal
 if (raw.CODE_RUNNER_PROVIDER === 'local' && (onVercel || isProduction)) {
   refuse('CODE_RUNNER_PROVIDER=local is only for local development; use vercel-sandbox or piston in production.');
 }
+if (storageDriver === 's3' && (!raw.S3_BUCKET || !raw.S3_ACCESS_KEY_ID || !raw.S3_SECRET_ACCESS_KEY)) {
+  refuse('STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.');
+}
 
 // Vercel's AI Gateway is asked with the project's own identity when no key is set.
 const aiGateway = raw.AI_PROVIDER === 'vercel-ai-gateway';
@@ -257,6 +273,18 @@ export const env = Object.freeze({
   serveFrontend: raw.SERVE_FRONTEND,
   frontendDist: path.resolve(backendRoot, raw.FRONTEND_DIST),
   storageDriver,
+  s3:
+    storageDriver === 's3' || (raw.S3_BUCKET && raw.S3_ACCESS_KEY_ID && raw.S3_SECRET_ACCESS_KEY)
+      ? {
+          bucket: raw.S3_BUCKET,
+          region: raw.S3_REGION,
+          endpoint: raw.S3_ENDPOINT?.replace(/\/+$/, ''),
+          accessKeyId: raw.S3_ACCESS_KEY_ID,
+          secretAccessKey: raw.S3_SECRET_ACCESS_KEY,
+          prefix: raw.S3_PREFIX,
+          forcePathStyle: raw.S3_FORCE_PATH_STYLE,
+        }
+      : null,
   // Relative paths are relative to the backend folder, whatever the working directory is.
   // A function may write only below the system's temporary folder.
   storageDir: path.resolve(backendRoot, raw.STORAGE_DIR ?? (serverless ? path.join(os.tmpdir(), 'edusphere') : 'storage')),
@@ -325,5 +353,12 @@ export const env = Object.freeze({
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+  },
+
+  push: {
+    configured: Boolean(raw.VAPID_PUBLIC_KEY && raw.VAPID_PRIVATE_KEY),
+    publicKey: raw.VAPID_PUBLIC_KEY ?? null,
+    privateKey: raw.VAPID_PRIVATE_KEY ?? null,
+    subject: raw.VAPID_SUBJECT,
   },
 });

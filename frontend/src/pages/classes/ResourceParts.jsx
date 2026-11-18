@@ -5,6 +5,7 @@ import { FileUpload } from '../../components/Files.jsx';
 import { Badge, Button, cn, ConfirmDialog, Field, IconButton, Input, Menu, MenuItem, Modal, Segmented, Select, Switch, Textarea } from '../../components/ui.jsx';
 import { api, fileUrl } from '../../lib/api.js';
 import { formatBytes } from '../../lib/format.js';
+import { openOfflineFile } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
 
 const hostOf = (url) => {
@@ -48,7 +49,24 @@ export function ResourceItem({ resource: r, canManage, classId, modules, showPla
           </p>
         </div>
         {r.type === 'LINK' && <a href={href} target="_blank" rel="noopener noreferrer" className="grid size-8 shrink-0 place-items-center rounded-md text-faint hover:bg-raised hover:text-ink" aria-label={`Open ${r.title} in a new tab`}><ExternalLink className="size-4" /></a>}
-        {r.type === 'FILE' && (r.allowDownload || canManage) && <a href={fileUrl(r.file?.id, { inline: false })} download={r.file?.name} className="grid size-8 shrink-0 place-items-center rounded-md text-faint hover:bg-raised hover:text-ink" aria-label={`Download ${r.title}`} title="Download"><Download className="size-4" /></a>}
+        {r.type === 'FILE' && (r.allowDownload || canManage) && (
+          <a
+            href={fileUrl(r.file?.id, { inline: false })}
+            download={r.file?.name}
+            onClick={async (e) => {
+              if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                e.preventDefault();
+                const ok = await openOfflineFile(fileUrl(r.file?.id, { inline: false }), r.file?.name);
+                if (!ok) window.alert('This attachment was not cached for offline use.');
+              }
+            }}
+            className="grid size-8 shrink-0 place-items-center rounded-md text-faint hover:bg-raised hover:text-ink"
+            aria-label={`Download ${r.title}`}
+            title="Download"
+          >
+            <Download className="size-4" />
+          </a>
+        )}
         {!canManage && <IconButton icon={r.bookmarked ? BookmarkCheck : Bookmark} size="sm" label={r.bookmarked ? 'Remove bookmark' : 'Bookmark'} aria-pressed={Boolean(r.bookmarked)} className={r.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate()} />}
         {canManage && (
           <Menu trigger={({ toggle: open, props }) => <IconButton icon={MoreHorizontal} size="sm" label={`Actions for ${r.title}`} onClick={open} {...props} />}>

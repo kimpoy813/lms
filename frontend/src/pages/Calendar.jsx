@@ -1,10 +1,11 @@
 // Calendar: class meetings, deadlines, consultations and events in one month view, with a
 // personal to-do list beside it.
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, CalendarPlus, Check, ChevronLeft, ChevronRight, ClipboardList, Clock, FileQuestion, MapPin, Pencil, Plus, Trash2, Users } from 'lucide-react';
+import { CalendarDays, CalendarPlus, Check, ChevronLeft, ChevronRight, ClipboardList, Clock, Download, FileQuestion, MapPin, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { toast } from '../components/toast.jsx';
 import { Badge, Button, Card, CardHeader, Checkbox, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Modal, PageHeader, Select, Spinner, Textarea } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { dateKeyOf, formatDateKey, formatTime, fromLocalInput, relativeTime, toLocalInput } from '../lib/format.js';
@@ -84,11 +85,28 @@ export default function Calendar() {
   };
   const monthLabel = new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`));
   const dayItems = byDay.get(selected) ?? [];
+  const [exportingIcs, setExportingIcs] = useState(false);
+  const exportIcs = async () => {
+    setExportingIcs(true);
+    try {
+      await api.download('/calendar/export.ics', { from: range.from, to: range.to, includeMeetings: showMeetings ? 'true' : 'false' }, `edusphere-${month}.ics`);
+      toast.success('Calendar (.ics) downloaded.');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setExportingIcs(false);
+    }
+  };
 
   return (
     <>
       <PageHeader title="Calendar" description="Class meetings, deadlines and events — shown in school time."
-        actions={<Button icon={CalendarPlus} onClick={() => setDialog({ event: null })}>New event</Button>} />
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" icon={Download} loading={exportingIcs} onClick={exportIcs}>Export .ics</Button>
+            <Button icon={CalendarPlus} onClick={() => setDialog({ event: null })}>New event</Button>
+          </div>
+        } />
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <Card padded={false} className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">

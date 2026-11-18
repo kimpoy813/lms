@@ -449,22 +449,29 @@ export function attendanceRate({ present = 0, late = 0, absent = 0 }) {
   return counted === 0 ? null : round(((present + late) / counted) * 100, 1);
 }
 
-/** Per-student totals for a class over its closed (and open) sessions. */
-export async function classAttendanceSummary(classId, { studentId } = {}) {
-  const sessions = await prisma.attendanceSession.findMany({
+/** Per-student totals for a class over its closed (and open) sessions, optionally filtered to a YYYY-MM month. */
+export async function classAttendanceSummary(classId, { studentId, month } = {}) {
+  const allSessions = await prisma.attendanceSession.findMany({
     where: { classId, status: { not: 'CANCELLED' } },
     orderBy: [{ startTime: 'asc' }],
     select: { id: true, title: true, date: true, startTime: true, endTime: true, status: true, requireLocation: true },
   });
+  const mappedSessions = allSessions.map((s) => ({ ...s, date: s.date.toISOString().slice(0, 10) }));
+  const availableMonths = [...new Set(mappedSessions.map((s) => s.date.slice(0, 7)))].sort((a, b) => b.localeCompare(a));
+  const sessions = month ? mappedSessions.filter((s) => s.date.startsWith(`${month}-`)) : mappedSessions;
+  const sessionIds = sessions.map((s) => s.id);
+
   const enrollments = await prisma.enrollment.findMany({
     where: { classId, status: 'ENROLLED', ...(studentId ? { studentId } : {}) },
     select: { student: { select: { id: true, firstName: true, lastName: true, studentProfile: { select: { studentNumber: true } } } } },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
   });
-  const records = await prisma.attendanceRecord.findMany({
-    where: { session: { classId, status: { not: 'CANCELLED' } }, ...(studentId ? { studentId } : {}) },
-    select: { sessionId: true, studentId: true, status: true, checkInTime: true, verificationMethod: true, remarks: true },
-  });
+  const records = sessionIds.length === 0
+    ? []
+    : await prisma.attendanceRecord.findMany({
+        where: { sessionId: { in: sessionIds }, ...(studentId ? { studentId } : {}) },
+        select: { sessionId: true, studentId: true, status: true, checkInTime: true, verificationMethod: true, remarks: true },
+      });
   const byStudent = new Map();
   for (const r of records) {
     if (!byStudent.has(r.studentId)) byStudent.set(r.studentId, new Map());
@@ -486,7 +493,9 @@ export async function classAttendanceSummary(classId, { studentId } = {}) {
     };
   });
   return {
-    sessions: sessions.map((s) => ({ ...s, date: s.date.toISOString().slice(0, 10) })),
+    month: month ?? null,
+    availableMonths,
+    sessions,
     students,
   };
 }
