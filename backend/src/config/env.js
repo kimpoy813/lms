@@ -147,6 +147,10 @@ const schema = z.object({
   VERCEL_TOKEN: optionalString,
   VERCEL_TEAM_ID: optionalString,
   VERCEL_PROJECT_ID: optionalString,
+
+  // Optional Android TWA Digital Asset Links for Google Play packaging via PWABuilder.
+  ANDROID_TWA_PACKAGE: optionalString,
+  ANDROID_TWA_SHA256: optionalString,
 });
 
 /**
@@ -313,5 +317,13 @@ export const env = Object.freeze({
           : raw.CODE_RUNNER_PROVIDER === 'local'
             ? !onVercel && !isProduction
             : false,
+  },
+
+  pwa: {
+    androidTwaPackage: raw.ANDROID_TWA_PACKAGE,
+    androidTwaSha256: (raw.ANDROID_TWA_SHA256 ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   },
 });

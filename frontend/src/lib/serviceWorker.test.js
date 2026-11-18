@@ -12,12 +12,14 @@ let listeners;
 let stored; // what is in the cache: key → body
 let network; // path → { ok, body } or 'down'
 let asked; // what went to the network
+let skipCalls;
 
 /** Starts the worker's script the way a browser would, and lets it install itself. */
 async function start() {
   listeners = {};
   stored = new Map();
   asked = [];
+  skipCalls = 0;
   const cache = {
     addAll: async (paths) => { for (const path of paths) stored.set(path, `shell:${path}`); },
     put: async (key, response) => { stored.set(typeof key === 'string' ? key : new URL(key.url).pathname, response.body); },
@@ -31,7 +33,12 @@ async function start() {
       return stored.has(path) ? { ok: true, body: stored.get(path), fromCache: true } : undefined;
     },
   };
-  const self = { location: { origin: ORIGIN }, addEventListener: (name, fn) => { listeners[name] = fn; }, skipWaiting: async () => {}, clients: { claim: async () => {} } };
+  const self = {
+    location: { origin: ORIGIN },
+    addEventListener: (name, fn) => { listeners[name] = fn; },
+    skipWaiting: async () => { skipCalls += 1; },
+    clients: { claim: async () => {} },
+  };
   const fetch = async (request) => {
     const path = new URL(request.url).pathname;
     asked.push(path);
@@ -64,20 +71,28 @@ beforeEach(async () => {
 });
 
 describe('the service worker', () => {
-  it('keeps the app’s page for when the network is away', async () => {
-    expect([...stored.keys()]).toEqual(['/', '/offline.html', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png']);
+  it('keeps the app’s shell and offline fallback for when the network is away', async () => {
+    expect([...stored.keys()]).toEqual(['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']);
     const online = await request('/classes/abc/grades', { mode: 'navigate' });
     expect(online.response.body).toBe('the app');
     expect(stored.get('/')).toBe('the app');
     network = { '*': 'down' };
     const offline = await request('/dashboard', { mode: 'navigate' });
     expect(offline.response).toMatchObject({ body: 'the app', fromCache: true });
+
+    // If '/' was cleared from cache, falls back to /offline.html
+    stored.delete('/');
+    const offlineFallback = await request('/dashboard', { mode: 'navigate' });
+    expect(offlineFallback.response).toMatchObject({ body: 'shell:/offline.html', fromCache: true });
   });
 
-  it('never touches the API, the live socket or other sites', async () => {
+  it('never touches the API, health checks, assetlinks, the live socket or other sites', async () => {
     expect(await request('/api/gradebook/classes/abc')).toEqual({ handled: false });
     expect(await request('/api/files/abc', { mode: 'navigate' })).toEqual({ handled: false });
     expect(await request('/socket.io/?EIO=4')).toEqual({ handled: false });
+    expect(await request('/.well-known/assetlinks.json')).toEqual({ handled: false });
+    expect(await request('/healthz')).toEqual({ handled: false });
+    expect(await request('/readyz')).toEqual({ handled: false });
     expect(await request('/api/auth/login', { method: 'POST' })).toEqual({ handled: false });
     expect(await request('/tiles/1/2/3.png', { origin: 'https://tiles.example' })).toEqual({ handled: false });
     expect(asked).toEqual([]);
@@ -85,7 +100,6 @@ describe('the service worker', () => {
 
   it('leaves the frame for Python programs to the server, and never takes it for the app’s page', async () => {
     network['/pyrunner/frame.html'] = page('the sandbox');
-    // As a frame in the page, and opened by itself: both are page loads to a browser.
     expect(await request('/pyrunner/frame.html', { mode: 'navigate' })).toEqual({ handled: false });
     expect(await request('/pyrunner/frame.html')).toEqual({ handled: false });
     expect(asked).toEqual([]);
@@ -98,18 +112,33 @@ describe('the service worker', () => {
     const direct = await request('/offline.html', { mode: 'navigate' });
     expect(direct.response.body).toBe('the offline page');
     expect(stored.get('/')).toBe('the app');
-    // A page that failed is not kept either.
     network['*'] = { ok: false, body: 'error page' };
     await request('/dashboard', { mode: 'navigate' });
     expect(stored.get('/')).toBe('the app');
   });
 
-  it('keeps files of the build, which never change under their name, and asks for each only once', async () => {
+  it('caches static build assets, icons, and screenshots cache-first and keeps shell subresources offline-ready', async () => {
     network['/assets/pyodide.asm-abc123.wasm'] = page('python');
     expect((await request('/assets/pyodide.asm-abc123.wasm')).response.body).toBe('python');
     expect((await request('/assets/pyodide.asm-abc123.wasm')).response).toMatchObject({ body: 'python', fromCache: true });
-    expect(asked).toEqual(['/assets/pyodide.asm-abc123.wasm']);
-    // Anything else of the site goes to the network as usual.
-    expect(await request('/theme-init.js')).toEqual({ handled: false });
+
+    network['/screenshots/desktop-wide.png'] = page('wide-png');
+    expect((await request('/screenshots/desktop-wide.png')).response.body).toBe('wide-png');
+    expect((await request('/screenshots/desktop-wide.png')).response).toMatchObject({ body: 'wide-png', fromCache: true });
+
+    // Shell files stay network-first online and fall back to cache offline
+    network['/theme-init.js'] = page('fresh-theme');
+    expect((await request('/theme-init.js')).response.body).toBe('fresh-theme');
+    network = { '*': 'down' };
+    expect((await request('/theme-init.js')).response).toMatchObject({ body: 'fresh-theme', fromCache: true });
+
+    // Non-shell arbitrary root files stay unhandled
+    expect(await request('/robots.txt')).toEqual({ handled: false });
+  });
+
+  it('supports SKIP_WAITING messages for immediate worker updates', () => {
+    const before = skipCalls;
+    listeners.message({ data: { type: 'SKIP_WAITING' } });
+    expect(skipCalls).toBe(before + 1);
   });
 });

@@ -278,3 +278,78 @@ describe('dependencies that load an ES module with require()', () => {
     for (const entry of found) expect(guide).toContain(entry.package);
   });
 });
+
+describe('PWABuilder readiness', () => {
+  const publicDir = path.join(root, 'frontend', 'public');
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+
+  it('provides a complete manifest with verified icons, maskables, screenshots, and shortcuts on disk', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(publicDir, 'manifest.webmanifest'), 'utf8'));
+    expect(manifest.id).toBe('/');
+    expect(manifest.start_url).toBe('/');
+    expect(manifest.scope).toBe('/');
+    expect(manifest.display).toBe('standalone');
+    expect(manifest.lang).toBe('en');
+    expect(manifest.dir).toBe('ltr');
+    expect(manifest.prefer_related_applications).toBe(false);
+    expect(manifest.launch_handler).toEqual({ client_mode: ['navigate-existing', 'auto'] });
+
+    expect(manifest.icons.some((i) => i.sizes === '192x192' && i.purpose === 'any')).toBe(true);
+    expect(manifest.icons.some((i) => i.sizes === '512x512' && i.purpose === 'any')).toBe(true);
+    expect(manifest.icons.some((i) => i.sizes === '192x192' && i.purpose === 'maskable')).toBe(true);
+    expect(manifest.icons.some((i) => i.sizes === '512x512' && i.purpose === 'maskable')).toBe(true);
+
+    expect(manifest.screenshots.some((s) => s.form_factor === 'wide' && s.sizes === '1280x720')).toBe(true);
+    expect(manifest.screenshots.some((s) => s.form_factor === 'narrow' && s.sizes === '390x844')).toBe(true);
+    expect(manifest.shortcuts.every((s) => Array.isArray(s.icons) && s.icons.length > 0)).toBe(true);
+
+    for (const entry of [...manifest.icons, ...manifest.screenshots, ...manifest.shortcuts.flatMap((s) => s.icons)]) {
+      const rel = entry.src.replace(/^\/+/, '');
+      expect(fs.existsSync(path.join(publicDir, rel))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(publicDir, 'icons', 'apple-touch-icon.png'))).toBe(true);
+    expect(fs.existsSync(path.join(publicDir, 'offline.html'))).toBe(true);
+    expect(fs.existsSync(path.join(publicDir, 'sw.js'))).toBe(true);
+  });
+
+  it('configures Vercel rewrites and PWA headers for assetlinks.json, sw.js, and manifest.webmanifest', () => {
+    expect(config.rewrites).toContainEqual({ source: '/.well-known/assetlinks.json', destination: '/api?__path=.well-known/assetlinks.json' });
+    const swHeader = config.headers.find((h) => h.source === '/sw.js');
+    const manifestHeader = config.headers.find((h) => h.source === '/manifest.webmanifest');
+    expect(swHeader.headers).toContainEqual({ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' });
+    expect(manifestHeader.headers).toContainEqual({ key: 'Content-Type', value: 'application/manifest+json; charset=utf-8' });
+  });
+
+  it('serves /.well-known/assetlinks.json cleanly before and after TWA signing configuration', async () => {
+    const emptyRes = await request(createApp()).get('/.well-known/assetlinks.json');
+    expect(emptyRes.status).toBe(200);
+    expect(emptyRes.body).toEqual([]);
+
+    const prevPkg = process.env.ANDROID_TWA_PACKAGE;
+    const prevSha = process.env.ANDROID_TWA_SHA256;
+    try {
+      process.env.ANDROID_TWA_PACKAGE = 'app.edusphere.lms';
+      process.env.ANDROID_TWA_SHA256 = 'AA:BB:CC, 11:22:33';
+      vi.resetModules();
+      const { createApp: createFreshApp } = await import('../../src/app.js');
+      const res = await request(createFreshApp()).get('/.well-known/assetlinks.json');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([
+        {
+          relation: ['delegate_permission/common.handle_all_urls'],
+          target: {
+            namespace: 'android_app',
+            package_name: 'app.edusphere.lms',
+            sha256_cert_fingerprints: ['AA:BB:CC', '11:22:33'],
+          },
+        },
+      ]);
+    } finally {
+      if (prevPkg === undefined) delete process.env.ANDROID_TWA_PACKAGE;
+      else process.env.ANDROID_TWA_PACKAGE = prevPkg;
+      if (prevSha === undefined) delete process.env.ANDROID_TWA_SHA256;
+      else process.env.ANDROID_TWA_SHA256 = prevSha;
+      vi.resetModules();
+    }
+  });
+});

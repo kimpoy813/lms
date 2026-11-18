@@ -1,12 +1,13 @@
-// EduSphere service worker: makes the app installable and gives a friendly offline page.
+// EduSphere service worker: makes the app installable and provides an offline shell.
 //
-// What it caches: the application shell (HTML, hashed JS/CSS, fonts, icons).
-// What it never caches: anything under /api or /socket.io — grades, attendance and messages are
-// private, change constantly, and must always come from the server.
+// What it caches: the application shell (HTML, hashed JS/CSS, fonts, icons, screenshots).
+// What it never caches: anything under /api, /socket.io, /healthz, /readyz, or /.well-known —
+// grades, attendance, and messages are private and must always come from the server.
 // What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
 // page has to come from the server with its own security headers, and is not the app's page.
-const VERSION = 'edusphere-v1';
-const SHELL = ['/', '/offline.html', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png'];
+const VERSION = 'edusphere-v2';
+const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const SHELL_SET = new Set(SHELL);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -18,12 +19,27 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/') || url.pathname.startsWith('/pyrunner/')) return;
+  if (
+    url.pathname.startsWith('/api/')
+    || url.pathname.startsWith('/socket.io/')
+    || url.pathname.startsWith('/pyrunner/')
+    || url.pathname.startsWith('/.well-known/')
+    || url.pathname === '/healthz'
+    || url.pathname === '/readyz'
+  ) {
+    return;
+  }
 
   // Page loads: network first, then the cached shell, then the offline page.
   if (request.mode === 'navigate') {
@@ -43,8 +59,9 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
-  // Fingerprinted build assets never change: cache first.
-  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/')) {
+
+  // Fingerprinted build assets and static media: cache first.
+  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/screenshots/')) {
     event.respondWith(
       caches.match(request).then(
         (hit) =>
@@ -57,6 +74,23 @@ self.addEventListener('fetch', (event) => {
             return response;
           }),
       ),
+    );
+    return;
+  }
+
+  // Shell files (manifest, favicon, theme-init, offline page): network first so updates
+  // propagate immediately online while staying self-contained offline.
+  if (SHELL_SET.has(url.pathname)) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(VERSION).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request)),
     );
   }
 });

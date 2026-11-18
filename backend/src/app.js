@@ -105,6 +105,24 @@ export function createApp({ prelude = [] } = {}) {
 
   // Liveness / readiness probes (no authentication, no sensitive data).
   app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
+
+  // Android TWA Digital Asset Links for Google Play Store verification (PWABuilder).
+  app.get('/.well-known/assetlinks.json', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    const pkg = env.pwa.androidTwaPackage;
+    const certs = env.pwa.androidTwaSha256;
+    if (!pkg || certs.length === 0) return res.json([]);
+    return res.json([
+      {
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: {
+          namespace: 'android_app',
+          package_name: pkg,
+          sha256_cert_fingerprints: certs,
+        },
+      },
+    ]);
+  });
   // Ready = the database answers and has every table this version of the code uses.
   const tables = Prisma.dmmf.datamodel.models.map((model) => model.dbName ?? model.name);
   app.get('/readyz', async (req, res) => {
