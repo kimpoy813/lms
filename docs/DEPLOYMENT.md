@@ -565,6 +565,27 @@ npm run db:deploy      # applies new migrations; safe when there are none
 
 Back up before applying migrations.
 
+## PWABuilder & Store Packaging
+
+EduSphere ships as an installable Progressive Web App with a complete `manifest.webmanifest`
+(`id`, `lang`, `dir`, `display_override`, `launch_handler`, `prefer_related_applications: false`,
+`any` + `maskable` icons, `wide` + `narrow` screenshots, and shortcut icons), an offline shell
+service worker (`/sw.js` + `/offline.html`), an opaque `apple-touch-icon.png` (`180x180`), and
+a dynamic Digital Asset Links endpoint (`/.well-known/assetlinks.json`).
+
+1. Open [PWABuilder](https://www.pwabuilder.com/) and enter your deployed HTTPS origin (e.g.
+   `https://edusphere-sigma-two.vercel.app`).
+2. **Android / Google Play (TWA):** Generate the Android package in PWABuilder. Copy the
+   generated package name and SHA-256 signing certificate fingerprint(s) into your environment
+   variables (or Vercel project Environment Variables):
+   - `ANDROID_TWA_PACKAGE=app.edusphere.lms` (match your chosen package ID)
+   - `ANDROID_TWA_SHA256=<SHA-256 fingerprint from PWABuilder or Play App Signing>` (comma-separated
+     for multiple keys)
+   Redeploy and verify `https://<your-domain>/.well-known/assetlinks.json` returns your statement
+   so the Android app opens without the browser URL bar.
+3. **Windows (Microsoft Store) & iOS (App Store):** Download the Windows MSIX or iOS Xcode
+   package directly from PWABuilder using the manifest icons, screenshots, and Apple touch icon.
+
 ## Limits
 
 - **One API process on a server.** Rate limits and real-time delivery are kept in the memory of

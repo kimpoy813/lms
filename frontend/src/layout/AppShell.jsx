@@ -1,7 +1,7 @@
 // The signed-in frame: a sidebar tailored to the role, a top bar, and the page.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Bell, BookOpen, CalendarDays, ClipboardCheck, Code2, FileQuestion, GraduationCap, History, LayoutDashboard, Library, LogOut, Megaphone, Menu as MenuIcon,
+  Bell, BookOpen, CalendarDays, ClipboardCheck, Code2, Download, FileQuestion, GraduationCap, History, LayoutDashboard, Library, LogOut, Megaphone, Menu as MenuIcon,
   MessageSquare, Monitor, Moon, ScanLine, Search, Settings, ShieldCheck, Sparkles, Sun, Table2, UserCog, UserRound, Users, X,
 } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useState } from 'react';
@@ -13,6 +13,7 @@ import { api } from '../lib/api.js';
 import { relativeTime } from '../lib/format.js';
 import { fetchBadges } from '../lib/badges.js';
 import { useLiveInterval, useOnReturn } from '../lib/live.js';
+import { promptInstallPwa, subscribeInstallPrompt } from '../lib/pwa.js';
 import { useSocketEvent } from '../lib/socket.js';
 import { useTheme } from '../lib/theme.js';
 import { SearchDialog } from './SearchDialog.jsx';
@@ -206,6 +207,10 @@ function NotificationBell() {
 function ProfileMenu() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [installable, setInstallable] = useState(false);
+
+  useEffect(() => subscribeInstallPrompt(setInstallable), []);
+
   const signOut = async () => {
     await logout();
     navigate('/login', { replace: true });
@@ -228,6 +233,7 @@ function ProfileMenu() {
       <div className="pt-1.5">
         <MenuItem icon={UserRound} to="/profile">Profile and security</MenuItem>
         <MenuItem icon={Bell} to="/notifications">Notifications</MenuItem>
+        {installable && <MenuItem icon={Download} onClick={() => promptInstallPwa()}>Install app</MenuItem>}
         <MenuItem icon={LogOut} onClick={signOut} tone="danger">Sign out</MenuItem>
       </div>
     </Menu>
