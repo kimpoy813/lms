@@ -138,7 +138,7 @@ function NotificationBell() {
   useSocketEvent('notification:new', useCallback((n) => {
     client.invalidateQueries({ queryKey: ['notifications'] });
     client.invalidateQueries({ queryKey: ['dashboard'] });
-    toast.info(n.title);
+    toast.info(n.body ? `${n.title} — ${n.body}` : n.title);
   }, [client]));
 
   useEffect(() => {
@@ -259,7 +259,10 @@ export default function AppShell() {
 
   useSocketEvent('message:new', useCallback((m) => {
     client.invalidateQueries({ queryKey: ['messages'] });
-    if (!window.location.pathname.startsWith('/messages')) toast.info(`New message from ${m.from?.name ?? 'someone'}`);
+    if (!window.location.pathname.startsWith('/messages')) {
+      const text = m.body ? `: ${m.body.slice(0, 80)}${m.body.length > 80 ? '…' : ''}` : '';
+      toast.info(`New message from ${m.from?.name ?? 'someone'}${text}`);
+    }
   }, [client]));
 
   // Close the mobile drawer whenever the route changes.

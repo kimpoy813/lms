@@ -86,7 +86,7 @@ beforeEach(async () => {
 
 describe('the service worker', () => {
   it('keeps the app’s shell and offline fallback for when the network is away', async () => {
-    expect([...stored.keys()]).toEqual(['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']);
+    expect([...stored.keys()]).toEqual(['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png']);
     const online = await request('/classes/abc/grades', { mode: 'navigate' });
     expect(online.response.body).toBe('the app');
     expect(stored.get('/')).toBe('the app');
@@ -156,7 +156,7 @@ describe('the service worker', () => {
     expect(skipCalls).toBe(before + 1);
   });
 
-  it('displays Web Push notifications and navigates cleanly on notification clicks', async () => {
+  it('displays Web Push notifications with full detail and navigates cleanly on notification clicks', async () => {
     let pushWait;
     listeners.push({
       data: { json: () => ({ title: 'Grade returned', body: 'CS 101 Midterm', link: '/classes/c1/grades', tag: 'grades' }) },
@@ -166,9 +166,40 @@ describe('the service worker', () => {
     expect(shownNotifications).toEqual([
       {
         title: 'Grade returned',
-        options: expect.objectContaining({ body: 'CS 101 Midterm', tag: 'grades', data: { url: '/classes/c1/grades' } }),
+        options: expect.objectContaining({
+          body: 'CS 101 Midterm',
+          badge: '/icons/badge-96.png',
+          tag: 'grades',
+          renotify: true,
+          data: { url: '/classes/c1/grades' },
+        }),
       },
     ]);
+
+    // Empty, null, plain-text, and nested payloads never throw or produce blank bodies
+    shownNotifications.length = 0;
+    for (const payload of [
+      null,
+      { json: () => null },
+      { json: () => { throw new Error('not json'); }, text: () => 'Quiz opens in 10 minutes' },
+      { json: () => ({ notification: { title: 'Notice', message: 'Class moved to Room 302', url: '/calendar' } }) },
+      { json: () => ({ title: 'New module in CS 101' }) },
+    ]) {
+      let wait;
+      listeners.push({ data: payload, waitUntil: (p) => { wait = p; } });
+      await wait;
+    }
+    expect(shownNotifications).toHaveLength(5);
+    for (const shown of shownNotifications) {
+      expect(typeof shown.title).toBe('string');
+      expect(shown.title.trim().length).toBeGreaterThan(0);
+      expect(typeof shown.options.body).toBe('string');
+      expect(shown.options.body.trim().length).toBeGreaterThan(0);
+    }
+    expect(shownNotifications[2].options.body).toBe('Quiz opens in 10 minutes');
+    expect(shownNotifications[3].title).toBe('Notice');
+    expect(shownNotifications[3].options.body).toBe('Class moved to Room 302');
+    expect(shownNotifications[3].options.data.url).toBe('/calendar');
 
     let clickWait;
     listeners.notificationclick({
@@ -177,6 +208,21 @@ describe('the service worker', () => {
     });
     await clickWait;
     expect(openedWindows).toEqual([`${ORIGIN}/classes/c1/grades`]);
+
+    // Navigates and focuses an existing window client when available
+    const calls = [];
+    windowClients = [{
+      url: `${ORIGIN}/dashboard`,
+      navigate: async (url) => { calls.push(['navigate', url]); },
+      focus: async () => { calls.push(['focus']); return true; },
+    }];
+    let existingClick;
+    listeners.notificationclick({
+      notification: { data: { url: '/messages?c=c1' }, close: () => {} },
+      waitUntil: (p) => { existingClick = p; },
+    });
+    await existingClick;
+    expect(calls).toEqual([['navigate', `${ORIGIN}/messages?c=c1`], ['focus']]);
 
     // Ignores cross-origin target URLs defensively
     openedWindows.length = 0;

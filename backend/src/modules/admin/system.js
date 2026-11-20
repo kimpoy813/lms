@@ -250,7 +250,13 @@ adminSystemRouter.post('/enrollments', validate({ body: z.object({ classId: zId,
     await audit(req, { action: 'enrollment.admin_enroll', entityType: 'Enrollment', entityId: row.id, classId, summary: `Enrolled ${fullName(student)} in ${classLabel(cls)}` }, tx);
     return row;
   });
-  await notify([studentId], { type: 'enrollment.approved', title: `You were enrolled in ${classLabel(cls)}`, link: `/classes/${classId}`, classId });
+  await notify([studentId], {
+    type: 'enrollment.approved',
+    title: `You were enrolled in ${classLabel(cls)}`,
+    body: `You now have access to modules, assignments, and grades in ${classLabel(cls)}.`,
+    link: `/classes/${classId}`,
+    classId,
+  });
   ok(res, { id: enrollment.id, status: enrollment.status });
 });
 
@@ -292,6 +298,7 @@ adminSystemRouter.post('/enrollments/section', validate({ body: z.object({ class
     await notify(toEnroll.map((s) => s.id), {
       type: 'enrollment.approved',
       title: `You were enrolled in ${classLabel(cls)}`,
+      body: `Section ${section.name} was enrolled in ${classLabel(cls)}.`,
       link: `/classes/${classId}`,
       classId,
     });
@@ -339,7 +346,10 @@ adminSystemRouter.post(
       body: `You are no longer enrolled in ${classLabel(from)}.`, link: `/classes/${toClassId}`, classId: toClassId,
     });
     await notify([from.teacherId, to.teacherId], {
-      type: 'enrollment.transferred', title: `${fullName(student)} was transferred from ${classLabel(from)} to ${classLabel(to)}`, link: `/classes/${toClassId}/people`,
+      type: 'enrollment.transferred',
+      title: `${fullName(student)} was transferred from ${classLabel(from)} to ${classLabel(to)}`,
+      body: note ?? `Roster updated for ${classLabel(from)} and ${classLabel(to)}.`,
+      link: `/classes/${toClassId}/people`,
     });
     ok(res, { message: `${fullName(student)} was transferred to ${classLabel(to)}.` });
   },

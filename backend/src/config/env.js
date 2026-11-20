@@ -163,7 +163,7 @@ const schema = z.object({
   // Optional Web Push (VAPID) notifications for PWA & mobile devices.
   VAPID_PUBLIC_KEY: optionalString,
   VAPID_PRIVATE_KEY: optionalString,
-  VAPID_SUBJECT: z.string().default('mailto:admin@edusphere.local'),
+  VAPID_SUBJECT: optionalString,
 });
 
 /**
@@ -234,6 +234,32 @@ const sandboxRegion = raw.CODE_RUNNER_REGION ?? (onVercel ? vercelRegion : undef
 if (raw.CODE_RUNNER_PROVIDER === 'vercel-sandbox' && !onVercel && !vercelAccess) {
   console.warn('CODE_RUNNER_PROVIDER=vercel-sandbox needs VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID when the server does not run on Vercel. Programs will not be run.');
 }
+
+const normalizeVapidKey = (value) => {
+  if (!value) return null;
+  const cleaned = value.trim().replace(/^["']|["']$/g, '').replace(/\s+/g, '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return cleaned || null;
+};
+
+const normalizeVapidSubject = (subject, appUrl) => {
+  const cleaned = subject?.trim().replace(/^["']|["']$/g, '');
+  if (cleaned) {
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) return `mailto:${cleaned}`;
+    return cleaned;
+  }
+  try {
+    const parsedUrl = new URL(appUrl);
+    if (parsedUrl.protocol === 'https:' && parsedUrl.hostname !== 'localhost' && parsedUrl.hostname !== '127.0.0.1') {
+      return appUrl.replace(/\/+$/, '');
+    }
+  } catch {
+    // Fallback below
+  }
+  return 'mailto:admin@edusphere.local';
+};
+
+const vapidPublicKey = normalizeVapidKey(raw.VAPID_PUBLIC_KEY);
+const vapidPrivateKey = normalizeVapidKey(raw.VAPID_PRIVATE_KEY);
 
 export const env = Object.freeze({
   nodeEnv: raw.NODE_ENV,
@@ -356,9 +382,9 @@ export const env = Object.freeze({
   },
 
   push: {
-    configured: Boolean(raw.VAPID_PUBLIC_KEY && raw.VAPID_PRIVATE_KEY),
-    publicKey: raw.VAPID_PUBLIC_KEY ?? null,
-    privateKey: raw.VAPID_PRIVATE_KEY ?? null,
-    subject: raw.VAPID_SUBJECT,
+    configured: Boolean(vapidPublicKey && vapidPrivateKey),
+    publicKey: vapidPublicKey,
+    privateKey: vapidPrivateKey,
+    subject: normalizeVapidSubject(raw.VAPID_SUBJECT, raw.APP_URL),
   },
 });

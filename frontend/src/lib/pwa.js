@@ -53,25 +53,36 @@ export function initPwaListeners() {
 
 export function registerServiceWorker({ onUpdateReady } = {}) {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return () => {};
+  let activeRegistration = null;
   const onLoad = async () => {
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
+      activeRegistration = registration;
       registration.addEventListener('updatefound', () => {
         const next = registration.installing;
         if (!next) return;
         next.addEventListener('statechange', () => {
           if (next.state === 'installed' && navigator.serviceWorker.controller) {
-            onUpdateReady?.(() => next.postMessage({ type: 'SKIP_WAITING' }));
+            if (onUpdateReady) onUpdateReady(() => next.postMessage({ type: 'SKIP_WAITING' }));
+            else next.postMessage({ type: 'SKIP_WAITING' });
           }
         });
       });
+      registration.update().catch(() => {});
     } catch {
       // Service workers are optional progressive enhancement.
     }
   };
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') activeRegistration?.update().catch(() => {});
+  };
   if (document.readyState === 'complete') onLoad();
   else window.addEventListener('load', onLoad, { once: true });
-  return () => window.removeEventListener('load', onLoad);
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    window.removeEventListener('load', onLoad);
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
 }
 
 // Test helper
@@ -95,6 +106,34 @@ export function urlBase64ToUint8Array(base64String) {
   return output;
 }
 
+function bufferToBase64Url(buffer) {
+  if (!buffer) return null;
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function subscriptionMatchesKey(sub, publicKey) {
+  if (!sub || !publicKey) return false;
+  const existing = sub.options?.applicationServerKey;
+  if (!existing) return true;
+  const a = new Uint8Array(existing);
+  const b = urlBase64ToUint8Array(publicKey);
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+export function extractSubscriptionPayload(sub) {
+  const json = typeof sub.toJSON === 'function' ? sub.toJSON() : {};
+  const keys = {
+    p256dh: json.keys?.p256dh ?? bufferToBase64Url(sub.getKey?.('p256dh')),
+    auth: json.keys?.auth ?? bufferToBase64Url(sub.getKey?.('auth')),
+  };
+  return { endpoint: json.endpoint ?? sub.endpoint, keys };
+}
+
 export async function getActivePushSubscription() {
   if (!isPushSupported()) return null;
   const registration = await navigator.serviceWorker.ready;
@@ -112,17 +151,17 @@ export async function enableWebPush(publicKey, apiClient) {
   }
   const registration = await navigator.serviceWorker.ready;
   let sub = await registration.pushManager.getSubscription();
+  if (sub && !subscriptionMatchesKey(sub, publicKey)) {
+    await sub.unsubscribe().catch(() => {});
+    sub = null;
+  }
   if (!sub) {
     sub = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     });
   }
-  const json = sub.toJSON();
-  await apiClient.post('/notifications/push/subscribe', {
-    endpoint: json.endpoint,
-    keys: json.keys,
-  });
+  await apiClient.post('/notifications/push/subscribe', extractSubscriptionPayload(sub));
   return sub;
 }
 

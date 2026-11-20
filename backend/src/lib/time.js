@@ -117,3 +117,20 @@ export const minutesOf = (hhmm) => {
   const [h, m] = String(hhmm).split(':').map(Number);
   return h * 60 + m;
 };
+
+/** Human-readable date & time in the institution timezone (e.g. "Nov 20, 5:00 PM"). */
+export function formatDateTimeInZone(date, timeZone = 'Asia/Manila') {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(d);
+  } catch {
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  }
+}

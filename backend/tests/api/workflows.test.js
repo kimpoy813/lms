@@ -5,8 +5,9 @@
 //   • One-click section enrollment
 //   • Web Push subscription registration & stale subscription cleanup
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import * as webpushNs from 'web-push';
 import { actor, createClass, createUser, enroll, loginAs, prepare, prisma, uid } from '../helpers/index.js';
-import { sendPushToUsers } from '../../src/services/push.js';
+import { buildPushPayload, sendPushToUsers, setPushSenderForTest } from '../../src/services/push.js';
 import { env } from '../../src/config/env.js';
 
 beforeAll(prepare);
@@ -209,15 +210,92 @@ describe('Academic workflows & Web Push API', () => {
       expect(delivery).toEqual({ sent: 0, removed: 1 });
       expect(await prisma.pushSubscription.count({ where: { userId: student.user.id } })).toBe(0);
 
-      // Re-subscribe then manually unsubscribe
+      // Re-subscribe then verify rich payload & urgency delivery + manual unsubscribe
       await student.post('/api/notifications/push/subscribe', {
         endpoint,
         keys: { p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' },
       });
+
+      const okSender = vi.fn().mockResolvedValueOnce({ statusCode: 201 });
+      const sent = await sendPushToUsers(
+        [student.user.id],
+        { type: 'assignment.published', title: 'New assignment in CS 101: Lab 1' },
+        { sender: okSender },
+      );
+      expect(sent).toEqual({ sent: 1, removed: 0 });
+      expect(okSender).toHaveBeenCalledTimes(1);
+      const sentPayload = JSON.parse(okSender.mock.calls[0][1]);
+      expect(sentPayload.title).toBe('New assignment in CS 101: Lab 1');
+      expect(sentPayload.body.length).toBeGreaterThan(10);
+      expect(sentPayload.tag).toContain('assignment.published-');
+      expect(typeof sentPayload.timestamp).toBe('number');
+
+      const urgentSender = vi.fn().mockResolvedValueOnce({ statusCode: 201 });
+      await sendPushToUsers([student.user.id], { type: 'message.new', title: 'Message from Prof', body: 'See you in lab' }, { sender: urgentSender });
+      expect(urgentSender.mock.calls[0][2]).toMatchObject({ urgency: 'high' });
+
+      const fallbackParsed = JSON.parse(buildPushPayload({ type: 'grades.published', title: 'Midterm grades' }));
+      expect(fallbackParsed.body).toContain('posted grades');
+
       const unsub = await student.post('/api/notifications/push/unsubscribe', { endpoint });
       expect(unsub.status).toBe(200);
       expect(unsub.body.data.removed).toBe(1);
     } finally {
+      Object.assign(env.push, origPush);
+    }
+  });
+
+  it('populates informative notification bodies for modules and assignments', async () => {
+    const teacher = await actor('TEACHER');
+    const student = await actor('STUDENT');
+    const cls = await createClass(teacher.user);
+    await enroll(cls, student.user);
+
+    const modRes = await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Week 1: Variables', status: 'PUBLISHED' });
+    expect(modRes.status).toBe(201);
+
+    const assRes = await teacher.post(`/api/classes/${cls.id}/assignments`, {
+      title: 'Lab 1: Expressions',
+      points: 25,
+      submissionType: 'ONLINE_TEXT',
+      status: 'PUBLISHED',
+    });
+    expect(assRes.status).toBe(201);
+
+    const notifs = (await student.get('/api/notifications')).body.data;
+    const modNotif = notifs.find((n) => n.type === 'module.published');
+    const assNotif = notifs.find((n) => n.type === 'assignment.published');
+    expect(modNotif?.body).toContain('Week 1: Variables');
+    expect(assNotif?.body).toContain('25 pts');
+
+    // Direct message triggers Web Push with sender name & message preview when VAPID is active
+    const origPush = { ...env.push };
+    const keys = (webpushNs.default?.generateVAPIDKeys ? webpushNs.default : webpushNs).generateVAPIDKeys();
+    Object.assign(env.push, {
+      configured: true,
+      publicKey: keys.publicKey,
+      privateKey: keys.privateKey,
+      subject: 'https://edusphere.example.edu',
+    });
+    const endpoint = `https://push.example.com/sub/${uid('dm')}`;
+    await student.post('/api/notifications/push/subscribe', {
+      endpoint,
+      keys: { p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' },
+    });
+    const senderSpy = vi.fn().mockResolvedValueOnce({ statusCode: 201 });
+    setPushSenderForTest(senderSpy);
+    try {
+      const conv = await teacher.post('/api/messages/conversations', { userId: student.user.id });
+      const msg = await teacher.post(`/api/messages/conversations/${conv.body.data.id}/messages`, { body: 'Please check Module 1 before tomorrow.' });
+      expect(msg.status).toBe(201);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(senderSpy).toHaveBeenCalledTimes(1);
+      const dmPayload = JSON.parse(senderSpy.mock.calls[0][1]);
+      expect(dmPayload.title).toContain('Message from');
+      expect(dmPayload.body).toBe('Please check Module 1 before tomorrow.');
+      expect(dmPayload.link).toBe(`/messages?c=${conv.body.data.id}`);
+    } finally {
+      setPushSenderForTest(null);
       Object.assign(env.push, origPush);
     }
   });

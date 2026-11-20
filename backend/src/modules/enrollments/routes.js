@@ -82,7 +82,7 @@ enrollmentsRouter.post(
     await notify([cls.teacherId], {
       type: status === 'ENROLLED' ? 'enrollment.joined' : 'enrollment.requested',
       title: status === 'ENROLLED' ? `${fullName(req.user)} joined ${classLabel(cls)}` : `${fullName(req.user)} asked to join ${classLabel(cls)}`,
-      body: status === 'PENDING' ? 'Review the request on the People tab.' : undefined,
+      body: status === 'PENDING' ? 'Review the request on the People tab.' : `${fullName(req.user)} joined using the class code.`,
       link: `/classes/${cls.id}/people`,
       classId: cls.id,
     });
@@ -313,7 +313,12 @@ classPeopleRouter.post('/:enrollmentId/drop', validate({ params: enrollmentParam
       after: { note },
     }, tx);
   });
-  await notify([enrollment.studentId], { type: 'enrollment.dropped', title: `You were dropped from ${classLabel(cls)}`, body: note ?? undefined, link: '/classes' });
+  await notify([enrollment.studentId], {
+    type: 'enrollment.dropped',
+    title: `You were dropped from ${classLabel(cls)}`,
+    body: note ?? `Your active access to ${classLabel(cls)} has ended.`,
+    link: '/classes',
+  });
   ok(res, { status: 'DROPPED', droppedAt });
 });
 
@@ -394,7 +399,7 @@ classPeopleRouter.post('/:enrollmentId/remove', validate({ params: enrollmentPar
     await notify([studentId], {
       type: 'enrollment.removed',
       title: `You were removed from ${classLabel(cls)}`,
-      body: note ?? undefined,
+      body: note ?? `You are no longer enrolled in ${classLabel(cls)}.`,
       link: '/classes',
     });
   }
@@ -413,7 +418,13 @@ classPeopleRouter.post('/:enrollmentId/reinstate', validate({ params: enrollment
     await tx.enrollment.update({ where: { id: enrollmentId }, data: { status: 'ENROLLED', enrolledAt: now, decidedAt: now, decidedById: req.user.id, droppedAt: null, note: null } });
     await audit(req, { action: 'enrollment.reinstate', entityType: 'Enrollment', entityId: enrollmentId, classId, summary: `Reinstated ${fullName(enrollment.student)}` }, tx);
   });
-  await notify([enrollment.studentId], { type: 'enrollment.approved', title: `You are enrolled in ${classLabel(cls)} again`, link: `/classes/${classId}`, classId });
+  await notify([enrollment.studentId], {
+    type: 'enrollment.approved',
+    title: `You are enrolled in ${classLabel(cls)} again`,
+    body: `Your teacher reinstated your enrollment in ${classLabel(cls)}.`,
+    link: `/classes/${classId}`,
+    classId,
+  });
   ok(res, { status: 'ENROLLED' });
 });
 
