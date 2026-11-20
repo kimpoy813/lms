@@ -128,7 +128,7 @@ export default function ClassSettings() {
       </Card>
 
       {!archived && (
-        <div className="sticky bottom-0 -mx-1 flex justify-end bg-gradient-to-t from-canvas from-70% px-1 pb-2 pt-6">
+        <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] -mx-1 flex justify-end bg-gradient-to-t from-canvas from-70% px-1 pb-2 pt-6 lg:bottom-0">
           <Button icon={Save} loading={save.isPending} onClick={() => save.mutate()}>Save changes</Button>
         </div>
       )}

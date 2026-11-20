@@ -71,7 +71,7 @@ export default function Setup({ data }) {
                   {readOnly ? 'Copy to another class…' : 'Copy / Import…'}
                 </Button>
                 {!readOnly && (templates.data ?? []).length > 0 && (
-                  <Select aria-label="Start from a template" value="" onChange={(e) => e.target.value && setTemplate(templates.data.find((t) => t.key === e.target.value))} className="h-9 w-52 text-[13px]">
+                  <Select aria-label="Start from a template" value="" onChange={(e) => e.target.value && setTemplate(templates.data.find((t) => t.key === e.target.value))} className="h-9 w-full text-[13px] sm:w-52">
                     <option value="">Start from a template…</option>
                     {templates.data.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                   </Select>

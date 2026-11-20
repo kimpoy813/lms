@@ -169,8 +169,8 @@ export default function CodeWorkbench({ problem, value, onChange, studentAnswerI
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 text-[13px] font-medium text-soft">Language
-          <Select value={language} disabled={readOnly || languages.length < 2} onChange={(e) => { const next = e.target.value; const untouched = !code.trim() || code === (problem.starterCode?.[language] ?? ''); update({ language: next, code: untouched ? problem.starterCode?.[next] ?? '' : code }); }} className="h-9 w-48">
+        <label className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-soft">Language
+          <Select value={language} disabled={readOnly || languages.length < 2} onChange={(e) => { const next = e.target.value; const untouched = !code.trim() || code === (problem.starterCode?.[language] ?? ''); update({ language: next, code: untouched ? problem.starterCode?.[next] ?? '' : code }); }} className="h-9 w-full sm:w-48">
             {languages.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </Select>
         </label>
@@ -238,7 +238,7 @@ export function ProblemStatement({ problem }) {
             {samples.map((t, i) => (
               <li key={t.id} className="rounded-xl border border-line p-3 text-[13px]">
                 <p className="mb-1.5 font-semibold text-ink">Sample {i + 1}</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <div><p className="text-[11px] font-semibold uppercase tracking-wide text-faint">Input</p><pre className="mt-0.5 overflow-auto rounded bg-raised p-2 font-mono text-xs text-ink">{t.input || '(none)'}</pre></div>
                   <div><p className="text-[11px] font-semibold uppercase tracking-wide text-faint">Expected output</p><pre className="mt-0.5 overflow-auto rounded bg-raised p-2 font-mono text-xs text-ink">{t.expectedOutput}</pre></div>
                 </div>

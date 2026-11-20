@@ -241,11 +241,15 @@ function ProfileMenu() {
 }
 
 export default function AppShell() {
+  const { user } = useAuth();
   const location = useLocation();
   const client = useQueryClient();
   const [drawer, setDrawer] = useState(false);
   const [search, setSearch] = useState(false);
   const messages = useQuery({ queryKey: ['messages', 'unread'], queryFn: async () => ({ count: (await fetchBadges()).messages }), refetchInterval: useLiveInterval(60_000, 120_000) });
+  const messageCount = messages.data?.count ?? 0;
+  // Hide the mobile bottom bar while chatting inside an active conversation so the keyboard & composer get full height.
+  const inMobileChat = location.pathname === '/messages' && new URLSearchParams(location.search).has('c');
 
   // Back at the keyboard after a pause: the two header numbers were not refreshed meanwhile.
   useOnReturn(useCallback(() => {
@@ -272,12 +276,33 @@ export default function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const mobileTabs = {
+    STUDENT: [
+      { to: '/', label: 'Home', icon: LayoutDashboard, end: true },
+      { to: '/classes', label: 'Classes', icon: BookOpen },
+      { to: '/attendance/scan', label: 'Check in', icon: ScanLine },
+      { to: '/messages', label: 'Messages', icon: MessageSquare, badge: messageCount },
+    ],
+    TEACHER: [
+      { to: '/', label: 'Home', icon: LayoutDashboard, end: true },
+      { to: '/classes', label: 'Classes', icon: BookOpen },
+      { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+      { to: '/messages', label: 'Messages', icon: MessageSquare, badge: messageCount },
+    ],
+    ADMIN: [
+      { to: '/', label: 'Home', icon: LayoutDashboard, end: true },
+      { to: '/admin/users', label: 'Users', icon: UserCog },
+      { to: '/classes', label: 'Classes', icon: BookOpen },
+      { to: '/messages', label: 'Messages', icon: MessageSquare, badge: messageCount },
+    ],
+  }[user.role];
+
   return (
     <div className="min-h-dvh lg:pl-64">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-lg focus:bg-brand-fill focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white">Skip to content</a>
 
       <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-line bg-surface lg:block">
-        <Sidebar messageCount={messages.data?.count ?? 0} />
+        <Sidebar messageCount={messageCount} />
       </aside>
 
       {drawer && (
@@ -285,7 +310,7 @@ export default function AppShell() {
           <div className="animate-in absolute inset-0 bg-[#0b0d17]/55" onClick={() => setDrawer(false)} aria-hidden="true" />
           <aside className="absolute inset-y-0 left-0 w-[min(18rem,85vw)] border-r border-line bg-surface shadow-pop">
             <IconButton icon={X} label="Close menu" onClick={() => setDrawer(false)} className="absolute right-2 top-3" />
-            <Sidebar onNavigate={() => setDrawer(false)} messageCount={messages.data?.count ?? 0} />
+            <Sidebar onNavigate={() => setDrawer(false)} messageCount={messageCount} />
           </aside>
         </div>
       )}
@@ -307,11 +332,54 @@ export default function AppShell() {
         </div>
       </header>
 
-      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-[1400px] px-4 py-6 outline-none sm:px-6 lg:px-8">
+      <main id="main" tabIndex={-1} className={cn('mx-auto w-full max-w-[1400px] px-4 py-6 outline-none sm:px-6 lg:px-8 lg:pb-6', inMobileChat ? 'max-lg:pb-3' : 'max-lg:pb-[calc(5rem+env(safe-area-inset-bottom))]')}>
         <Suspense fallback={<PageLoader />}>
           <Outlet />
         </Suspense>
       </main>
+
+      {!inMobileChat && (
+        <nav aria-label="Quick navigation" className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden">
+          <ul className="grid h-16 grid-cols-5 items-stretch">
+            {mobileTabs.map((item) => (
+              <li key={item.to} className="min-w-0">
+                <NavLink
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) => cn('relative flex h-full flex-col items-center justify-center gap-0.5 px-1 text-[11px] font-medium transition-colors', isActive ? 'text-brand' : 'text-soft hover:text-ink')}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className={cn('relative grid place-items-center rounded-full px-3 py-1 transition-colors', isActive && 'bg-brand-soft')}>
+                        <item.icon className="size-[19px]" aria-hidden="true" />
+                        {item.badge > 0 && (
+                          <span className="absolute -right-0.5 -top-0.5 grid min-w-[16px] place-items-center rounded-full bg-brand-fill px-1 text-[10px] font-bold leading-4 text-white" aria-label={`${item.badge} unread`}>
+                            {item.badge > 99 ? '99+' : item.badge}
+                          </span>
+                        )}
+                      </span>
+                      <span className="max-w-full truncate">{item.label}</span>
+                    </>
+                  )}
+                </NavLink>
+              </li>
+            ))}
+            <li className="min-w-0">
+              <button
+                type="button"
+                onClick={() => setDrawer(true)}
+                aria-expanded={drawer}
+                className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-1 text-[11px] font-medium text-soft transition-colors hover:text-ink"
+              >
+                <span className="grid place-items-center rounded-full px-3 py-1">
+                  <MenuIcon className="size-[19px]" aria-hidden="true" />
+                </span>
+                <span className="max-w-full truncate">Menu</span>
+              </button>
+            </li>
+          </ul>
+        </nav>
+      )}
 
       {search && <SearchDialog onClose={() => setSearch(false)} />}
     </div>

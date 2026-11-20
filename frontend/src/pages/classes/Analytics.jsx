@@ -55,7 +55,7 @@ export default function Analytics() {
                 {a.assessments.length === 0 ? <p className="text-sm text-faint">Nothing has been graded yet.</p> : (
                   <ul className="space-y-2.5">
                     {a.assessments.map((x) => (
-                      <li key={x.id} className="grid grid-cols-[minmax(0,1fr)_7rem_3.5rem] items-center gap-3 text-sm">
+                      <li key={x.id} className="grid grid-cols-[minmax(0,1fr)_5rem_3rem] items-center gap-2.5 text-sm sm:grid-cols-[minmax(0,1fr)_7rem_3.5rem] sm:gap-3">
                         <span className="min-w-0"><span className="block truncate text-ink">{x.title}</span><span className="text-xs text-faint">{plural(x.graded, 'score')}</span></span>
                         <span className="h-2 overflow-hidden rounded-full bg-raised"><span className={cn('block h-full rounded-full', x.average < 60 ? 'bg-bad' : x.average < t.gradeBelow ? 'bg-warn' : 'bg-ok')} style={{ width: `${x.average ?? 0}%` }} /></span>
                         <span className="text-right font-semibold tabular-nums text-ink">{x.average === null ? '—' : formatPercent(x.average, 0)}</span>

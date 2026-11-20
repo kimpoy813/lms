@@ -82,16 +82,24 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
     reorderLessons.mutate(ids);
   };
   const locked = !canManage && m.locked;
+  const totalMinutes = m.totalEstimatedMinutes ?? m.lessons.reduce((sum, l) => sum + (Number(l.estimatedMinutes) || 0), 0);
+  const canOpenBook = !locked && m.lessonCount > 0;
 
   return (
     <Card padded={false} className={cn(locked && 'opacity-80')}>
-      <div className="flex items-start gap-3 p-4 sm:p-5">
+      <div className="flex flex-wrap items-start gap-3 p-4 sm:flex-nowrap sm:p-5">
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={open ? 'Collapse module' : 'Expand module'} className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg text-soft hover:bg-raised">
           <ChevronDown className={cn('size-5 transition-transform', !open && '-rotate-90')} aria-hidden="true" />
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-base font-semibold text-ink">{m.title}</h2>
+            <h2 className="text-base font-semibold text-ink">
+              {canOpenBook ? (
+                <Link to={`${base}/modules/${m.id}?view=book`} className="hover:text-brand hover:underline">
+                  {m.title}
+                </Link>
+              ) : m.title}
+            </h2>
             {canManage && <StatusBadge status={m.status} publishAt={m.publishAt} />}
             {canManage && m.source === 'AI' && <Badge tone="brand" icon={Sparkles}>AI draft{m.aiReviewStatus === 'APPROVED' ? ' · reviewed' : ''}</Badge>}
             {locked && <Badge icon={Lock}>Locked</Badge>}
@@ -100,7 +108,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
           {m.description && <p className="mt-1 text-sm text-soft">{m.description}</p>}
           {locked && <p className="mt-1 text-[13px] text-warn">{m.lockedReason}</p>}
           <p className="mt-1.5 text-xs text-faint">
-            {plural(m.lessonCount, 'lesson')}{m.resources.length > 0 ? ` · ${plural(m.resources.length, 'resource')}` : ''}{m.availableUntil ? ` · available until ${formatDateTime(m.availableUntil)}` : ''}
+            {plural(m.lessonCount, 'chapter')}{totalMinutes > 0 ? ` · ~${totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60 ? `${totalMinutes % 60}m` : ''}`.trim() : `${totalMinutes} min`}` : ''}{m.resources.length > 0 ? ` · ${plural(m.resources.length, 'resource')}` : ''}{m.availableUntil ? ` · available until ${formatDateTime(m.availableUntil)}` : ''}
           </p>
           {!canManage && !locked && m.lessonCount > 0 && (
             <div className="mt-2.5 flex max-w-sm items-center gap-3 text-xs text-faint">
@@ -109,9 +117,14 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
             </div>
           )}
         </div>
-        {canManage && (
-          <div className="flex shrink-0 items-center gap-1">
-            {m.status === 'DRAFT' && !readOnly && <Button size="sm" variant="soft" loading={publish.isPending} onClick={() => publish.mutate()} className="max-sm:hidden">Publish</Button>}
+        <div className="flex shrink-0 items-center gap-1.5 max-sm:ml-11">
+          {canOpenBook && (
+            <Button size="sm" variant={canManage ? 'ghost' : 'secondary'} icon={BookOpen} to={`${base}/modules/${m.id}?view=book`}>
+              Read as book
+            </Button>
+          )}
+          {canManage && m.status === 'DRAFT' && !readOnly && <Button size="sm" variant="soft" loading={publish.isPending} onClick={() => publish.mutate()} className="max-sm:hidden">Publish</Button>}
+          {canManage && (
             <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} label={`Actions for ${m.title}`} onClick={toggle} {...props} />}>
               <MenuItem icon={Pencil} onClick={onEdit}>Edit module</MenuItem>
               <MenuItem icon={FilePlus2} onClick={() => navigate(`${base}/modules/${m.id}?new=1`)}>Add a lesson</MenuItem>
@@ -123,8 +136,8 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
               <MenuItem icon={Share2} onClick={() => setPosting(true)}>Post to other classes…</MenuItem>
               <MenuItem icon={Trash2} tone="danger" onClick={() => setConfirm('delete')}>Delete module</MenuItem>
             </Menu>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {open && !locked && (

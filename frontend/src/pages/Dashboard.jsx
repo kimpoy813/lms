@@ -206,7 +206,7 @@ function StudentDashboard({ data }) {
                       <span className="mt-0.5 block truncate text-xs text-faint">{c.teacher}</span>
                       <span className="mt-3 flex items-center gap-2 text-xs text-faint">
                         <ProgressBar value={c.lessonProgress ?? 0} label={`Lessons completed in ${c.label}`} className="h-1.5 flex-1" />
-                        <span className="w-24 shrink-0 text-right tabular-nums">{c.lessonProgress ?? 0}% of lessons</span>
+                        <span className="shrink-0 whitespace-nowrap text-right tabular-nums">{c.lessonProgress ?? 0}% of lessons</span>
                       </span>
                     </Link>
                   </li>
@@ -449,7 +449,7 @@ function AdminDashboard({ data }) {
             <CardHeader icon={UserCheck} title="Attendance, last 14 days" />
             <p className="text-3xl font-bold tabular-nums text-ink">{attendance14d.rate === null ? '—' : formatPercent(attendance14d.rate)}</p>
             <p className="text-xs text-faint">present or late, of all recorded meetings</p>
-            <dl className="mt-4 grid grid-cols-4 gap-2 text-center">
+            <dl className="mt-4 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
               {[['Present', attendance14d.present, 'text-ok'], ['Late', attendance14d.late, 'text-warn'], ['Absent', attendance14d.absent, 'text-bad'], ['Excused', attendance14d.excused, 'text-info']].map(([label, n, tone]) => (
                 <div key={label} className="rounded-xl bg-raised py-2.5">
                   <dd className={cn('text-lg font-bold tabular-nums', tone)}>{n}</dd>

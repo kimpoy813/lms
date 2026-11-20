@@ -115,13 +115,13 @@ export function TeacherRankingTab() {
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
                   {data.scopes.length > 0 && (
                     <Select
                       aria-label="Ranking scope"
                       value={activeScope}
                       onChange={(e) => setScope(e.target.value)}
-                      className="h-9 w-56 text-[13px]"
+                      className="h-9 w-full text-[13px] sm:w-56"
                     >
                       {data.scopes.map((s) => (
                         <option key={s.scope} value={s.scope}>

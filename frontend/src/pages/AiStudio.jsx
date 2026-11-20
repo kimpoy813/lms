@@ -135,7 +135,7 @@ function ModuleTool({ ready, onDone, onOpen }) {
             <Field label="Learners" optional><Input value={v.yearLevel} onChange={set('yearLevel')} placeholder="e.g. First-year BSIT" maxLength={60} /></Field>
             <Field label="Level"><Select value={v.difficulty} onChange={set('difficulty')}><option value="BEGINNER">Beginner</option><option value="INTERMEDIATE">Intermediate</option><option value="ADVANCED">Advanced</option></Select></Field>
             <Field label="Language"><Select value={v.language} onChange={set('language')}><option value="ENGLISH">English</option><option value="FILIPINO">Filipino</option><option value="BILINGUAL">English + Filipino</option></Select></Field>
-            <Field label="Length"><Select value={v.contentLength} onChange={set('contentLength')}><option value="SHORT">Short (3 lessons)</option><option value="STANDARD">Standard (4–5)</option><option value="COMPREHENSIVE">Comprehensive (6–8)</option></Select></Field>
+            <Field label="Length"><Select value={v.contentLength} onChange={set('contentLength')}><option value="SHORT">Short (3–4 chapters · ~2,000 words)</option><option value="STANDARD">Standard (4–6 chapters · ~3,500 words)</option><option value="COMPREHENSIVE">Comprehensive (6–8 chapters · ~5,500 words)</option></Select></Field>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Study time (minutes)" optional><Input type="number" min="10" max="1200" value={v.durationMinutes} onChange={set('durationMinutes')} placeholder="e.g. 120" /></Field>
@@ -585,7 +585,7 @@ function ProgrammingTool({ ready, onDone }) {
                       {tc.isHidden ? <Badge tone="warn">Hidden</Badge> : <Badge tone="ok">Sample</Badge>}
                       <span className="ml-auto font-normal text-faint">{tc.comparison} · weight {tc.weight}</span>
                     </p>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <div><span className="text-[11px] text-faint">Input</span><pre className="mt-0.5 max-h-20 overflow-auto rounded bg-raised p-1.5 font-mono text-ink">{tc.input || '(none)'}</pre></div>
                       <div><span className="text-[11px] text-faint">Expected</span><pre className="mt-0.5 max-h-20 overflow-auto rounded bg-raised p-1.5 font-mono text-ink">{tc.expectedOutput}</pre></div>
                     </div>

@@ -49,9 +49,9 @@ export default function AdminAudit() {
         actions={<Button variant="secondary" icon={Download} loading={exporting} onClick={exportCsv}>Export CSV</Button>} />
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <SearchInput value={search} onChange={(v) => { setSearch(v); if (page !== 1) patch({ page: null }); }} placeholder="Search by person, action or description…" className="w-full sm:w-80" />
-        <Field label="Record type" className="w-48"><Select value={filters.entityType} onChange={(e) => patch({ entityType: e.target.value, page: null })}><option value="">All types</option>{(meta?.entityTypes ?? []).map((t) => <option key={t} value={t}>{entityLabel(t)}</option>)}</Select></Field>
-        <Field label="From" className="w-40"><Input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => patch({ from: e.target.value, page: null })} /></Field>
-        <Field label="To" className="w-40"><Input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => patch({ to: e.target.value, page: null })} /></Field>
+        <Field label="Record type" className="w-full sm:w-48"><Select value={filters.entityType} onChange={(e) => patch({ entityType: e.target.value, page: null })}><option value="">All types</option>{(meta?.entityTypes ?? []).map((t) => <option key={t} value={t}>{entityLabel(t)}</option>)}</Select></Field>
+        <Field label="From" className="min-w-0 flex-1 basis-36 sm:w-40 sm:flex-none"><Input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => patch({ from: e.target.value, page: null })} /></Field>
+        <Field label="To" className="min-w-0 flex-1 basis-36 sm:w-40 sm:flex-none"><Input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => patch({ to: e.target.value, page: null })} /></Field>
         {filtered && <Button variant="ghost" onClick={() => { setSearch(''); setParams({}, { replace: true }); }}>Clear filters</Button>}
       </div>
       {(filters.actorId || filters.classId) && <p className="mb-3 text-sm text-soft">Showing entries {filters.actorId ? 'by one person' : ''}{filters.actorId && filters.classId ? ' and ' : ''}{filters.classId ? 'for one class' : ''}.</p>}

@@ -64,6 +64,43 @@ export function getOfflineLesson(userId, lessonId) {
   return readStore(userId)[lessonId] ?? null;
 }
 
+export function getOfflineModuleBook(userId, moduleId) {
+  const entries = listOfflineLessons(userId).filter((e) => e.moduleId === moduleId);
+  if (entries.length === 0) return null;
+  const sampleMod = entries[0].mod;
+  const byId = new Map(entries.map((e) => [e.lessonId, e]));
+  const chapters = (sampleMod.lessons ?? []).map((summary, idx) => {
+    const cached = byId.get(summary.id);
+    if (!cached) {
+      return {
+        ...summary,
+        chapterNumber: idx + 1,
+        objectives: [],
+        contentHtml: null,
+        resources: [],
+        locked: true,
+        lockedReason: 'This chapter was not saved for offline reading on this device.',
+      };
+    }
+    return {
+      ...summary,
+      ...cached.lesson,
+      chapterNumber: idx + 1,
+      locked: false,
+      lockedReason: null,
+    };
+  });
+  return {
+    savedAt: entries[0].savedAt,
+    book: {
+      ...sampleMod,
+      resources: [],
+      chapters,
+      totalEstimatedMinutes: chapters.reduce((sum, ch) => sum + (Number(ch.estimatedMinutes) || 0), 0),
+    },
+  };
+}
+
 export async function saveLessonOffline(userId, { mod, lesson }) {
   const urls = lessonAssetUrls(lesson);
   let cachedFiles = 0;

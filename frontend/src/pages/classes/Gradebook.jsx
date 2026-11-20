@@ -172,9 +172,9 @@ function Grid({ data, initialStudentId, onClearInitialStudent }) {
 
       <Card padded={false}>
         <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
-          <div role="tablist" aria-label="Grading period" className="inline-flex rounded-lg border border-line bg-raised p-0.5">
+          <div role="tablist" aria-label="Grading period" className="inline-flex max-w-full overflow-x-auto rounded-lg border border-line bg-raised p-0.5 [scrollbar-width:none]">
             {structure.periods.map((p) => (
-              <button key={p.id} type="button" role="tab" aria-selected={p.id === period.id} onClick={() => setPeriodId(p.id)} className={cn('flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium', p.id === period.id ? 'bg-surface text-ink shadow-sm' : 'text-soft hover:text-ink')}>
+              <button key={p.id} type="button" role="tab" aria-selected={p.id === period.id} onClick={() => setPeriodId(p.id)} className={cn('flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium', p.id === period.id ? 'bg-surface text-ink shadow-sm' : 'text-soft hover:text-ink')}>
                 {p.name} <span className="text-xs font-normal text-faint">{p.weight}%</span>
                 {p.lockedAt ? <Lock className="size-3.5 text-faint" aria-label="Locked" /> : p.publishedAt ? <Eye className="size-3.5 text-ok" aria-label="Published" /> : null}
               </button>
@@ -239,7 +239,7 @@ function Grid({ data, initialStudentId, onClearInitialStudent }) {
 
       {/* Unsaved changes bar */}
       {dirtyCount > 0 && (
-        <div className="sticky bottom-4 z-10 mx-auto flex w-fit max-w-full flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-pop" role="status">
+        <div className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-10 mx-auto flex w-fit max-w-full flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-pop lg:bottom-4" role="status">
           <p className="text-sm font-medium text-ink">{plural(dirtyCount, 'unsaved change')}</p>
           <Button variant="ghost" size="sm" icon={Undo2} onClick={() => setDirty({})}>Discard</Button>
           <Button size="sm" icon={Save} loading={save.isPending} onClick={() => save.mutate(false)}>Save grades</Button>
@@ -311,7 +311,7 @@ function GridTable({ period, items, students, dirty, locked, onCell, onStudent, 
       <table className="w-full border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
-            <th scope="col" rowSpan={2} className="sticky left-0 z-20 min-w-[11rem] border-b border-r border-line bg-raised px-4 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide text-faint">Student</th>
+            <th scope="col" rowSpan={2} className="sticky left-0 z-20 min-w-[8.25rem] max-w-[9.5rem] border-b border-r border-line bg-raised px-2.5 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide text-faint sm:min-w-[11rem] sm:max-w-none sm:px-4">Student</th>
             {period.categories.map((c) => c.items.length > 0 && (
               <th key={c.id} scope="colgroup" colSpan={c.items.length} className="border-b border-r border-line bg-raised px-3 py-1.5 text-center text-xs font-semibold text-soft">
                 {c.name} <span className="font-normal text-faint">· {c.weight}%</span>
@@ -349,10 +349,14 @@ function GridTable({ period, items, students, dirty, locked, onCell, onStudent, 
             const dropped = s.enrollmentStatus === 'DROPPED';
             return (
               <tr key={s.id} className={cn('group/row', dropped && 'bg-warn-soft/20')}>
-                <th scope="row" className={cn('sticky left-0 z-10 whitespace-nowrap border-b border-r border-line px-4 py-1.5 text-left font-medium group-hover/row:bg-raised', dropped ? 'bg-warn-soft/20' : 'bg-surface')}>
-                  <button type="button" onClick={() => onStudent(s.id)} className="max-w-[13rem] truncate text-left text-ink hover:text-brand hover:underline" title="Show how this grade is computed">{s.lastName}, {s.firstName}</button>
-                  {dropped && <Badge tone="warn" className="ml-1.5" title={s.droppedNote ?? 'Dropped student kept in gradebook'}>Dropped</Badge>}
-                  {s.missingCount > 0 && <span className="ml-1.5 text-[11px] font-normal text-bad">{s.missingCount} missing</span>}
+                <th scope="row" className={cn('sticky left-0 z-10 max-w-[9.5rem] border-b border-r border-line px-2.5 py-1.5 text-left font-medium group-hover/row:bg-raised sm:max-w-none sm:whitespace-nowrap sm:px-4', dropped ? 'bg-warn-soft/20' : 'bg-surface')}>
+                  <button type="button" onClick={() => onStudent(s.id)} className="block max-w-full truncate text-left text-ink hover:text-brand hover:underline sm:inline sm:max-w-[13rem]" title="Show how this grade is computed">{s.lastName}, {s.firstName}</button>
+                  {(dropped || s.missingCount > 0) && (
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1 sm:mt-0 sm:inline">
+                      {dropped && <Badge tone="warn" className="sm:ml-1.5" title={s.droppedNote ?? 'Dropped student kept in gradebook'}>Dropped</Badge>}
+                      {s.missingCount > 0 && <span className="text-[11px] font-normal text-bad sm:ml-1.5">{s.missingCount} missing</span>}
+                    </span>
+                  )}
                 </th>
                 {items.map((item, col) => (
                   <td key={item.id} className="border-b border-r border-line p-0 text-center">

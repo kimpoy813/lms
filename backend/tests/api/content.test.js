@@ -101,6 +101,56 @@ describe('learning modules', () => {
     expect((await teacher.post(`/api/lessons/${l1.id}/complete`)).status).toBe(403);
   });
 
+  it('serves a full book view of a module while enforcing module and chapter prerequisites', async () => {
+    const { teacher, cls, students } = await classroom(1);
+    const [s1] = students;
+    const draftMod = await mk(teacher, cls, { title: 'Draft Book', status: 'DRAFT' });
+    await mkLesson(teacher, draftMod.id, { title: 'Draft Ch 1', contentHtml: '<p>Secret draft</p>', estimatedMinutes: 25 });
+    expect((await s1.get(`/api/modules/${draftMod.id}/book`)).status).toBe(404);
+    expect((await teacher.get(`/api/modules/${draftMod.id}/book`)).status).toBe(200);
+
+    const m1 = await mk(teacher, cls, { title: 'Book Module 1', description: 'Course reader overview.', objectives: ['Explain A', 'Apply B'] });
+    const c1 = await mkLesson(teacher, m1.id, { title: 'Foundations', contentHtml: '<p>Chapter one prose.</p>', estimatedMinutes: 30 });
+    const c2 = await mkLesson(teacher, m1.id, { title: 'Applied Mastery', contentHtml: '<p>Chapter two secret prose.</p>', prerequisiteLessonId: c1.id, estimatedMinutes: 35 });
+    const m2 = await mk(teacher, cls, { title: 'Book Module 2', prerequisiteModuleId: m1.id });
+    await mkLesson(teacher, m2.id, { title: 'Next Unit', contentHtml: '<p>Unit two.</p>' });
+
+    expect((await s1.get(`/api/modules/${m2.id}/book`)).status).toBe(403);
+
+    await s1.post('/api/bookmarks', { lessonId: c1.id });
+    const book1 = await s1.get(`/api/modules/${m1.id}/book`);
+    expect(book1.status).toBe(200);
+    expect(book1.body.data).toMatchObject({
+      title: 'Book Module 1',
+      totalEstimatedMinutes: 65,
+      lessonCount: 2,
+    });
+    expect(book1.body.data.chapters).toHaveLength(2);
+    expect(book1.body.data.chapters[0]).toMatchObject({
+      chapterNumber: 1,
+      title: 'Foundations',
+      contentHtml: '<p>Chapter one prose.</p>',
+      locked: false,
+      bookmarked: true,
+    });
+    expect(book1.body.data.chapters[1]).toMatchObject({
+      chapterNumber: 2,
+      title: 'Applied Mastery',
+      contentHtml: null,
+      locked: true,
+    });
+    expect(book1.body.data.chapters[1].lockedReason).toMatch(/Foundations/);
+
+    await s1.post(`/api/lessons/${c1.id}/complete`);
+    const book2 = await s1.get(`/api/modules/${m1.id}/book`);
+    expect(book2.body.data.chapters[1]).toMatchObject({
+      id: c2.id,
+      chapterNumber: 2,
+      contentHtml: '<p>Chapter two secret prose.</p>',
+      locked: false,
+    });
+  });
+
   it('rejects circular prerequisites and modules from other classes', async () => {
     const { teacher, cls } = await classroom(0);
     const other = await createClass(teacher.user);

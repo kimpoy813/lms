@@ -312,12 +312,12 @@ export function ScheduleEditor({ value, onChange }) {
         <ul className="mb-2 space-y-2">
           {value.map((s, i) => (
             <li key={i} className="flex flex-wrap items-center gap-2">
-              <Select value={s.dayOfWeek} onChange={(e) => update(i, { dayOfWeek: Number(e.target.value) })} aria-label="Day" className="w-36">
+              <Select value={s.dayOfWeek} onChange={(e) => update(i, { dayOfWeek: Number(e.target.value) })} aria-label="Day" className="w-full sm:w-36">
                 {DAYS.map((d, n) => <option key={d} value={n}>{d}</option>)}
               </Select>
-              <Input type="time" value={s.startTime} onChange={(e) => update(i, { startTime: e.target.value })} aria-label="Starts" className="w-32" />
+              <Input type="time" value={s.startTime} onChange={(e) => update(i, { startTime: e.target.value })} aria-label="Starts" className="min-w-[7rem] flex-1 sm:w-32 sm:flex-none" />
               <span className="text-faint">to</span>
-              <Input type="time" value={s.endTime} onChange={(e) => update(i, { endTime: e.target.value })} aria-label="Ends" className="w-32" />
+              <Input type="time" value={s.endTime} onChange={(e) => update(i, { endTime: e.target.value })} aria-label="Ends" className="min-w-[7rem] flex-1 sm:w-32 sm:flex-none" />
               <Button variant="ghost" size="sm" icon={X} onClick={() => onChange(value.filter((_, n) => n !== i))} aria-label="Remove this meeting" />
             </li>
           ))}

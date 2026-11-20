@@ -1,8 +1,8 @@
-// One module: its lesson list on the left, the selected lesson on the right.
-// Teachers write and edit lessons here; students read them and mark them as completed.
+// One module: chapter-by-chapter reading or full-module "book view".
+// Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, HelpCircle, Layers, Lock, Pencil, Plus, Printer, RotateCcw, Save, Share2, Sparkles, Target, Trash2, Undo2, WifiOff } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
@@ -10,53 +10,188 @@ import LazyEditor from '../../components/LazyEditor.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, Input, PageLoader, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, Input, PageLoader, ProgressBar, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
-import { relativeTime } from '../../lib/format.js';
-import { getOfflineLesson, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
+import { plural, relativeTime } from '../../lib/format.js';
+import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
 import { LESSON_KINDS } from './Modules.jsx';
 import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
+
+const READER_PREFS_KEY = 'edusphere.readerPrefs';
+const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false };
+
+function useReaderPrefs() {
+  const [prefs, setPrefs] = useState(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return DEFAULT_READER_PREFS;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(READER_PREFS_KEY) || '{}');
+      return {
+        font: saved.font === 'sans' ? 'sans' : 'serif',
+        size: ['sm', 'md', 'lg'].includes(saved.size) ? saved.size : 'md',
+        focus: Boolean(saved.focus),
+      };
+    } catch {
+      return DEFAULT_READER_PREFS;
+    }
+  });
+  const update = (patch) => {
+    setPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        window.localStorage?.setItem(READER_PREFS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore quota errors
+      }
+      return next;
+    });
+  };
+  return [prefs, update];
+}
+
+function bookTextClasses(prefs) {
+  return cn(
+    'rich-book mx-auto',
+    prefs.font === 'serif' && 'rich-book-serif',
+    prefs.size === 'sm' ? 'rich-book-sm' : prefs.size === 'lg' ? 'rich-book-lg' : '',
+  );
+}
+
+function formatDuration(minutes) {
+  const m = Number(minutes) || 0;
+  if (m <= 0) return null;
+  if (m < 60) return `${m} min`;
+  const hrs = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
+}
+
+function ReaderControls({ prefs, onChange }) {
+  return (
+    <div className="no-print flex flex-wrap items-center gap-1.5" role="group" aria-label="Reading display options">
+      <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => onChange({ font: 'serif' })}
+          aria-pressed={prefs.font === 'serif'}
+          className={cn('rounded-md px-2 py-1 font-serif font-medium transition-colors', prefs.font === 'serif' ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
+          title="Book serif font"
+        >
+          Serif
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ font: 'sans' })}
+          aria-pressed={prefs.font === 'sans'}
+          className={cn('rounded-md px-2 py-1 font-sans font-medium transition-colors', prefs.font === 'sans' ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
+          title="Clean sans-serif font"
+        >
+          Sans
+        </button>
+      </div>
+      <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5 text-xs">
+        <span className="px-1.5 text-faint" aria-hidden="true"><Type className="size-3.5" /></span>
+        {[
+          ['sm', 'S', 'Smaller text'],
+          ['md', 'M', 'Default text size'],
+          ['lg', 'L', 'Larger text'],
+        ].map(([val, label, title]) => (
+          <button
+            key={val}
+            type="button"
+            onClick={() => onChange({ size: val })}
+            aria-pressed={prefs.size === val}
+            title={title}
+            className={cn('rounded-md px-2 py-1 font-semibold transition-colors', prefs.size === val ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <Button
+        variant={prefs.focus ? 'soft' : 'ghost'}
+        size="sm"
+        icon={prefs.focus ? Minimize2 : Maximize2}
+        aria-pressed={prefs.focus}
+        onClick={() => onChange({ focus: !prefs.focus })}
+        className="hidden lg:inline-flex"
+      >
+        {prefs.focus ? 'Show contents' : 'Focus mode'}
+      </Button>
+    </div>
+  );
+}
 
 export default function ModuleView() {
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const { moduleId } = useParams();
   const [params, setParams] = useSearchParams();
+  const [prefs, updatePrefs] = useReaderPrefs();
   const query = useQuery({ queryKey: ['class', cls.id, 'modules', moduleId], queryFn: () => api.get(`/modules/${moduleId}`) });
   const creating = canManage && params.get('new') === '1';
+  const viewMode = !creating && params.get('view') === 'book' ? 'book' : 'chapter';
   const lessonId = params.get('lesson');
-  const offlineFallback = lessonId ? getOfflineLesson(user?.id, lessonId) : null;
+  const offlineFallback = lessonId ? getOfflineLesson(user?.id, lessonId) : getOfflineModuleBook(user?.id, moduleId);
   const effectiveQuery = query.isError && query.error?.code === 'NETWORK' && offlineFallback?.mod?.id === moduleId
     ? { ...query, isError: false, isSuccess: true, data: offlineFallback.mod }
     : query;
 
-  // Open the first lesson a student has not finished (or simply the first one).
+  // In chapter view, automatically open the first unfinished unlocked chapter (unless already in book view).
   useEffect(() => {
-    if (!effectiveQuery.data || lessonId || creating) return;
+    if (!effectiveQuery.data || viewMode === 'book' || lessonId || creating) return;
     const lessons = effectiveQuery.data.lessons;
     const first = (canManage ? lessons[0] : lessons.find((l) => !l.completed && !l.locked) ?? lessons.find((l) => !l.locked));
     if (first) setParams({ lesson: first.id }, { replace: true });
-  }, [effectiveQuery.data, lessonId, creating, canManage, setParams]);
+  }, [effectiveQuery.data, viewMode, lessonId, creating, canManage, setParams]);
+
+  const switchView = (next, mod) => {
+    if (next === 'book') {
+      setParams({ view: 'book' });
+      return;
+    }
+    const targetLesson = lessonId
+      || (canManage ? mod.lessons[0]?.id : (mod.lessons.find((l) => !l.completed && !l.locked) ?? mod.lessons.find((l) => !l.locked))?.id);
+    setParams(targetLesson ? { lesson: targetLesson } : {});
+  };
 
   return (
     <QueryState query={effectiveQuery}>
       {(mod) => (
         <>
-          <div className="no-print mb-4 flex flex-wrap items-center gap-3">
-            <Link to={`${base}/modules`} className="inline-flex items-center gap-1 text-sm font-medium text-soft hover:text-brand"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
-            <h2 className="min-w-0 flex-1 basis-60 truncate text-lg font-semibold text-ink">{mod.title}</h2>
-            {canManage && <StatusBadge status={mod.status} publishAt={mod.publishAt} />}
+          <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 basis-56 items-center gap-2.5">
+              <Link to={`${base}/modules`} className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-soft hover:text-brand"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
+              <span className="text-line-strong" aria-hidden="true">/</span>
+              <h2 className="min-w-0 truncate text-base font-semibold text-ink sm:text-lg">{mod.title}</h2>
+              {canManage && <StatusBadge status={mod.status} publishAt={mod.publishAt} />}
+            </div>
+            {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Segmented
+                  label="Module reading mode"
+                  value={viewMode}
+                  onChange={(next) => switchView(next, mod)}
+                  options={[
+                    { value: 'chapter', label: 'Chapter view', icon: BookText },
+                    { value: 'book', label: 'Read as book', icon: BookOpen },
+                  ]}
+                />
+                <ReaderControls prefs={prefs} onChange={updatePrefs} />
+              </div>
+            )}
           </div>
           {!canManage && mod.locked ? (
             <Card><EmptyState icon={Lock} title="This module is locked" description={mod.lockedReason} action={<Button to={`${base}/modules`}>Back to lessons</Button>} /></Card>
+          ) : viewMode === 'book' && mod.lessons.length > 0 ? (
+            <BookReader modSummary={mod} prefs={prefs} />
           ) : (
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-              <LessonList mod={mod} activeId={creating ? null : lessonId} />
+            <div className={cn('grid grid-cols-1 gap-5', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
+              <LessonList mod={mod} activeId={creating ? null : lessonId} focus={prefs.focus} />
               <div className="min-w-0">
                 {creating ? <LessonEditor mod={mod} onDone={(saved) => setParams(saved ? { lesson: saved.id } : mod.lessons[0] ? { lesson: mod.lessons[0].id } : {}, { replace: true })} />
-                  : lessonId ? <Lesson key={lessonId} mod={mod} lessonId={lessonId} />
+                  : lessonId ? <Lesson key={lessonId} mod={mod} lessonId={lessonId} prefs={prefs} />
                     : mod.lessons.length === 0 ? (
                       <Card><EmptyState icon={FilePlus2} title="This module has no lessons yet" description={canManage ? 'Write the first lesson: text, pictures, videos and attachments.' : 'Check back soon.'} action={canManage ? <Button icon={Plus} onClick={() => setParams({ new: '1' })}>Add a lesson</Button> : null} /></Card>
                     ) : <PageLoader />}
@@ -69,16 +204,16 @@ export default function ModuleView() {
   );
 }
 
-function LessonList({ mod, activeId }) {
+function LessonList({ mod, activeId, focus = false }) {
   const { canManage, base } = useClass();
   const [, setParams] = useSearchParams();
   return (
-    <aside className="no-print lg:sticky lg:top-32 lg:self-start">
-      {/* A compact picker on phones, the full list on larger screens. */}
+    <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', focus && 'lg:hidden')}>
+      {/* A compact picker on phones, the full table of contents on larger screens. */}
       <div className="lg:hidden">
-        <Select aria-label="Choose a lesson" value={activeId ?? ''} onChange={(e) => setParams({ lesson: e.target.value })}>
-          {!activeId && <option value="">Choose a lesson…</option>}
-          {mod.lessons.map((l, i) => <option key={l.id} value={l.id} disabled={!canManage && l.locked}>{i + 1}. {l.title}{!canManage && l.completed ? ' (done)' : ''}</option>)}
+        <Select aria-label="Choose a chapter" value={activeId ?? ''} onChange={(e) => setParams({ lesson: e.target.value })}>
+          {!activeId && <option value="">Choose a chapter…</option>}
+          {mod.lessons.map((l, i) => <option key={l.id} value={l.id} disabled={!canManage && l.locked}>Ch. {i + 1}: {l.title}{!canManage && l.completed ? ' (done)' : ''}</option>)}
         </Select>
       </div>
       <Card padded={false} className="hidden lg:block">
@@ -92,7 +227,7 @@ function LessonList({ mod, activeId }) {
             )}
           </div>
         )}
-        <nav aria-label="Lessons in this module" className="p-2">
+        <nav aria-label="Chapters in this module" className="p-2">
           <ol>
             {mod.lessons.map((l, i) => {
               const locked = !canManage && l.locked;
@@ -119,11 +254,413 @@ function LessonList({ mod, activeId }) {
   );
 }
 
-function Lesson({ mod, lessonId }) {
+function BookReader({ modSummary, prefs }) {
+  const { user } = useAuth();
+  const { cls, canManage, base } = useClass();
+  const [, setParams] = useSearchParams();
+  const [savingId, setSavingId] = useState(null);
+  const [offlineMap, setOfflineMap] = useState(() => {
+    const map = {};
+    for (const l of modSummary.lessons ?? []) map[l.id] = isLessonSavedOffline(user?.id, l.id);
+    return map;
+  });
+
+  const bookQuery = useQuery({
+    queryKey: ['class', cls.id, 'modules', modSummary.id, 'book'],
+    queryFn: () => api.get(`/modules/${modSummary.id}/book`),
+  });
+  const offlineBook = getOfflineModuleBook(user?.id, modSummary.id);
+  const readingOffline = Boolean(bookQuery.isError && bookQuery.error?.code === 'NETWORK' && offlineBook);
+  const effectiveQuery = readingOffline
+    ? { ...bookQuery, isError: false, isSuccess: true, data: offlineBook.book }
+    : bookQuery;
+
+  const invalidate = [['class', cls.id], ['dashboard']];
+  const toggleComplete = useAction(({ lessonId, done }) => (
+    done ? api.post(`/lessons/${lessonId}/complete`) : api.delete(`/lessons/${lessonId}/complete`)
+  ), { invalidate });
+  const toggleBookmark = useAction(({ lessonId, on }) => (
+    on ? api.post('/bookmarks', { lessonId }) : api.delete('/bookmarks', { lessonId })
+  ), { invalidate: [['class', cls.id, 'modules', modSummary.id, 'book'], ['bookmarks']] });
+
+  const toggleOfflineChapter = async (mod, ch) => {
+    setSavingId(ch.id);
+    try {
+      if (offlineMap[ch.id]) {
+        await removeOfflineLesson(user?.id, ch.id);
+        setOfflineMap((m) => ({ ...m, [ch.id]: false }));
+        toast.info('Removed offline copy from this device.');
+      } else {
+        const entry = await saveLessonOffline(user?.id, { mod, lesson: ch });
+        setOfflineMap((m) => ({ ...m, [ch.id]: true }));
+        toast.success(`Saved Chapter ${ch.chapterNumber} offline${entry.cachedFiles > 0 ? ` (${entry.cachedFiles} file${entry.cachedFiles === 1 ? '' : 's'} cached)` : ''}.`);
+      }
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const scrollToChapter = (id) => {
+    if (!id) return;
+    const el = document.getElementById(`chapter-${id}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  if (effectiveQuery.isError && effectiveQuery.error?.code === 'MODULE_LOCKED') {
+    return <Card><EmptyState icon={Lock} title="This module is locked" description={effectiveQuery.error.message} /></Card>;
+  }
+
+  return (
+    <QueryState query={effectiveQuery}>
+      {(book) => {
+        const chapters = book.chapters ?? [];
+        const totalReadTime = formatDuration(book.totalEstimatedMinutes || chapters.reduce((s, c) => s + (Number(c.estimatedMinutes) || 0), 0));
+        const completedCount = chapters.filter((c) => c.completed).length;
+        const progressPercent = chapters.length ? Math.round((completedCount / chapters.length) * 100) : 0;
+
+        return (
+          <div className={cn('grid grid-cols-1 gap-6', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
+            <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', prefs.focus && 'lg:hidden')}>
+              <div className="lg:hidden">
+                <Select
+                  aria-label="Jump to chapter"
+                  defaultValue=""
+                  onChange={(e) => {
+                    scrollToChapter(e.target.value);
+                    e.target.value = '';
+                  }}
+                >
+                  <option value="" disabled>Jump to chapter ({chapters.length})…</option>
+                  {chapters.map((ch) => (
+                    <option key={ch.id} value={ch.id}>
+                      Ch. {ch.chapterNumber}: {ch.title}{!canManage && ch.completed ? ' (done)' : ch.locked ? ' (locked)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <Card padded={false} className="hidden lg:block">
+                <div className="border-b border-line p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-brand">Table of contents</p>
+                  {!canManage && chapters.length > 0 && (
+                    <div className="mt-2.5 flex items-center gap-2.5 text-xs text-faint">
+                      <ProgressBar value={progressPercent} tone={progressPercent === 100 ? 'ok' : 'brand'} label="Module reading progress" className="h-1.5" />
+                      <span className="shrink-0 tabular-nums">{completedCount}/{chapters.length}</span>
+                    </div>
+                  )}
+                  {totalReadTime && <p className="mt-2 flex items-center gap-1 text-xs text-faint"><Clock className="size-3.5" aria-hidden="true" />About {totalReadTime} total</p>}
+                </div>
+                <nav aria-label="Module book table of contents" className="max-h-[65vh] overflow-y-auto p-2">
+                  <ol className="space-y-0.5">
+                    {chapters.map((ch) => {
+                      const locked = !canManage && ch.locked;
+                      return (
+                        <li key={ch.id}>
+                          <a
+                            href={`#chapter-${ch.id}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              scrollToChapter(ch.id);
+                            }}
+                            className={cn(
+                              'flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors',
+                              locked ? 'text-faint hover:bg-raised/60' : 'text-ink hover:bg-raised',
+                            )}
+                          >
+                            {canManage ? (
+                              <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded bg-raised text-[11px] font-semibold tabular-nums text-soft">{ch.chapterNumber}</span>
+                            ) : ch.completed ? (
+                              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" aria-label="Completed" />
+                            ) : locked ? (
+                              <Lock className="mt-0.5 size-4 shrink-0 text-faint" aria-label="Locked" />
+                            ) : (
+                              <Circle className="mt-0.5 size-4 shrink-0 text-line-strong" aria-hidden="true" />
+                            )}
+                            <span className="min-w-0 flex-1 leading-snug">
+                              <span className="block font-medium">{ch.title}</span>
+                              {ch.estimatedMinutes ? <span className="block text-[11px] text-faint">{ch.estimatedMinutes} min</span> : null}
+                            </span>
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </nav>
+              </Card>
+            </aside>
+
+            <div className="min-w-0 space-y-6">
+              {readingOffline && (
+                <Alert tone="info">
+                  <WifiOff className="mr-1.5 inline size-4" aria-hidden="true" />
+                  You are offline. Showing chapters saved on this device {relativeTime(offlineBook.savedAt)}.
+                </Alert>
+              )}
+
+              {/* Module Title / Front-Matter Page */}
+              <Card className="overflow-hidden border-t-4 border-t-brand print:border-0 print:shadow-none">
+                <div className="mx-auto max-w-[68ch]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
+                      <BookOpen className="size-4" aria-hidden="true" />
+                      Learning Module
+                      <span>· {plural(chapters.length, 'chapter')}</span>
+                      {totalReadTime && <span>· {totalReadTime}</span>}
+                    </p>
+                    <Button variant="ghost" size="sm" icon={Printer} className="no-print" onClick={() => window.print()}>
+                      Print module
+                    </Button>
+                  </div>
+                  <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink sm:text-3xl text-balance">{book.title}</h1>
+                  {book.description && (
+                    <p className={cn('mt-3 text-base leading-relaxed text-soft', prefs.font === 'serif' && 'font-serif text-[1.06rem]')}>
+                      {book.description}
+                    </p>
+                  )}
+
+                  {book.objectives?.length > 0 && (
+                    <section className="mt-5 rounded-xl border border-line bg-raised/55 p-4" aria-labelledby="module-cover-objectives">
+                      <h2 id="module-cover-objectives" className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink">
+                        <Target className="size-4 text-brand" aria-hidden="true" />
+                        Learning Objectives
+                      </h2>
+                      <ol className="mt-2.5 list-decimal space-y-1.5 pl-5 text-sm leading-relaxed text-soft">
+                        {book.objectives.map((obj) => <li key={obj}>{obj}</li>)}
+                      </ol>
+                    </section>
+                  )}
+
+                  <section className="mt-6 border-t border-line pt-5" aria-labelledby="module-cover-toc">
+                    <h2 id="module-cover-toc" className="text-xs font-semibold uppercase tracking-wider text-faint">Chapters in this module</h2>
+                    <ol className="mt-3 divide-y divide-line rounded-xl border border-line">
+                      {chapters.map((ch) => (
+                        <li key={ch.id}>
+                          <a
+                            href={`#chapter-${ch.id}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              scrollToChapter(ch.id);
+                            }}
+                            className="flex items-center gap-3 px-3.5 py-2.5 text-sm transition-colors hover:bg-raised"
+                          >
+                            <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand-soft text-xs font-bold tabular-nums text-brand">
+                              {ch.chapterNumber}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className={cn('block truncate font-medium', !canManage && ch.locked ? 'text-faint' : 'text-ink')}>{ch.title}</span>
+                              <span className="block text-xs text-faint">
+                                {LESSON_KINDS[ch.kind] ?? 'Lesson'}{ch.estimatedMinutes ? ` · ${ch.estimatedMinutes} min` : ''}
+                              </span>
+                            </span>
+                            {!canManage && ch.completed && <Badge tone="ok" icon={CheckCircle2}>Done</Badge>}
+                            {!canManage && ch.locked && <Badge icon={Lock}>Locked</Badge>}
+                            {canManage && ch.status === 'DRAFT' && <Badge tone="warn">Draft</Badge>}
+                          </a>
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+
+                  {book.resources?.length > 0 && (
+                    <section className="mt-6 border-t border-line pt-5" aria-labelledby="module-cover-resources">
+                      <h2 id="module-cover-resources" className="mb-3 text-xs font-semibold uppercase tracking-wider text-faint">Module Resources</h2>
+                      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {book.resources.map((r) => (
+                          <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} />
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                </div>
+              </Card>
+
+              {/* Chapters rendered sequentially like pages of a book */}
+              {chapters.map((ch, idx) => {
+                const nextChapter = chapters[idx + 1];
+                const locked = !canManage && ch.locked;
+
+                if (locked) {
+                  return (
+                    <article key={ch.id} id={`chapter-${ch.id}`} className="book-chapter scroll-mt-24">
+                      <Card className="border-dashed bg-raised/35">
+                        <div className="mx-auto flex max-w-[68ch] items-start gap-3">
+                          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-raised text-faint"><Lock className="size-4" aria-hidden="true" /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-faint">Chapter {ch.chapterNumber} of {chapters.length} · Locked</p>
+                            <h2 className="mt-1 text-lg font-bold text-ink">{ch.title}</h2>
+                            <p className="mt-1 text-sm text-soft">{ch.lockedReason || 'Complete the previous required chapter above to unlock this reading.'}</p>
+                          </div>
+                        </div>
+                      </Card>
+                    </article>
+                  );
+                }
+
+                return (
+                  <article key={ch.id} id={`chapter-${ch.id}`} className="book-chapter scroll-mt-24">
+                    <Card className="print:border-0 print:shadow-none">
+                      <div className="mx-auto max-w-[68ch]">
+                        <header className="mb-6 border-b border-line pb-5">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
+                                <span>Chapter {ch.chapterNumber} of {chapters.length}</span>
+                                <span className="text-faint">·</span>
+                                <Badge tone="brand">{LESSON_KINDS[ch.kind] ?? 'Lesson'}</Badge>
+                                {ch.estimatedMinutes ? <span className="flex items-center gap-1 font-medium normal-case tracking-normal text-faint"><Clock className="size-3.5" aria-hidden="true" />~{ch.estimatedMinutes} min read</span> : null}
+                                {canManage && ch.status === 'DRAFT' && <Badge tone="warn">Draft</Badge>}
+                              </p>
+                              <h2 className="mt-2.5 text-2xl font-bold tracking-tight text-ink sm:text-[1.65rem] text-balance">{ch.title}</h2>
+                            </div>
+                            <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5">
+                              <Button
+                                variant={offlineMap[ch.id] ? 'soft' : 'ghost'}
+                                size="sm"
+                                icon={offlineMap[ch.id] ? Check : Download}
+                                loading={savingId === ch.id}
+                                aria-pressed={Boolean(offlineMap[ch.id])}
+                                className={offlineMap[ch.id] ? 'text-ok' : ''}
+                                onClick={() => toggleOfflineChapter(book, ch)}
+                              >
+                                {offlineMap[ch.id] ? 'Offline' : 'Save offline'}
+                              </Button>
+                              {!canManage && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  icon={ch.bookmarked ? BookmarkCheck : Bookmark}
+                                  aria-pressed={Boolean(ch.bookmarked)}
+                                  className={ch.bookmarked ? 'text-brand' : ''}
+                                  onClick={() => toggleBookmark.mutate({ lessonId: ch.id, on: !ch.bookmarked })}
+                                >
+                                  {ch.bookmarked ? 'Saved' : 'Save'}
+                                </Button>
+                              )}
+                              {canManage && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  icon={Pencil}
+                                  onClick={() => setParams({ lesson: ch.id, edit: '1' })}
+                                >
+                                  Edit
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          {ch.objectives?.length > 0 && (
+                            <ul className="mt-3.5 space-y-1 text-sm text-soft">
+                              {ch.objectives.map((o) => <li key={o} className="flex gap-2"><Target className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />{o}</li>)}
+                            </ul>
+                          )}
+                        </header>
+
+                        <RichText
+                          html={ch.contentHtml}
+                          className={bookTextClasses(prefs)}
+                          empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
+                        />
+
+                        {(book.aiStudyCoachEnabled || canManage) && Boolean(ch.contentHtml?.trim()) && (
+                          <StudyCoachPanel lessonId={ch.id} lessonTitle={ch.title} canManage={canManage} enabledForStudents={book.aiStudyCoachEnabled} />
+                        )}
+
+                        {ch.resources?.length > 0 && (
+                          <section className="mt-8 border-t border-line pt-5" aria-label={`Attachments for ${ch.title}`}>
+                            <h3 className="mb-3 text-sm font-semibold text-ink">Chapter attachments</h3>
+                            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              {ch.resources.map((r) => (
+                                <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} />
+                              ))}
+                            </ul>
+                          </section>
+                        )}
+
+                        {!canManage && (
+                          <footer className="no-print mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+                            {ch.completed ? (
+                              <span className="inline-flex items-center gap-2.5 text-sm font-medium text-ok">
+                                <CheckCircle2 className="size-5" aria-hidden="true" />
+                                Chapter {ch.chapterNumber} completed
+                                <button
+                                  type="button"
+                                  onClick={() => toggleComplete.mutate({ lessonId: ch.id, done: false })}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-faint hover:text-ink"
+                                >
+                                  <Undo2 className="size-3.5" aria-hidden="true" />
+                                  Undo
+                                </button>
+                              </span>
+                            ) : (
+                              <Button
+                                size="sm"
+                                icon={CheckCircle2}
+                                loading={toggleComplete.isPending}
+                                onClick={() => toggleComplete.mutate({ lessonId: ch.id, done: true })}
+                              >
+                                Mark Chapter {ch.chapterNumber} as completed
+                              </Button>
+                            )}
+                            {nextChapter && !nextChapter.locked && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => scrollToChapter(nextChapter.id)}
+                              >
+                                Next: {nextChapter.title}
+                                <ArrowRight className="size-4" aria-hidden="true" />
+                              </Button>
+                            )}
+                            {nextChapter?.locked && (
+                              <span className="flex items-center gap-1.5 text-xs text-faint">
+                                <Lock className="size-3.5" aria-hidden="true" />
+                                Complete this chapter to unlock Chapter {nextChapter.chapterNumber}
+                              </span>
+                            )}
+                          </footer>
+                        )}
+                      </div>
+                    </Card>
+                  </article>
+                );
+              })}
+
+              {/* End-of-Module Epilogue */}
+              <Card className="no-print bg-raised/40">
+                <div className="mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-ink">
+                      {!canManage && progressPercent === 100
+                        ? `You have completed all ${plural(chapters.length, 'chapter')} in “${book.title}”.`
+                        : `End of “${book.title}”`}
+                    </p>
+                    <p className="mt-0.5 text-xs text-soft">
+                      {!canManage
+                        ? `${completedCount} of ${chapters.length} chapters marked complete.`
+                        : 'Switch back to Chapter view or open individual lessons to reorder or add attachments.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()}>Print module</Button>
+                    <Button variant="secondary" size="sm" to={`${base}/modules`}>Back to all lessons</Button>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </div>
+        );
+      }}
+    </QueryState>
+  );
+}
+
+function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const navigate = useNavigate();
-  const [editing, setEditing] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const [editing, setEditing] = useState(() => canManage && params.get('edit') === '1');
   const [dialog, setDialog] = useState(null);
   const [savedOffline, setSavedOffline] = useState(() => isLessonSavedOffline(user?.id, lessonId));
   const [savingOffline, setSavingOffline] = useState(false);
@@ -139,9 +676,23 @@ function Lesson({ mod, lessonId }) {
   const remove = useAction(() => api.delete(`/lessons/${lessonId}`), { invalidate, success: 'Lesson deleted.', onSuccess: () => navigate(`${base}/modules/${mod.id}`, { replace: true }) });
   const readOnly = cls.status === 'ARCHIVED';
 
+  const chapterIndex = useMemo(() => {
+    const idx = (mod.lessons ?? []).findIndex((l) => l.id === lessonId);
+    return idx >= 0 ? idx : 0;
+  }, [mod.lessons, lessonId]);
+
   useEffect(() => {
     setSavedOffline(isLessonSavedOffline(user?.id, lessonId));
   }, [user?.id, lessonId]);
+
+  useEffect(() => {
+    setEditing(canManage && params.get('edit') === '1');
+  }, [canManage, params, lessonId]);
+
+  const closeEditor = () => {
+    setEditing(false);
+    if (params.get('edit')) setParams({ lesson: lessonId }, { replace: true });
+  };
 
   const toggleOffline = async (lesson) => {
     setSavingOffline(true);
@@ -167,7 +718,7 @@ function Lesson({ mod, lessonId }) {
   }
   return (
     <QueryState query={effectiveQuery}>
-      {(lesson) => editing ? <LessonEditor mod={mod} lesson={lesson} onDone={() => setEditing(false)} /> : (
+      {(lesson) => editing ? <LessonEditor mod={mod} lesson={lesson} onDone={closeEditor} /> : (
         <article>
           {readingOffline && (
             <Alert tone="info" className="mb-4">
@@ -176,65 +727,68 @@ function Lesson({ mod, lessonId }) {
             </Alert>
           )}
           <Card className="print:border-0 print:shadow-none">
-            <header className="mb-5 border-b border-line pb-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="flex flex-wrap items-center gap-2 text-xs font-medium text-faint">
-                    <Badge tone="brand">{LESSON_KINDS[lesson.kind] ?? 'Lesson'}</Badge>
-                    {lesson.estimatedMinutes ? <span className="flex items-center gap-1"><Clock className="size-3.5" aria-hidden="true" />about {lesson.estimatedMinutes} min</span> : null}
-                    {canManage && lesson.status === 'DRAFT' && <Badge tone="warn">Draft — hidden from students</Badge>}
-                    <span>Updated {relativeTime(lesson.updatedAt)}</span>
-                  </p>
-                  <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink text-balance">{lesson.title}</h1>
+            <div className="mx-auto max-w-[68ch]">
+              <header className="mb-6 border-b border-line pb-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
+                      {mod.lessons?.length > 0 && <span>Chapter {chapterIndex + 1} of {mod.lessons.length}</span>}
+                      <Badge tone="brand">{LESSON_KINDS[lesson.kind] ?? 'Lesson'}</Badge>
+                      {lesson.estimatedMinutes ? <span className="flex items-center gap-1 font-medium normal-case tracking-normal text-faint"><Clock className="size-3.5" aria-hidden="true" />about {lesson.estimatedMinutes} min</span> : null}
+                      {canManage && lesson.status === 'DRAFT' && <Badge tone="warn">Draft — hidden from students</Badge>}
+                      <span className="font-normal normal-case tracking-normal text-faint">Updated {relativeTime(lesson.updatedAt)}</span>
+                    </p>
+                    <h1 className="mt-2.5 text-2xl font-bold tracking-tight text-ink sm:text-[1.7rem] text-balance">{lesson.title}</h1>
+                  </div>
+                  <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5">
+                    <Button
+                      variant={savedOffline ? 'soft' : 'ghost'}
+                      size="sm"
+                      icon={savedOffline ? Check : Download}
+                      loading={savingOffline}
+                      aria-pressed={savedOffline}
+                      className={savedOffline ? 'text-ok' : ''}
+                      onClick={() => toggleOffline(lesson)}
+                    >
+                      {savedOffline ? 'Offline ready' : 'Save offline'}
+                    </Button>
+                    {!canManage && <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={lesson.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate(!lesson.bookmarked)}>{lesson.bookmarked ? 'Saved' : 'Save'}</Button>}
+                    <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} aria-label="Print this lesson" />
+                    {canManage && <Button variant="secondary" size="sm" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>}
+                    {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
+                    {canManage && !readOnly && <Button variant="dangerGhost" size="sm" icon={Trash2} onClick={() => setDialog('delete')} aria-label="Delete this lesson" />}
+                  </div>
                 </div>
-                <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5">
-                  <Button
-                    variant={savedOffline ? 'soft' : 'ghost'}
-                    size="sm"
-                    icon={savedOffline ? Check : Download}
-                    loading={savingOffline}
-                    aria-pressed={savedOffline}
-                    className={savedOffline ? 'text-ok' : ''}
-                    onClick={() => toggleOffline(lesson)}
-                  >
-                    {savedOffline ? 'Offline ready' : 'Save offline'}
-                  </Button>
-                  {!canManage && <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={lesson.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate(!lesson.bookmarked)}>{lesson.bookmarked ? 'Saved' : 'Save'}</Button>}
-                  <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} aria-label="Print this lesson" />
-                  {canManage && <Button variant="secondary" size="sm" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>}
-                  {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
-                  {canManage && !readOnly && <Button variant="dangerGhost" size="sm" icon={Trash2} onClick={() => setDialog('delete')} aria-label="Delete this lesson" />}
-                </div>
-              </div>
-              {lesson.objectives.length > 0 && (
-                <ul className="mt-3 space-y-1 text-sm text-soft">
-                  {lesson.objectives.map((o) => <li key={o} className="flex gap-2"><Target className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />{o}</li>)}
-                </ul>
-              )}
-            </header>
-
-            <RichText html={lesson.contentHtml} className="text-[15.5px]" empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
-
-            {(lesson.aiStudyCoachEnabled || canManage) && Boolean(lesson.contentHtml?.trim()) && (
-              <StudyCoachPanel lessonId={lesson.id} lessonTitle={lesson.title} canManage={canManage} enabledForStudents={lesson.aiStudyCoachEnabled} />
-            )}
-
-            {(lesson.resources.length > 0 || (canManage && !readOnly)) && (
-              <section className="mt-8 border-t border-line pt-5" aria-labelledby="lesson-resources">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 id="lesson-resources" className="text-sm font-semibold text-ink">Attachments and links</h2>
-                  {canManage && !readOnly && <Button variant="ghost" size="sm" icon={Plus} className="no-print" onClick={() => setDialog('resource')}>Add</Button>}
-                </div>
-                {lesson.resources.length === 0 ? <p className="text-sm text-faint">Nothing attached.</p> : (
-                  <ul className="grid grid-cols-1 gap-2 xl:grid-cols-2">
-                    {lesson.resources.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} />)}
+                {lesson.objectives.length > 0 && (
+                  <ul className="mt-3.5 space-y-1 text-sm text-soft">
+                    {lesson.objectives.map((o) => <li key={o} className="flex gap-2"><Target className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />{o}</li>)}
                   </ul>
                 )}
-              </section>
-            )}
+              </header>
+
+              <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
+
+              {(lesson.aiStudyCoachEnabled || canManage) && Boolean(lesson.contentHtml?.trim()) && (
+                <StudyCoachPanel lessonId={lesson.id} lessonTitle={lesson.title} canManage={canManage} enabledForStudents={lesson.aiStudyCoachEnabled} />
+              )}
+
+              {(lesson.resources.length > 0 || (canManage && !readOnly)) && (
+                <section className="mt-8 border-t border-line pt-5" aria-labelledby="lesson-resources">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h2 id="lesson-resources" className="text-sm font-semibold text-ink">Attachments and links</h2>
+                    {canManage && !readOnly && <Button variant="ghost" size="sm" icon={Plus} className="no-print" onClick={() => setDialog('resource')}>Add</Button>}
+                  </div>
+                  {lesson.resources.length === 0 ? <p className="text-sm text-faint">Nothing attached.</p> : (
+                    <ul className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                      {lesson.resources.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} />)}
+                    </ul>
+                  )}
+                </section>
+              )}
+            </div>
           </Card>
 
-          <nav className="no-print mt-4 flex flex-wrap items-center justify-between gap-3" aria-label="Lesson navigation">
+          <nav className="no-print mt-4 flex flex-wrap items-center justify-between gap-3" aria-label="Chapter navigation">
             {lesson.previous ? <Button variant="secondary" icon={ArrowLeft} to={`${base}/modules/${mod.id}?lesson=${lesson.previous.id}`} className="max-w-[45%]"><span className="truncate">{lesson.previous.title}</span></Button> : <span />}
             {!canManage && (
               lesson.completed

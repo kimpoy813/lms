@@ -23,6 +23,8 @@ export default function AiDraftReview({ generatedId, onBack, configured }) {
   return <Review key={`${generatedId}-${query.data.version}`} draft={query.data} onBack={onBack} configured={configured} />;
 }
 
+const wordCount = (html) => String(html ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length;
+
 function Review({ draft, onBack, configured }) {
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -80,7 +82,15 @@ function Review({ draft, onBack, configured }) {
         </Card>
 
         <section aria-label="Lessons">
-          <div className="mb-2 flex items-center justify-between"><h2 className="text-base font-semibold text-ink">{plural(c.lessons.length, 'lesson')}</h2>{!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.lessons.length >= 20} onClick={() => { change({ lessons: [...c.lessons, { title: 'New lesson', kind: 'LESSON', estimatedMinutes: null, contentHtml: '' }] }); setOpen(c.lessons.length); }}>Add a lesson</Button>}</div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">{plural(c.lessons.length, 'chapter')}</h2>
+              <span className="text-xs text-faint">
+                {c.lessons.reduce((sum, l) => sum + wordCount(l.contentHtml), 0).toLocaleString()} words total
+              </span>
+            </div>
+            {!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.lessons.length >= 20} onClick={() => { change({ lessons: [...c.lessons, { title: 'New lesson', kind: 'LESSON', estimatedMinutes: null, contentHtml: '' }] }); setOpen(c.lessons.length); }}>Add a lesson</Button>}
+          </div>
           <ol className="space-y-3">
             {c.lessons.map((l, i) => (
               <li key={i} className="rounded-2xl border border-line bg-surface shadow-card">
@@ -88,7 +98,7 @@ function Review({ draft, onBack, configured }) {
                   <button type="button" onClick={() => setOpen(open === i ? -1 : i)} aria-expanded={open === i} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                     <ChevronDown className={cn('size-4 shrink-0 text-faint transition-transform', open !== i && '-rotate-90')} aria-hidden="true" />
                     <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-brand-soft text-xs font-bold text-brand">{i + 1}</span>
-                    <span className="min-w-0"><span className="block truncate font-medium text-ink">{l.title}</span><span className="block text-xs text-faint">{LESSON_KINDS[l.kind] ?? 'Lesson'}{l.estimatedMinutes ? ` · ${l.estimatedMinutes} min` : ''}</span></span>
+                    <span className="min-w-0"><span className="block truncate font-medium text-ink">{l.title}</span><span className="block text-xs text-faint">{LESSON_KINDS[l.kind] ?? 'Lesson'}{l.estimatedMinutes ? ` · ${l.estimatedMinutes} min` : ''} · {wordCount(l.contentHtml)} words</span></span>
                   </button>
                   {!locked && <>
                     <IconButton size="sm" icon={ArrowUp} label="Move up" disabled={i === 0} onClick={() => move(i, -1)} />
@@ -207,6 +217,13 @@ function RewriteDialog({ draftId, index, lesson, dirty, saveDraft, onClose, onAc
   const [instruction, setInstruction] = useState('');
   const [suggestion, setSuggestion] = useState(null);
   const [error, setError] = useState(null);
+  const quickPresets = [
+    'Expand into a deep, textbook-style chapter with detailed explanation, worked example, pitfalls, and self-check questions.',
+    'Add a concrete worked example and step-by-step walkthrough.',
+    'Add a clear comparison table highlighting key concepts and contrasts.',
+    'Add 3 self-check reflection questions at the end.',
+    'Make bilingual (English with key terms and study guide in Filipino).',
+  ];
   const rewrite = useAction(async () => {
     // The server rewrites the lesson as it was last saved, so save pending edits first.
     if (dirty) await saveDraft();
@@ -217,9 +234,23 @@ function RewriteDialog({ draftId, index, lesson, dirty, saveDraft, onClose, onAc
       footer={suggestion ? <><Button variant="secondary" onClick={() => setSuggestion(null)}>Try again</Button><Button icon={Check} onClick={() => onAccept(suggestion)}>Use this version</Button></> : <><Button variant="secondary" onClick={onClose}>Cancel</Button><Button icon={Sparkles} loading={rewrite.isPending} disabled={instruction.trim().length < 3} onClick={() => { setError(null); rewrite.mutate(); }}>Rewrite</Button></>}>
       {error && <Alert tone="bad" className="mb-4">{error}</Alert>}
       {suggestion ? (
-        <div><p className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">{suggestion.title}<Badge tone="warn">Suggestion</Badge></p><div className="max-h-[50vh] overflow-y-auto rounded-xl border border-line p-4"><RichText html={suggestion.contentHtml} /></div></div>
+        <div><p className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">{suggestion.title}<Badge tone="warn">Suggestion</Badge></p><div className="max-h-[50vh] overflow-y-auto rounded-xl border border-line p-4"><RichText html={suggestion.contentHtml} className="rich-book" /></div></div>
       ) : (
-        <Field label="How should it change?"><Textarea rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)} maxLength={1000} placeholder="e.g. Add a worked example using peso amounts, and shorten the introduction." data-autofocus /></Field>
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {quickPresets.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setInstruction(preset)}
+                className="rounded-lg border border-line bg-raised/60 px-2.5 py-1 text-left text-xs font-medium text-soft hover:border-brand hover:text-ink"
+              >
+                {preset.split('.')[0]}
+              </button>
+            ))}
+          </div>
+          <Field label="How should it change?"><Textarea rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)} maxLength={1000} placeholder="e.g. Expand into a full textbook chapter with Philippine examples and a worked trace." data-autofocus /></Field>
+        </div>
       )}
     </Modal>
   );
