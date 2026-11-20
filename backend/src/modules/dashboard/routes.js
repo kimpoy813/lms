@@ -4,13 +4,14 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../db/prisma.js';
 import { fullName, ok, round } from '../../lib/http.js';
 import { excerpt } from '../../lib/sanitize.js';
-import { addDays, dateKey, startOfDay, weekdayOf } from '../../lib/time.js';
+import { addDays, atTime, dateKey, startOfDay, weekdayOf } from '../../lib/time.js';
 import { publishedWhere, quizResultsVisible } from '../../lib/visibility.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { aiConfigured } from '../../services/ai.js';
 import { mailAvailable, mailConfigured } from '../../services/mail.js';
 import { getSetting, getTimeZone, SETTING_DEFINITIONS } from '../../services/settings.js';
 import { assessRisk, attendanceTotals, missingWork, rateOf, riskThresholds } from '../analytics/service.js';
+import { effectiveWindow } from '../calendar/overlaps.js';
 import { classLabel } from '../classes/access.js';
 import { computeClassGrades } from '../gradebook/service.js';
 
@@ -26,13 +27,49 @@ const classInclude = {
   teacher: { select: { firstName: true, lastName: true } },
 };
 
-/** Today's meetings of the given classes, in the institution's timezone. */
-function todaysSchedule(classes, tz, now) {
+/** Today's meetings of the given classes, in the institution's timezone, annotated with leave/holiday notices. */
+async function todaysSchedule(classes, tz, now) {
   const today = dateKey(now, tz);
   const weekday = weekdayOf(today);
-  return classes
+  const meetings = classes
     .flatMap((cls) => cls.schedules.filter((s) => s.dayOfWeek === weekday).map((s) => ({ classId: cls.id, label: classLabel(cls), title: cls.course.title, color: cls.color, startTime: s.startTime, endTime: s.endTime, room: s.room ?? cls.room ?? null })))
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
+  if (meetings.length === 0) return [];
+
+  const classIds = [...new Set(meetings.map((m) => m.classId))];
+  const dayStart = startOfDay(today, tz);
+  const dayEnd = startOfDay(addDays(today, 1), tz);
+  const events = await prisma.calendarEvent.findMany({
+    where: {
+      type: { in: ['TEACHER_LEAVE', 'HOLIDAY'] },
+      startAt: { lt: dayEnd },
+      endAt: { gte: dayStart },
+      OR: [
+        { scope: 'INSTITUTION' },
+        { scope: 'CLASS', classId: { in: classIds } },
+        { scope: 'CLASSES', affectedClasses: { some: { classId: { in: classIds } } } },
+      ],
+    },
+    include: { affectedClasses: { select: { classId: true } } },
+    orderBy: { startAt: 'asc' },
+  });
+
+  if (events.length === 0) return meetings;
+
+  return meetings.map((m) => {
+    const mStartMs = atTime(today, m.startTime, tz).getTime();
+    const mEndMs = atTime(today, m.endTime, tz).getTime();
+    const hit = events.find((e) => {
+      const applies =
+        e.scope === 'INSTITUTION' ||
+        (e.scope === 'CLASS' && e.classId === m.classId) ||
+        (e.scope === 'CLASSES' && e.affectedClasses.some((ac) => ac.classId === m.classId));
+      if (!applies) return false;
+      const win = effectiveWindow(e.startAt, e.endAt, e.allDay, tz);
+      return win.isInstant ? mStartMs <= win.startMs && mEndMs > win.startMs : mStartMs < win.endMs && mEndMs > win.startMs;
+    });
+    return hit ? { ...m, notice: { eventId: hit.id, type: hit.type, title: hit.title } } : m;
+  });
 }
 
 async function latestAnnouncements(user, classIds, now) {
@@ -138,7 +175,7 @@ async function studentDashboard(user) {
     role: 'STUDENT',
     date: dateKey(now, tz),
     stats: { classes: classes.length, dueThisWeek: todo.length, missing: missing.length, attendanceRate: rateOf(overall), pendingEnrollments: pendingJoin, invitations },
-    today: todaysSchedule(classes, tz, now),
+    today: await todaysSchedule(classes, tz, now),
     checkIns: sessions.map((s) => ({ sessionId: s.id, classId: s.classId, classLabel: labelOf.get(s.classId), title: s.title, endTime: s.endTime, allowCode: s.allowCode, allowQr: s.allowQr, requireLocation: s.requireLocation, recorded: s.records[0]?.status ?? null })),
     todo: todo.slice(0, 10),
     missing: missing.slice(0, 8),
@@ -228,7 +265,7 @@ async function teacherDashboard(user) {
       classes: classes.length, students, toGrade: toGrade.reduce((a, t) => a + t.count, 0),
       pendingRequests: [...pendingByClass.values()].reduce((a, b) => a + b, 0) + corrections + appeals, atRisk: atRisk.length,
     },
-    today: todaysSchedule(classes, tz, now),
+    today: await todaysSchedule(classes, tz, now),
     openSessions: openSessions.map((s) => ({ sessionId: s.id, classId: s.classId, classLabel: labelOf.get(s.classId), title: s.title, startTime: s.startTime, endTime: s.endTime, recorded: s._count.records })),
     toGrade: toGrade.slice(0, 8),
     requests: { enrollments: [...pendingByClass.values()].reduce((a, b) => a + b, 0), attendanceCorrections: corrections, gradeAppeals: appeals },

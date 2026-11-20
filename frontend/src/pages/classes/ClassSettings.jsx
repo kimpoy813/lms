@@ -1,6 +1,7 @@
 // Class settings (teacher and administrator): details, schedule, joining, privacy, syllabus, archive.
+import { useQueryClient } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, Copy, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
@@ -8,11 +9,13 @@ import { Alert, Button, Card, CardHeader, ConfirmDialog, EmptyState, Field, Inpu
 import { api } from '../../lib/api.js';
 import { useAction } from '../../lib/query.js';
 import { ColorPicker, CopyClassDialog, ScheduleEditor } from './Classes.jsx';
+import CopyClassSetupModal from './CopyClassSetupModal.jsx';
 import { useClass } from './useClass.js';
 
 export default function ClassSettings() {
   const { cls, canManage } = useClass();
   const { isAdmin, can } = useAuth();
+  const client = useQueryClient();
   const navigate = useNavigate();
   const archived = cls.status === 'ARCHIVED';
   const [values, setValues] = useState(() => ({
@@ -27,8 +30,15 @@ export default function ClassSettings() {
   const [errors, setErrors] = useState({});
   const [confirm, setConfirm] = useState(null);
   const [copying, setCopying] = useState(false);
+  const [copySetupOpen, setCopySetupOpen] = useState(false);
   const set = (name, value) => setValues((v) => ({ ...v, [name]: value }));
   const invalidate = [['class', cls.id], ['classes'], ['dashboard']];
+
+  const syllabusDirty = useMemo(() => {
+    const clean = (list) => (list ?? []).map((o) => o.trim()).filter(Boolean);
+    return (values.syllabusHtml ?? '') !== (cls.syllabusHtml ?? '')
+      || JSON.stringify(clean(values.learningOutcomes)) !== JSON.stringify(clean(cls.learningOutcomes));
+  }, [values.syllabusHtml, values.learningOutcomes, cls.syllabusHtml, cls.learningOutcomes]);
 
   const save = useAction(() => api.patch(`/classes/${cls.id}`, {
     ...values,
@@ -85,33 +95,43 @@ export default function ClassSettings() {
             )}
           </div>
         </Card>
+      </fieldset>
 
-        <Card>
-          <CardHeader title="Syllabus and learning outcomes" description="Shown on the class overview." />
-          <div className="space-y-4">
-            <fieldset>
-              <legend className="mb-1.5 text-sm font-medium text-ink">Learning outcomes</legend>
-              <ul className="space-y-2">
-                {values.learningOutcomes.map((o, i) => (
-                  <li key={i} className="flex items-center gap-2">
-                    <Input value={o} onChange={(e) => set('learningOutcomes', values.learningOutcomes.map((x, n) => (n === i ? e.target.value : x)))} aria-label={`Learning outcome ${i + 1}`} maxLength={300} />
-                    <Button variant="ghost" size="sm" icon={X} aria-label="Remove this outcome" onClick={() => set('learningOutcomes', values.learningOutcomes.filter((_, n) => n !== i))} />
-                  </li>
-                ))}
-              </ul>
-              <Button variant="secondary" size="sm" icon={Plus} className="mt-2" onClick={() => set('learningOutcomes', [...values.learningOutcomes, ''])} disabled={values.learningOutcomes.length >= 20}>Add an outcome</Button>
-              {errors.learningOutcomes && <p className="mt-1.5 text-[13px] text-bad">{errors.learningOutcomes}</p>}
-            </fieldset>
-            <Field label="Syllabus" error={errors.syllabusHtml}>
-              <LazyEditor value={values.syllabusHtml} onChange={(html) => set('syllabusHtml', html)} placeholder="Course description, topics per week, grading system, class policies…" minHeight={220} ariaLabel="Syllabus" />
-            </Field>
-          </div>
-        </Card>
+      <Card>
+        <CardHeader
+          title="Syllabus and learning outcomes"
+          description="Shown on the class overview."
+          action={(
+            <Button variant="secondary" size="sm" icon={Copy} onClick={() => setCopySetupOpen(true)}>
+              {archived ? 'Copy to another class…' : 'Copy / Import…'}
+            </Button>
+          )}
+        />
+        <fieldset disabled={archived} className="space-y-4">
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-medium text-ink">Learning outcomes</legend>
+            <ul className="space-y-2">
+              {values.learningOutcomes.map((o, i) => (
+                <li key={i} className="flex items-center gap-2">
+                  <Input value={o} onChange={(e) => set('learningOutcomes', values.learningOutcomes.map((x, n) => (n === i ? e.target.value : x)))} aria-label={`Learning outcome ${i + 1}`} maxLength={300} />
+                  <Button variant="ghost" size="sm" icon={X} aria-label="Remove this outcome" onClick={() => set('learningOutcomes', values.learningOutcomes.filter((_, n) => n !== i))} />
+                </li>
+              ))}
+            </ul>
+            <Button variant="secondary" size="sm" icon={Plus} className="mt-2" onClick={() => set('learningOutcomes', [...values.learningOutcomes, ''])} disabled={values.learningOutcomes.length >= 20}>Add an outcome</Button>
+            {errors.learningOutcomes && <p className="mt-1.5 text-[13px] text-bad">{errors.learningOutcomes}</p>}
+          </fieldset>
+          <Field label="Syllabus" error={errors.syllabusHtml}>
+            <LazyEditor value={values.syllabusHtml} onChange={(html) => set('syllabusHtml', html)} placeholder="Course description, topics per week, grading system, class policies…" minHeight={220} ariaLabel="Syllabus" />
+          </Field>
+        </fieldset>
+      </Card>
 
+      {!archived && (
         <div className="sticky bottom-0 -mx-1 flex justify-end bg-gradient-to-t from-canvas from-70% px-1 pb-2 pt-6">
           <Button icon={Save} loading={save.isPending} onClick={() => save.mutate()}>Save changes</Button>
         </div>
-      </fieldset>
+      )}
 
       {can('class.create') && (
         <Card>
@@ -129,6 +149,25 @@ export default function ClassSettings() {
       </Card>
 
       {copying && <CopyClassDialog cls={cls} onClose={() => setCopying(false)} />}
+
+      <CopyClassSetupModal
+        open={copySetupOpen}
+        onClose={() => setCopySetupOpen(false)}
+        cls={cls}
+        defaultSelected={{ gradeWeights: false, gradePolicy: false, syllabus: true, learningOutcomes: true }}
+        hasUnsavedChanges={syllabusDirty}
+        onImported={async ({ syllabus, learningOutcomes }) => {
+          const fresh = await client.fetchQuery({
+            queryKey: ['class', cls.id],
+            queryFn: () => api.get(`/classes/${cls.id}`),
+          });
+          setValues((v) => ({
+            ...v,
+            ...(syllabus ? { syllabusHtml: fresh.syllabusHtml ?? '' } : {}),
+            ...(learningOutcomes ? { learningOutcomes: fresh.learningOutcomes ?? [] } : {}),
+          }));
+        }}
+      />
 
       <ConfirmDialog open={confirm === 'code'} onClose={() => setConfirm(null)} onConfirm={() => regenerate.mutate()} loading={regenerate.isPending} title="Create a new class code?" confirmLabel="Create new code" tone="primary">
         The current code stops working immediately. Students who already joined are not affected.

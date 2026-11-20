@@ -19,6 +19,7 @@ import { validate } from '../../middleware/validate.js';
 import { notify } from '../../services/notifications.js';
 import { getSettings, getTimeZone } from '../../services/settings.js';
 import { classIdsFor, classLabel, requireWritableClassManager } from '../classes/access.js';
+import { findOverlappingClassMeetings, MAX_OVERLAP_SPAN_DAYS, notifyAffectedClasses } from './overlaps.js';
 
 export const calendarRouter = Router();
 export const consultationsRouter = Router();
@@ -44,9 +45,13 @@ async function collectCalendarItems(user, { from, to, classId, tz }) {
       where: {
         startAt: { lt: to }, endAt: { gte: from },
         OR: [
-          ...(classId ? [] : [{ scope: 'INSTITUTION' }, { scope: 'PERSONAL', ownerId: user.id }]),
+          ...(classId ? [] : [{ scope: 'INSTITUTION' }, { scope: 'PERSONAL', ownerId: user.id }, { scope: 'CLASSES', ownerId: user.id }]),
           { scope: 'CLASS', classId: { in: classIds } },
+          { scope: 'CLASSES', affectedClasses: { some: { classId: { in: classIds } } } },
         ],
+      },
+      include: {
+        affectedClasses: { include: { class: { select: { id: true, color: true, ...classInclude } } } },
       },
       orderBy: { startAt: 'asc' }, take: 1000,
     }),
@@ -62,11 +67,28 @@ async function collectCalendarItems(user, { from, to, classId, tz }) {
 
   const items = [];
   for (const e of events) {
-    const canEdit = e.ownerId === user.id || (e.scope === 'INSTITUTION' && user.role === 'ADMIN') || (e.scope === 'CLASS' && user.role === 'ADMIN');
-    items.push({
-      id: `event:${e.id}`, eventId: e.id, kind: 'EVENT', type: e.type, scope: e.scope, title: e.title, description: e.description, location: e.location,
-      startAt: e.startAt, endAt: e.endAt, allDay: e.allDay, classId: e.classId, classLabel: e.classId ? labelOf.get(e.classId) : null, color: e.classId ? colorOf.get(e.classId) : null, canEdit,
-    });
+    const canEdit = e.ownerId === user.id || (e.scope === 'INSTITUTION' && user.role === 'ADMIN') || ((e.scope === 'CLASS' || e.scope === 'CLASSES') && user.role === 'ADMIN');
+    if (e.scope === 'CLASSES') {
+      const canSeeAll = e.ownerId === user.id || user.role === 'ADMIN';
+      const visibleLinks = e.affectedClasses.filter((ac) => (classId ? ac.classId === classId : canSeeAll || labelOf.has(ac.classId)));
+      const affected = visibleLinks.map((ac) => ({ id: ac.class.id, label: classLabel(ac.class), color: ac.class.color }));
+      const single = affected.length === 1 ? affected[0] : null;
+      items.push({
+        id: `event:${e.id}`, eventId: e.id, kind: 'EVENT', type: e.type, scope: e.scope, title: e.title, description: e.description, location: e.location,
+        startAt: e.startAt, endAt: e.endAt, allDay: e.allDay,
+        classId: single ? single.id : null,
+        classLabel: affected.length > 0 ? affected.map((c) => c.label).join(', ') : null,
+        color: single ? single.color : null,
+        affectedClasses: affected,
+        affectedClassIds: affected.map((c) => c.id),
+        canEdit,
+      });
+    } else {
+      items.push({
+        id: `event:${e.id}`, eventId: e.id, kind: 'EVENT', type: e.type, scope: e.scope, title: e.title, description: e.description, location: e.location,
+        startAt: e.startAt, endAt: e.endAt, allDay: e.allDay, classId: e.classId, classLabel: e.classId ? labelOf.get(e.classId) : null, color: e.classId ? colorOf.get(e.classId) : null, canEdit,
+      });
+    }
   }
   // Weekly class meetings, expanded for every day of the range (institution timezone).
   const lastDay = dateKey(new Date(to.getTime() - 1), tz);
@@ -147,10 +169,54 @@ calendarRouter.get(
 );
 
 // ── Events ───────────────────────────────────────────────────────────────────
+const teacherClassInclude = { ...classInclude, schedules: { orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }] } };
+
+calendarRouter.get(
+  '/overlapping-classes',
+  requireRole('TEACHER', 'ADMIN'),
+  validate({
+    query: z.object({
+      startAt: zDateTime,
+      endAt: zDateTime,
+      allDay: z.enum(['true', 'false', '1', '0']).optional(),
+      teacherId: zId.optional(),
+    }),
+  }),
+  async (req, res) => {
+    const { startAt, endAt, allDay: rawAllDay, teacherId } = req.valid.query;
+    if (endAt < startAt) throw fieldErrors({ endAt: 'The event cannot end before it starts.' });
+    if (endAt.getTime() - startAt.getTime() > MAX_OVERLAP_SPAN_DAYS * 86_400_000) {
+      throw fieldErrors({ endAt: `Choose a span of at most ${MAX_OVERLAP_SPAN_DAYS} days to check schedules.` });
+    }
+    const allDay = rawAllDay === 'true' || rawAllDay === '1';
+    const targetTeacherId = req.user.role === 'ADMIN' && teacherId ? teacherId : req.user.id;
+    const tz = await getTimeZone();
+    const classes = await prisma.class.findMany({
+      where: { teacherId: targetTeacherId, status: 'ACTIVE' },
+      include: { ...teacherClassInclude, _count: { select: { enrollments: { where: { status: 'ENROLLED' } } } } },
+    });
+    const { overlapping, otherClasses } = findOverlappingClassMeetings(classes, { startAt, endAt, allDay, tz });
+    const overlappingIds = overlapping.map((c) => c.classId);
+    const uniqueStudents = overlappingIds.length > 0
+      ? await prisma.enrollment.findMany({ where: { classId: { in: overlappingIds }, status: 'ENROLLED' }, distinct: ['studentId'], select: { studentId: true } })
+      : [];
+    ok(res, {
+      timeZone: tz,
+      totalOverlappingClasses: overlapping.length,
+      totalAffectedStudents: uniqueStudents.length,
+      overlapping,
+      otherClasses,
+    });
+  },
+);
+
 const eventBody = z.object({
-  scope: z.enum(['INSTITUTION', 'CLASS', 'PERSONAL']).default('PERSONAL'),
+  scope: z.enum(['INSTITUTION', 'CLASS', 'CLASSES', 'PERSONAL']).default('PERSONAL'),
   classId: zId.nullable().optional(),
-  type: z.enum(['HOLIDAY', 'INSTITUTIONAL', 'CLASS_ACTIVITY', 'EXAM', 'CONSULTATION', 'OTHER']).default('OTHER'),
+  classIds: z.array(zId).max(100).optional(),
+  matchSchedule: z.boolean().default(true),
+  notifyStudents: z.boolean().default(true),
+  type: z.enum(['HOLIDAY', 'INSTITUTIONAL', 'CLASS_ACTIVITY', 'EXAM', 'CONSULTATION', 'TEACHER_LEAVE', 'OTHER']).default('OTHER'),
   title: zTitle,
   description: z.string().trim().max(2000).nullable().optional(),
   location: z.string().trim().max(120).nullable().optional(),
@@ -169,30 +235,114 @@ async function assertEventScope(user, scope, classId) {
     const { cls } = await requireWritableClassManager(user, classId);
     return cls;
   }
+  if (scope === 'CLASSES') {
+    if (user.role === 'STUDENT') throw forbidden('Only teachers or administrators can post calendar events to classes.');
+  }
   return null;
 }
 
-const eventView = (e) => ({ id: e.id, scope: e.scope, classId: e.classId, type: e.type, title: e.title, description: e.description, location: e.location, startAt: e.startAt, endAt: e.endAt, allDay: e.allDay });
+const eventView = (e) => ({
+  id: e.id,
+  scope: e.scope,
+  classId: e.classId,
+  ...(e.scope === 'CLASSES'
+    ? {
+        affectedClassIds: (e.affectedClasses ?? []).map((ac) => ac.classId),
+        affectedClasses: (e.affectedClasses ?? []).map((ac) => ({ id: ac.class.id, label: classLabel(ac.class), color: ac.class.color })),
+      }
+    : {}),
+  type: e.type,
+  title: e.title,
+  description: e.description,
+  location: e.location,
+  startAt: e.startAt,
+  endAt: e.endAt,
+  allDay: e.allDay,
+});
+
+async function resolveClassesForEvent(user, teacherId, explicitIds, { startAt, endAt, allDay, tz }) {
+  if (explicitIds !== undefined) {
+    const uniqueIds = [...new Set(explicitIds)];
+    if (uniqueIds.length === 0) {
+      throw fieldErrors({ classIds: 'Choose at least one class to notify.' });
+    }
+    for (const cid of uniqueIds) {
+      await requireWritableClassManager(user, cid);
+    }
+    return prisma.class.findMany({
+      where: { id: { in: uniqueIds }, status: 'ACTIVE' },
+      include: teacherClassInclude,
+    });
+  }
+  if (endAt.getTime() - startAt.getTime() > MAX_OVERLAP_SPAN_DAYS * 86_400_000) {
+    throw fieldErrors({ endAt: `Choose a span of at most ${MAX_OVERLAP_SPAN_DAYS} days to auto-match schedules.` });
+  }
+  const active = await prisma.class.findMany({
+    where: { teacherId, status: 'ACTIVE' },
+    include: teacherClassInclude,
+  });
+  const { overlapping } = findOverlappingClassMeetings(active, { startAt, endAt, allDay, tz });
+  if (overlapping.length === 0) {
+    throw fieldErrors({ classIds: 'No scheduled classes fall in this time range. Choose at least one class or adjust the time range.' });
+  }
+  const hitSet = new Set(overlapping.map((c) => c.classId));
+  return active.filter((c) => hitSet.has(c.id));
+}
 
 calendarRouter.post('/events', validate({ body: eventBody }), async (req, res) => {
   const b = req.valid.body;
   if (b.endAt < b.startAt) throw fieldErrors({ endAt: 'The event cannot end before it starts.' });
   const cls = await assertEventScope(req.user, b.scope, b.classId);
+  const tz = await getTimeZone();
+
+  if (b.scope === 'CLASSES') {
+    const classes = await resolveClassesForEvent(req.user, req.user.id, b.classIds, { startAt: b.startAt, endAt: b.endAt, allDay: b.allDay, tz });
+    const event = await prisma.calendarEvent.create({
+      data: {
+        scope: 'CLASSES',
+        classId: null,
+        ownerId: req.user.id,
+        type: b.type,
+        title: plainText(b.title, 200),
+        description: b.description ? plainText(b.description, 2000) : null,
+        location: b.location ? plainText(b.location, 120) : null,
+        startAt: b.startAt,
+        endAt: b.endAt,
+        allDay: b.allDay,
+        affectedClasses: { create: classes.map((c) => ({ classId: c.id })) },
+      },
+      include: { affectedClasses: { include: { class: { select: { id: true, color: true, ...classInclude } } } } },
+    });
+    const { hitsByClassId } = findOverlappingClassMeetings(classes, { startAt: b.startAt, endAt: b.endAt, allDay: b.allDay, tz });
+    const { notifiedStudents } = b.notifyStudents
+      ? await notifyAffectedClasses({ prisma, event, classes, hitsByClassId, tz, actorName: fullName(req.user), action: 'created' })
+      : { notifiedStudents: 0 };
+    return created(res, { ...eventView(event), notifiedStudents });
+  }
+
   const event = await prisma.calendarEvent.create({
     data: {
       scope: b.scope, classId: b.scope === 'CLASS' ? cls.id : null, ownerId: req.user.id, type: b.type, title: plainText(b.title, 200),
       description: b.description ? plainText(b.description, 2000) : null, location: b.location ? plainText(b.location, 120) : null, startAt: b.startAt, endAt: b.endAt, allDay: b.allDay,
     },
   });
-  if (cls) {
-    const students = await prisma.enrollment.findMany({ where: { classId: cls.id, status: 'ENROLLED' }, select: { studentId: true } });
-    await notify(students.map((s) => s.studentId), { type: 'calendar.event', title: `New on the calendar: ${event.title}`, body: classLabel(cls), link: '/calendar', classId: cls.id });
+  let notifiedStudents = 0;
+  if (cls && b.notifyStudents) {
+    const fullCls = await prisma.class.findUnique({ where: { id: cls.id }, include: teacherClassInclude });
+    const { hitsByClassId } = findOverlappingClassMeetings([fullCls], { startAt: b.startAt, endAt: b.endAt, allDay: b.allDay, tz });
+    ({ notifiedStudents } = await notifyAffectedClasses({ prisma, event, classes: [fullCls], hitsByClassId, tz, actorName: fullName(req.user), action: 'created' }));
   }
-  created(res, eventView(event));
+  created(res, cls ? { ...eventView(event), notifiedStudents } : eventView(event));
 });
 
 async function loadOwnEvent(user, id) {
-  const event = await prisma.calendarEvent.findUnique({ where: { id } });
+  const event = await prisma.calendarEvent.findUnique({
+    where: { id },
+    include: {
+      class: { include: teacherClassInclude },
+      affectedClasses: { include: { class: { include: teacherClassInclude } } },
+    },
+  });
   if (!event) throw notFound('Event');
   const mayEdit = event.ownerId === user.id || (user.role === 'ADMIN' && event.scope !== 'PERSONAL');
   if (!mayEdit) {
@@ -209,23 +359,72 @@ calendarRouter.patch('/events/:eventId', validate({ params: idParams('eventId'),
   const startAt = b.startAt ?? event.startAt;
   const endAt = b.endAt ?? event.endAt;
   if (endAt < startAt) throw fieldErrors({ endAt: 'The event cannot end before it starts.' });
-  const updated = await prisma.calendarEvent.update({
-    where: { id: event.id },
-    data: {
-      ...(b.type !== undefined ? { type: b.type } : {}),
-      ...(b.title !== undefined ? { title: plainText(b.title, 200) } : {}),
-      ...(b.description !== undefined ? { description: b.description ? plainText(b.description, 2000) : null } : {}),
-      ...(b.location !== undefined ? { location: b.location ? plainText(b.location, 120) : null } : {}),
-      ...(b.allDay !== undefined ? { allDay: b.allDay } : {}),
-      startAt, endAt,
-    },
+  const allDay = b.allDay ?? event.allDay;
+  const tz = await getTimeZone();
+
+  const previousClasses = event.scope === 'CLASSES' ? event.affectedClasses.map((ac) => ac.class) : event.class ? [event.class] : [];
+  let nextClasses = previousClasses;
+  if (event.scope === 'CLASSES' && (b.classIds !== undefined || b.matchSchedule)) {
+    nextClasses = await resolveClassesForEvent(req.user, event.ownerId, b.classIds, { startAt, endAt, allDay, tz });
+  }
+
+  const nextIds = nextClasses.map((c) => c.id);
+  const prevIdSet = new Set(previousClasses.map((c) => c.id));
+  const nextIdSet = new Set(nextIds);
+  const classesChanged = event.scope === 'CLASSES' && (prevIdSet.size !== nextIdSet.size || nextIds.some((id) => !prevIdSet.has(id)));
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (classesChanged) {
+      await tx.calendarEventClass.deleteMany({ where: { eventId: event.id } });
+      await tx.calendarEventClass.createMany({ data: nextIds.map((classId) => ({ eventId: event.id, classId })) });
+    }
+    return tx.calendarEvent.update({
+      where: { id: event.id },
+      data: {
+        ...(b.type !== undefined ? { type: b.type } : {}),
+        ...(b.title !== undefined ? { title: plainText(b.title, 200) } : {}),
+        ...(b.description !== undefined ? { description: b.description ? plainText(b.description, 2000) : null } : {}),
+        ...(b.location !== undefined ? { location: b.location ? plainText(b.location, 120) : null } : {}),
+        ...(b.allDay !== undefined ? { allDay: b.allDay } : {}),
+        startAt,
+        endAt,
+      },
+      include: { affectedClasses: { include: { class: { select: { id: true, color: true, ...classInclude } } } } },
+    });
   });
+
+  const detailChanged =
+    b.title !== undefined ||
+    b.type !== undefined ||
+    b.description !== undefined ||
+    b.location !== undefined ||
+    b.startAt !== undefined ||
+    b.endAt !== undefined ||
+    b.allDay !== undefined ||
+    classesChanged;
+
+  if (b.notifyStudents !== false && detailChanged && updated.endAt >= new Date() && (event.scope === 'CLASS' || event.scope === 'CLASSES')) {
+    const { hitsByClassId } = findOverlappingClassMeetings(nextClasses, { startAt, endAt, allDay, tz });
+    await notifyAffectedClasses({ prisma, event: updated, classes: nextClasses, hitsByClassId, tz, actorName: fullName(req.user), action: 'updated' });
+    const removedClasses = previousClasses.filter((c) => !nextIdSet.has(c.id));
+    if (removedClasses.length > 0) {
+      await notifyAffectedClasses({ prisma, event: updated, classes: removedClasses, hitsByClassId: new Map(), tz, actorName: fullName(req.user), action: 'cancelled' });
+    }
+  }
   ok(res, eventView(updated));
 });
 
 calendarRouter.delete('/events/:eventId', validate({ params: idParams('eventId') }), async (req, res) => {
   const event = await loadOwnEvent(req.user, req.valid.params.eventId);
   await prisma.calendarEvent.delete({ where: { id: event.id } });
+  if (event.endAt >= new Date() && (event.scope === 'CLASS' || event.scope === 'CLASSES')) {
+    const classes = event.scope === 'CLASSES' ? event.affectedClasses.map((ac) => ac.class) : event.class ? [event.class] : [];
+    if (classes.length > 0) {
+      const tz = await getTimeZone();
+      const { hitsByClassId } = findOverlappingClassMeetings(classes, { startAt: event.startAt, endAt: event.endAt, allDay: event.allDay, tz });
+      await notifyAffectedClasses({ prisma, event, classes, hitsByClassId, tz, actorName: fullName(req.user), action: 'cancelled' });
+    }
+  }
   noContent(res);
 });
 
