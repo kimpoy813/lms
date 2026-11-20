@@ -17,6 +17,7 @@ import { getSetting } from '../../services/settings.js';
 import { createDefaultGradeSetup } from '../gradebook/defaults.js';
 import { copyModule } from '../content/routes.js';
 import { loadClassAccess, requireClassManager, requireWritableClassManager } from './access.js';
+import { copyClassSetup } from './copySetup.js';
 
 export const classesRouter = Router();
 classesRouter.use(requireAuth);
@@ -649,6 +650,59 @@ classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({
   created(res, {
     ...serializeClass(outcome.createdClass, { role: req.user.role, counts: { studentCount: 0, pendingCount: 0 } }),
     summary: outcome.summary,
+  });
+});
+
+// ── Copy setup (category weights, grading policy, syllabus, outcomes) to existing classes ─
+const copySetupBody = z.object({
+  targetClassIds: z.array(zId).min(1, 'Choose at least one target class.').max(50),
+  gradeWeights: z.boolean().default(true),
+  gradePolicy: z.boolean().default(false),
+  syllabus: z.boolean().default(true),
+  learningOutcomes: z.boolean().default(true),
+});
+
+classesRouter.post('/:classId/copy-setup', requireRole('TEACHER', 'ADMIN'), validate({ params: idParams('classId'), body: copySetupBody }), async (req, res) => {
+  const { classId } = req.valid.params;
+  const body = req.valid.body;
+  if (!body.gradeWeights && !body.gradePolicy && !body.syllabus && !body.learningOutcomes) {
+    throw fieldErrors({ gradeWeights: 'Choose at least one item to copy (category weights, grading policy, syllabus, or learning outcomes).' });
+  }
+  const { cls: source } = await requireClassManager(req.user, classId);
+  const targetIds = [...new Set(body.targetClassIds)].filter((id) => id !== classId);
+  if (targetIds.length === 0) {
+    throw fieldErrors({ targetClassIds: 'Choose at least one other class.' });
+  }
+  const targets = [];
+  for (const tid of targetIds) {
+    const access = await requireWritableClassManager(req.user, tid);
+    targets.push(access.cls);
+  }
+  const allowAttendanceInGrades = body.gradeWeights ? Boolean(await getSetting('grading.allowAttendanceInGrades')) : false;
+
+  const copied = await prisma.$transaction((tx) => copyClassSetup({
+    tx,
+    req,
+    source,
+    targets,
+    options: {
+      gradeWeights: body.gradeWeights,
+      gradePolicy: body.gradePolicy,
+      syllabus: body.syllabus,
+      learningOutcomes: body.learningOutcomes,
+    },
+    allowAttendanceInGrades,
+  }));
+
+  ok(res, {
+    sourceClassId: source.id,
+    targets: copied,
+    copied: {
+      gradeWeights: body.gradeWeights,
+      gradePolicy: body.gradePolicy,
+      syllabus: body.syllabus,
+      learningOutcomes: body.learningOutcomes,
+    },
   });
 });
 

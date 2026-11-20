@@ -1,24 +1,40 @@
 // Grading periods, weighted categories and the policy that turns scores into a grade.
-import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, LayoutTemplate, Lock, Plus, Save, Trash2, Trophy } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2, Copy, LayoutTemplate, Lock, Plus, Save, Trash2, Trophy } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, CardHeader, cn, ConfirmDialog, Field, IconButton, Input, Select, Switch } from '../../../components/ui.jsx';
 import { api } from '../../../lib/api.js';
 import { useAction } from '../../../lib/query.js';
+import CopyClassSetupModal from '../CopyClassSetupModal.jsx';
 import { useClass } from '../useClass.js';
 
 const KINDS = { QUIZ: 'Quizzes', ASSIGNMENT: 'Assignments', ACTIVITY: 'Activities', LABORATORY: 'Laboratory', PROJECT: 'Projects', EXAM: 'Examinations', PARTICIPATION: 'Participation', ATTENDANCE: 'Attendance (automatic)', CUSTOM: 'Other' };
 const sum = (list) => Math.round(list.reduce((a, x) => a + (Number(x.weight) || 0), 0) * 100) / 100;
+const toEditablePeriods = (periods) => periods.map((p) => ({
+  id: p.id, name: p.name, weight: p.weight, locked: Boolean(p.lockedAt),
+  categories: p.categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind, weight: c.weight, items: c.items.length })),
+}));
 
 export default function Setup({ data }) {
   const { cls, base } = useClass();
+  const client = useQueryClient();
   const invalidate = [['class', cls.id, 'gradebook'], ['grades']];
   const readOnly = cls.status === 'ARCHIVED' || Boolean(data.class.finalizedAt);
-  const [periods, setPeriods] = useState(() => data.structure.periods.map((p) => ({ id: p.id, name: p.name, weight: p.weight, locked: Boolean(p.lockedAt), categories: p.categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind, weight: c.weight, items: c.items.length })) })));
+  const [periods, setPeriods] = useState(() => toEditablePeriods(data.structure.periods));
   const [error, setError] = useState(null);
   const [template, setTemplate] = useState(null);
+  const [copySetupOpen, setCopySetupOpen] = useState(false);
+  const [policySyncKey, setPolicySyncKey] = useState(0);
   const templates = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'templates'], queryFn: () => api.get(`${base}/gradebook/templates`) });
   const scales = useQuery({ queryKey: ['catalog', 'grading-scales'], queryFn: () => api.get('/catalog/grading-scales') });
+
+  const hasUnsavedWeights = useMemo(() => {
+    const simplify = (list) => list.map((p) => ({
+      id: p.id ?? null, name: p.name.trim(), weight: Number(p.weight) || 0,
+      categories: p.categories.map((c) => ({ id: c.id ?? null, name: c.name.trim(), kind: c.kind, weight: Number(c.weight) || 0 })),
+    }));
+    return JSON.stringify(simplify(periods)) !== JSON.stringify(simplify(data.structure.periods));
+  }, [periods, data.structure.periods]);
 
   const periodTotal = sum(periods);
   const problems = useMemo(() => {
@@ -35,12 +51,12 @@ export default function Setup({ data }) {
     periods: periods.map((p) => ({ ...(p.id ? { id: p.id } : {}), name: p.name.trim(), weight: Number(p.weight) || 0, categories: p.categories.map((c) => ({ ...(c.id ? { id: c.id } : {}), name: c.name.trim(), kind: c.kind, weight: Number(c.weight) || 0 })) })),
   }), {
     invalidate, success: 'Weights saved. Grades were recomputed.',
-    onSuccess: (fresh) => { setError(null); setPeriods(fresh.structure.periods.map((p) => ({ id: p.id, name: p.name, weight: p.weight, locked: Boolean(p.lockedAt), categories: p.categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind, weight: c.weight, items: c.items.length })) }))); },
+    onSuccess: (fresh) => { setError(null); setPeriods(toEditablePeriods(fresh.structure.periods)); },
     onError: (err) => { setError(err.details?.errors?.join(' ') ?? err.message); return true; },
   });
   const applyTemplate = useAction((key) => api.post(`${base}/gradebook/structure/template`, { key }), {
     invalidate, success: 'Template applied.',
-    onSuccess: (fresh) => { setTemplate(null); setError(null); setPeriods(fresh.structure.periods.map((p) => ({ id: p.id, name: p.name, weight: p.weight, locked: false, categories: p.categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind, weight: c.weight, items: 0 })) }))); },
+    onSuccess: (fresh) => { setTemplate(null); setError(null); setPeriods(toEditablePeriods(fresh.structure.periods)); },
     onError: () => setTemplate(null),
   });
 
@@ -49,12 +65,19 @@ export default function Setup({ data }) {
       <div className="min-w-0 space-y-5 xl:col-span-2">
         <Card>
           <CardHeader icon={LayoutTemplate} title="Grading periods and categories" description="The final grade is the weighted average of the periods; each period is the weighted average of its categories."
-            action={!readOnly && (templates.data ?? []).length > 0 ? (
-              <Select aria-label="Start from a template" value="" onChange={(e) => e.target.value && setTemplate(templates.data.find((t) => t.key === e.target.value))} className="h-9 w-52 text-[13px]">
-                <option value="">Start from a template…</option>
-                {templates.data.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-              </Select>
-            ) : null} />
+            action={(
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="secondary" size="sm" icon={Copy} onClick={() => setCopySetupOpen(true)}>
+                  {readOnly ? 'Copy to another class…' : 'Copy / Import…'}
+                </Button>
+                {!readOnly && (templates.data ?? []).length > 0 && (
+                  <Select aria-label="Start from a template" value="" onChange={(e) => e.target.value && setTemplate(templates.data.find((t) => t.key === e.target.value))} className="h-9 w-52 text-[13px]">
+                    <option value="">Start from a template…</option>
+                    {templates.data.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </Select>
+                )}
+              </div>
+            )} />
           {error && <Alert tone="bad" className="mb-4">{error}</Alert>}
           <fieldset disabled={readOnly} className="space-y-4">
             {periods.map((p, i) => {
@@ -96,9 +119,28 @@ export default function Setup({ data }) {
       </div>
 
       <div className="min-w-0 space-y-5">
-        <Policy data={data} scales={scales.data ?? []} invalidate={invalidate} readOnly={readOnly} />
+        <Policy key={policySyncKey} data={data} scales={scales.data ?? []} invalidate={invalidate} readOnly={readOnly} />
         <RankingPolicy data={data} invalidate={invalidate} archived={cls.status === 'ARCHIVED'} />
       </div>
+
+      <CopyClassSetupModal
+        open={copySetupOpen}
+        onClose={() => setCopySetupOpen(false)}
+        cls={cls}
+        defaultSelected={{ gradeWeights: true, gradePolicy: false, syllabus: false, learningOutcomes: false }}
+        hasUnsavedChanges={hasUnsavedWeights}
+        onImported={async ({ gradeWeights, gradePolicy }) => {
+          const fresh = await client.fetchQuery({
+            queryKey: ['class', cls.id, 'gradebook'],
+            queryFn: () => api.get(`${base}/gradebook`),
+          });
+          if (gradeWeights) {
+            setError(null);
+            setPeriods(toEditablePeriods(fresh.structure.periods));
+          }
+          if (gradePolicy) setPolicySyncKey((k) => k + 1);
+        }}
+      />
 
       <ConfirmDialog open={Boolean(template)} onClose={() => setTemplate(null)} onConfirm={() => applyTemplate.mutate(template.key)} loading={applyTemplate.isPending} tone="primary" title={`Use “${template?.label}”?`} confirmLabel="Apply template">
         This replaces the current periods and categories. It is only possible while the gradebook has no graded items.
