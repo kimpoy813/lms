@@ -1,8 +1,9 @@
 // Quizzes tab.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Clock, Copy, FileQuestion, Hourglass, MoreHorizontal, PlayCircle, Plus, RotateCcw, Settings2, ShieldAlert, Timer, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Copy, FileQuestion, Hourglass, MoreHorizontal, PlayCircle, Plus, RotateCcw, Settings2, Share2, ShieldAlert, Timer, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { PostToClassesModal } from '../../components/ClassTargets.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import { Badge, Button, Card, cn, ConfirmDialog, EmptyState, IconButton, Menu, MenuItem, QueryState } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
@@ -79,6 +80,7 @@ function TeacherRow({ q, readOnly }) {
   const { cls, base } = useClass();
   const [confirm, setConfirm] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [posting, setPosting] = useState(false);
   const invalidate = [['class', cls.id], ['dashboard'], ['calendar']];
   const copy = useAction(() => api.post(`/quizzes/${q.id}/copy`, {}), { invalidate, success: 'A draft copy was created.' });
   const remove = useAction(() => api.delete(`/quizzes/${q.id}`), { invalidate, success: 'Quiz deleted.', onSuccess: () => setConfirm(false) });
@@ -105,10 +107,23 @@ function TeacherRow({ q, readOnly }) {
         <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} size="sm" label={`Actions for ${q.title}`} onClick={toggle} {...props} />}>
           {!readOnly && <MenuItem icon={Settings2} onClick={() => setSettings(true)}>Settings</MenuItem>}
           <MenuItem icon={Copy} onClick={() => copy.mutate()}>Duplicate as draft</MenuItem>
+          <MenuItem icon={Share2} onClick={() => setPosting(true)}>Post to other classes…</MenuItem>
           <MenuItem icon={Trash2} tone="danger" onClick={() => setConfirm(true)}>Delete</MenuItem>
         </Menu>
       </div>
       {settings && <SettingsLoader quizId={q.id} onClose={() => setSettings(false)} />}
+      <PostToClassesModal
+        open={posting}
+        onClose={() => setPosting(false)}
+        title={`Post “${q.title}” to other classes`}
+        excludeClassId={cls.id}
+        teacherId={cls.teacher?.id}
+        canPublish={q.questionCount > 0}
+        publishDisabledReason="Add at least one question to this quiz before publishing it immediately."
+        defaultStatus={q.status === 'PUBLISHED' && q.questionCount > 0 ? 'PUBLISHED' : 'DRAFT'}
+        hint="Copies all questions, random pools, settings, dates, and matching modules or gradebook categories to each selected class."
+        onSubmit={({ targetClassIds, status }) => api.post(`/quizzes/${q.id}/copy`, { targetClassIds, status })}
+      />
       <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={() => remove.mutate()} loading={remove.isPending} title={`Delete “${q.title}”?`} confirmLabel="Delete quiz">
         {s?.submitted > 0 ? `${plural(s.submitted, 'student')} already took this quiz. Their attempts will no longer be visible. ` : ''}The quiz is removed from the class and from the gradebook. The questions stay in your question bank.
       </ConfirmDialog>

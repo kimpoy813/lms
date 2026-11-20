@@ -1,6 +1,7 @@
 // Quiz settings: when it is open, how long it takes, how it is scored and what students see afterwards.
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { AlsoPostToClasses } from '../../components/ClassTargets.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { PublishFields } from '../../components/Publish.jsx';
 import { Alert, Button, Field, Input, Modal, ModalActions, Segmented, Select, Switch } from '../../components/ui.jsx';
@@ -27,9 +28,11 @@ const blank = {
 
 export default function QuizDialog({ quiz, onClose, onSaved }) {
   const { cls, base } = useClass();
+  const client = useQueryClient();
   const modules = useQuery({ queryKey: ['class', cls.id, 'modules'], queryFn: () => api.get(`${base}/modules`) });
   const categories = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'categories'], queryFn: () => api.get(`${base}/gradebook/categories`) });
   const [v, setV] = useState(() => quiz ? { ...blank, ...quiz, timeLimitMinutes: quiz.timeLimitMinutes ?? '', passingPercent: quiz.passingPercent ?? '', moduleId: quiz.module?.id ?? '', categoryId: quiz.gradeCategory?.id ?? '' } : blank);
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const set = (name, value) => setV((s) => ({ ...s, [name]: value }));
   const strict = v.strictMode ?? v.kind !== 'PRACTICE';
@@ -43,13 +46,28 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
       // Left out until the teacher chooses, so that a new quiz follows its kind.
       ...(v.strictMode === null ? {} : { strictMode: v.strictMode }), violationWarnings: Number(v.violationWarnings) || 0,
       // A new quiz starts as a draft: it can only be published once it has questions.
-      ...(quiz ? { status: v.status, publishAt: v.publishAt } : {}),
+      ...(quiz ? { status: v.status, publishAt: v.publishAt } : { targetClassIds }),
     };
     return quiz ? api.patch(`/quizzes/${quiz.id}`, body) : api.post(`${base}/quizzes`, body);
   }, {
     invalidate: [['class', cls.id], ['dashboard'], ['calendar']],
-    success: quiz ? 'Quiz settings saved.' : 'Quiz created. Now add the questions.',
-    onSuccess: (saved) => { onClose(); onSaved?.(saved); },
+    success: quiz
+      ? 'Quiz settings saved.'
+      : targetClassIds.length > 0
+        ? `Draft quiz created in ${targetClassIds.length + 1} classes. Now add the questions.`
+        : 'Quiz created. Now add the questions.',
+    onSuccess: (saved) => {
+      for (const id of targetClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      if (!quiz && saved?.createdCopies?.length > 0 && typeof window !== 'undefined' && window.sessionStorage) {
+        try {
+          window.sessionStorage.setItem(`edusphere.quizSync.${saved.id}`, JSON.stringify(saved.createdCopies));
+        } catch {
+          /* ignore storage quota failures */
+        }
+      }
+      onClose();
+      onSaved?.(saved);
+    },
     onError: (err) => { if (err.fields) { setErrors(err.fields); return true; } return false; },
   });
 
@@ -138,7 +156,18 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
 
         {quiz && <PublishFields status={v.status} publishAt={v.publishAt} onChange={(p) => setV((s) => ({ ...s, ...p }))} error={errors.publishAt ?? errors.status} noun="quiz" />}
 
-        {!quiz && <p className="text-[13px] text-faint">Next, you add the questions: write them, take them from your question bank, or import the ones you already have — pasted as JSON, or as a Word, PDF or text file.</p>}
+        {!quiz && (
+          <>
+            <AlsoPostToClasses
+              excludeClassId={cls.id}
+              teacherId={cls.teacher?.id}
+              value={targetClassIds}
+              onChange={setTargetClassIds}
+              hint="Creates matching draft quizzes in the selected classes too, so you can sync questions and publish them together."
+            />
+            <p className="text-[13px] text-faint">Next, you add the questions: write them, take them from your question bank, or import the ones you already have — pasted as JSON, or as a Word, PDF or text file.</p>
+          </>
+        )}
 
         <ModalActions>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>

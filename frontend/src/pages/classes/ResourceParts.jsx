@@ -1,6 +1,8 @@
 // Learning resources (files, links, embedded videos) — shared by the lesson pages and the class library.
-import { Bookmark, BookmarkCheck, Download, ExternalLink, EyeOff, FileText, Link2, MoreHorizontal, Pencil, PlayCircle, Trash2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Bookmark, BookmarkCheck, Download, ExternalLink, EyeOff, FileText, Link2, MoreHorizontal, Pencil, PlayCircle, Share2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
 import { FileUpload } from '../../components/Files.jsx';
 import { Badge, Button, cn, ConfirmDialog, Field, IconButton, Input, Menu, MenuItem, Modal, Segmented, Select, Switch, Textarea } from '../../components/ui.jsx';
 import { api, fileUrl } from '../../lib/api.js';
@@ -17,9 +19,10 @@ const hostOf = (url) => {
 };
 
 /** One resource row. Students can open, download (when allowed) and bookmark; teachers can edit. */
-export function ResourceItem({ resource: r, canManage, classId, modules, showPlacement = false }) {
+export function ResourceItem({ resource: r, canManage, classId, teacherId, modules, showPlacement = false }) {
   const [playing, setPlaying] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [posting, setPosting] = useState(false);
   const [removing, setRemoving] = useState(false);
   const invalidate = [['class', classId], ['bookmarks']];
   const bookmark = useAction(() => (r.bookmarked ? api.delete('/bookmarks', { resourceId: r.id }) : api.post('/bookmarks', { resourceId: r.id })), { invalidate });
@@ -71,6 +74,7 @@ export function ResourceItem({ resource: r, canManage, classId, modules, showPla
         {canManage && (
           <Menu trigger={({ toggle: open, props }) => <IconButton icon={MoreHorizontal} size="sm" label={`Actions for ${r.title}`} onClick={open} {...props} />}>
             <MenuItem icon={Pencil} onClick={() => setEditing(true)}>Edit</MenuItem>
+            <MenuItem icon={Share2} onClick={() => setPosting(true)}>Post to other classes…</MenuItem>
             <MenuItem icon={EyeOff} onClick={() => toggle.mutate()}>{r.isPublished ? 'Hide from students' : 'Show to students'}</MenuItem>
             <MenuItem icon={Trash2} tone="danger" onClick={() => setRemoving(true)}>Remove</MenuItem>
           </Menu>
@@ -83,7 +87,17 @@ export function ResourceItem({ resource: r, canManage, classId, modules, showPla
           </div>
         </div>
       )}
-      {editing && <ResourceDialog classId={classId} resource={r} modules={modules} onClose={() => setEditing(false)} />}
+      {editing && <ResourceDialog classId={classId} teacherId={teacherId} resource={r} modules={modules} onClose={() => setEditing(false)} />}
+      <PostToClassesModal
+        open={posting}
+        onClose={() => setPosting(false)}
+        title={`Post “${r.title}” to other classes`}
+        excludeClassId={classId}
+        teacherId={teacherId}
+        allowPublishOption={false}
+        hint="Placed inside a matching module or lesson if found in the target class, or its class library otherwise."
+        onSubmit={({ targetClassIds }) => api.post(`/resources/${r.id}/copy`, { targetClassIds })}
+      />
       <ConfirmDialog open={removing} onClose={() => setRemoving(false)} onConfirm={() => remove.mutate()} loading={remove.isPending} title="Remove this resource?" confirmLabel="Remove">
         “{r.title}” will no longer be available to students.
       </ConfirmDialog>
@@ -92,10 +106,12 @@ export function ResourceItem({ resource: r, canManage, classId, modules, showPla
 }
 
 /** Add or edit a resource. `placement` pre-selects where it goes: { moduleId, lessonId }. */
-export function ResourceDialog({ classId, resource, placement = {}, modules = [], onClose }) {
+export function ResourceDialog({ classId, teacherId, resource, placement = {}, modules = [], onClose }) {
+  const client = useQueryClient();
   const editing = Boolean(resource);
   const [type, setType] = useState(resource?.type ?? 'FILE');
   const [files, setFiles] = useState([]);
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [values, setValues] = useState({
     title: resource?.title ?? '', description: resource?.description ?? '', url: resource?.url ?? '',
     moduleId: resource?.moduleId ?? placement.moduleId ?? '', lessonId: resource?.lessonId ?? placement.lessonId ?? '',
@@ -107,11 +123,14 @@ export function ResourceDialog({ classId, resource, placement = {}, modules = []
   const save = useAction(() => {
     const common = { title: values.title.trim() || files[0]?.name || '', description: values.description.trim() || null, moduleId: values.moduleId || null, lessonId: values.lessonId || null, allowDownload: values.allowDownload, isPublished: values.isPublished };
     if (editing) return api.patch(`/resources/${resource.id}`, { ...common, ...(resource.type !== 'FILE' ? { url: values.url.trim() } : {}) });
-    return api.post(`/classes/${classId}/resources`, { ...common, type, ...(type === 'FILE' ? { fileId: files[0]?.id } : { url: values.url.trim() }) });
+    return api.post(`/classes/${classId}/resources`, { ...common, type, ...(type === 'FILE' ? { fileId: files[0]?.id } : { url: values.url.trim() }), targetClassIds });
   }, {
     invalidate: [['class', classId]],
-    success: editing ? 'Resource updated.' : 'Resource added.',
-    onSuccess: onClose,
+    success: editing ? 'Resource updated.' : targetClassIds.length > 0 ? `Resource added to ${targetClassIds.length + 1} classes.` : 'Resource added.',
+    onSuccess: () => {
+      for (const id of targetClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      onClose();
+    },
     onError: (err) => { if (err.fields) { setErrors(err.fields); return true; } return false; },
   });
 
@@ -157,6 +176,15 @@ export function ResourceDialog({ classId, resource, placement = {}, modules = []
         )}
         {currentType === 'FILE' && <Switch checked={values.allowDownload} onChange={(on) => set('allowDownload', on)} label="Students may download this file" description="When off, students can only view it in the browser (PDF and images)." />}
         <Switch checked={values.isPublished} onChange={(on) => set('isPublished', on)} label="Visible to students" />
+        {!editing && (
+          <AlsoPostToClasses
+            excludeClassId={classId}
+            teacherId={teacherId}
+            value={targetClassIds}
+            onChange={setTargetClassIds}
+            hint={values.moduleId ? 'Placed in the matching module/lesson when present in each selected class, or its class library otherwise.' : 'Added to the class library of each selected class.'}
+          />
+        )}
       </div>
     </Modal>
   );

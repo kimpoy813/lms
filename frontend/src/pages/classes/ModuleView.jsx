@@ -1,10 +1,11 @@
 // One module: its lesson list on the left, the selected lesson on the right.
 // Teachers write and edit lessons here; students read them and mark them as completed.
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, HelpCircle, Layers, Lock, Pencil, Plus, Printer, RotateCcw, Save, Sparkles, Target, Trash2, Undo2, WifiOff } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, HelpCircle, Layers, Lock, Pencil, Plus, Printer, RotateCcw, Save, Share2, Sparkles, Target, Trash2, Undo2, WifiOff } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
@@ -200,6 +201,7 @@ function Lesson({ mod, lessonId }) {
                   </Button>
                   {!canManage && <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={lesson.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate(!lesson.bookmarked)}>{lesson.bookmarked ? 'Saved' : 'Save'}</Button>}
                   <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} aria-label="Print this lesson" />
+                  {canManage && <Button variant="secondary" size="sm" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>}
                   {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
                   {canManage && !readOnly && <Button variant="dangerGhost" size="sm" icon={Trash2} onClick={() => setDialog('delete')} aria-label="Delete this lesson" />}
                 </div>
@@ -225,7 +227,7 @@ function Lesson({ mod, lessonId }) {
                 </div>
                 {lesson.resources.length === 0 ? <p className="text-sm text-faint">Nothing attached.</p> : (
                   <ul className="grid grid-cols-1 gap-2 xl:grid-cols-2">
-                    {lesson.resources.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} />)}
+                    {lesson.resources.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} />)}
                   </ul>
                 )}
               </section>
@@ -246,7 +248,17 @@ function Lesson({ mod, lessonId }) {
               : <Button variant="secondary" to={`${base}/modules`}>Back to all lessons</Button>}
           </nav>
 
-          {dialog === 'resource' && <ResourceDialog classId={cls.id} placement={{ moduleId: mod.id, lessonId }} onClose={() => setDialog(null)} />}
+          {dialog === 'resource' && <ResourceDialog classId={cls.id} teacherId={cls.teacher?.id} placement={{ moduleId: mod.id, lessonId }} onClose={() => setDialog(null)} />}
+          <PostToClassesModal
+            open={dialog === 'post'}
+            onClose={() => setDialog(null)}
+            title={`Post “${lesson.title}” to other classes`}
+            excludeClassId={cls.id}
+            teacherId={cls.teacher?.id}
+            defaultStatus={lesson.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT'}
+            hint={`Copies this lesson and its attachments into “${mod.title}” in each selected class (creating the module if needed).`}
+            onSubmit={({ targetClassIds, status }) => api.post(`/lessons/${lesson.id}/copy`, { targetClassIds, status })}
+          />
           <ConfirmDialog open={dialog === 'delete'} onClose={() => setDialog(null)} onConfirm={() => remove.mutate()} loading={remove.isPending} title={`Delete “${lesson.title}”?`} confirmLabel="Delete lesson">
             The lesson is removed for everyone, together with students’ completion marks for it.
           </ConfirmDialog>
@@ -258,10 +270,12 @@ function Lesson({ mod, lessonId }) {
 
 function LessonEditor({ mod, lesson, onDone }) {
   const { cls } = useClass();
+  const client = useQueryClient();
   const [values, setValues] = useState({
     title: lesson?.title ?? '', kind: lesson?.kind ?? 'LESSON', estimatedMinutes: lesson?.estimatedMinutes ?? '', status: lesson?.status ?? 'PUBLISHED',
     prerequisiteLessonId: lesson?.prerequisiteLessonId ?? '', objectives: (lesson?.objectives ?? []).join('\n'), contentHtml: lesson?.contentHtml ?? '',
   });
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const [dirty, setDirty] = useState(false);
   const set = (name, value) => { setValues((v) => ({ ...v, [name]: value })); setDirty(true); };
@@ -280,12 +294,21 @@ function LessonEditor({ mod, lesson, onDone }) {
       estimatedMinutes: values.estimatedMinutes === '' ? null : Number(values.estimatedMinutes),
       prerequisiteLessonId: values.prerequisiteLessonId || null,
       objectives: values.objectives.split('\n').map((o) => o.trim()).filter(Boolean),
+      ...(lesson ? {} : { targetClassIds }),
     };
     return lesson ? api.patch(`/lessons/${lesson.id}`, body) : api.post(`/modules/${mod.id}/lessons`, body);
   }, {
     invalidate: [['class', cls.id]],
-    success: lesson ? 'Lesson saved.' : 'Lesson added.',
-    onSuccess: (saved) => { setDirty(false); onDone(saved); },
+    success: lesson
+      ? 'Lesson saved.'
+      : targetClassIds.length > 0
+        ? `Lesson added to ${targetClassIds.length + 1} classes.`
+        : 'Lesson added.',
+    onSuccess: (saved) => {
+      for (const id of targetClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      setDirty(false);
+      onDone(saved);
+    },
     onError: (err) => { if (err.fields) { setErrors(err.fields); return true; } return false; },
   });
 
@@ -322,6 +345,15 @@ function LessonEditor({ mod, lesson, onDone }) {
         <Field label="Visibility">
           <Segmented label="Lesson visibility" value={values.status} onChange={(s) => set('status', s)} options={[{ value: 'DRAFT', label: 'Draft' }, { value: 'PUBLISHED', label: 'Published' }]} />
         </Field>
+        {!lesson && (
+          <AlsoPostToClasses
+            excludeClassId={cls.id}
+            teacherId={cls.teacher?.id}
+            value={targetClassIds}
+            onChange={setTargetClassIds}
+            hint={`Added to a module named “${mod.title}” in each selected class (created automatically if that class does not have one yet).`}
+          />
+        )}
       </div>
       <div className="mt-5 flex justify-end gap-2 border-t border-line pt-4">
         <Button variant="secondary" onClick={() => onDone(null)}>Cancel</Button>

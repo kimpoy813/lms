@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FilePlus2, ListChecks, Pencil, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { AlsoPostToClasses } from '../../components/ClassTargets.jsx';
 import { Badge, Button, cn, Field, Input, Select } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatScore, plural } from '../../lib/format.js';
@@ -43,10 +44,12 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
   const suggestedTitle = quiz ? `${quiz.module?.title ?? defaultBankTitle ?? 'Untitled'}: ${noun}`.slice(0, 200) : '';
   const [quizTitle, setQuizTitle] = useState(suggestedTitle);
   const [quizClassId, setQuizClassId] = useState(quiz?.module?.classId ?? '');
+  const [targetClassIds, setTargetClassIds] = useState([]);
   // The suggestion follows the form above until the teacher has typed a title of their own.
   const [titleTouched, setTitleTouched] = useState(false);
   useEffect(() => { if (!titleTouched) setQuizTitle(suggestedTitle); }, [suggestedTitle, titleTouched]);
   useEffect(() => { if (quiz?.module?.classId) setQuizClassId(quiz.module.classId); }, [quiz?.module?.classId]);
+  const extraClassIds = targetClassIds.filter((id) => id && id !== quizClassId);
   const makeQuiz = useAction(async () => {
     const bank = bankId && bankId !== 'new' ? bankId : (await api.post('/question-banks', { title: defaultBankTitle || quizTitle.trim() || 'AI drafts' })).id;
     // The questions first: a question that still has a mistake is reported before anything is created.
@@ -55,13 +58,22 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
       title: quizTitle.trim(),
       kind: quizKind,
       ...(quiz.module?.id && quiz.module?.classId === quizClassId ? { moduleId: quiz.module.id } : {}),
+      targetClassIds: extraClassIds,
     });
     await api.put(`/quizzes/${made.id}/questions`, { items: saved.questionIds.map((questionId, i) => ({ questionId, points: Number(chosen[i].points) > 0 ? Number(chosen[i].points) : 1 })) });
+    if (made.createdCopies?.length > 0) {
+      await api.post(`/quizzes/${made.id}/sync`, { targetQuizIds: made.createdCopies.map((c) => c.id), publish: false });
+    }
     return made;
   }, {
     invalidate: [['question-banks'], ['class', quizClassId]],
-    success: () => `Saved as a draft ${noun}. Set the dates and the time limit, then publish it when you are ready.`,
-    onSuccess: (made) => navigate(`/classes/${quizClassId}/quizzes/${made.id}`),
+    success: () => extraClassIds.length > 0
+      ? `Saved as a draft ${noun} in ${extraClassIds.length + 1} classes. Set the dates and publish each when you are ready.`
+      : `Saved as a draft ${noun}. Set the dates and the time limit, then publish it when you are ready.`,
+    onSuccess: (made) => {
+      for (const id of extraClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      navigate(`/classes/${quizClassId}/quizzes/${made.id}`);
+    },
   });
 
   if (drafts.length === 0) return null;
@@ -104,6 +116,15 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
             <Field label="In the class" className="min-w-0 flex-1 basis-56"><Select value={quizClassId} onChange={(e) => setQuizClassId(e.target.value)}><option value="">Choose a class…</option>{(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}</Select></Field>
             <Button icon={FilePlus2} className="w-full sm:w-auto" loading={makeQuiz.isPending} disabled={!quizClassId || !quizTitle.trim() || chosen.length === 0 || save.isPending} onClick={() => makeQuiz.mutate()}>Create the {noun}</Button>
           </div>
+          {quizClassId && (
+            <AlsoPostToClasses
+              className="mt-3 bg-surface"
+              excludeClassId={quizClassId}
+              value={extraClassIds}
+              onChange={setTargetClassIds}
+              hint={`Creates the same draft ${noun} with all selected questions in each checked class.`}
+            />
+          )}
         </div>
       )}
       <div className="mt-4 flex flex-wrap items-end justify-end gap-3">

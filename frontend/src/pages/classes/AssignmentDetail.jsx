@@ -1,10 +1,11 @@
 // One assignment. Students read the instructions and hand in their work here;
 // teachers see a summary and go on to grade.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, Clock, FileCheck2, Lock, Pencil, Save, Send, Users } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, Clock, FileCheck2, Lock, Pencil, Save, Send, Share2, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { PostToClassesModal } from '../../components/ClassTargets.jsx';
 import { FileList, FileUpload } from '../../components/Files.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
@@ -25,6 +26,7 @@ export default function AssignmentDetail() {
   const { cls, canManage, base } = useClass();
   const { assignmentId } = useParams();
   const [editing, setEditing] = useState(false);
+  const [posting, setPosting] = useState(false);
   const query = useQuery({ queryKey: ['class', cls.id, 'assignment', assignmentId], queryFn: () => api.get(`/assignments/${assignmentId}`) });
 
   return (
@@ -44,7 +46,12 @@ export default function AssignmentDetail() {
                       {canManage && <StatusBadge status={a.status} publishAt={a.publishAt} />}
                     </p>
                   </div>
-                  {canManage && cls.status !== 'ARCHIVED' && <Button variant="secondary" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
+                  {canManage && (
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" icon={Share2} onClick={() => setPosting(true)}>Post to classes</Button>
+                      {cls.status !== 'ARCHIVED' && <Button variant="secondary" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
+                    </div>
+                  )}
                 </div>
                 <div className="mt-5 border-t border-line pt-5">
                   <RichText html={a.instructionsHtml} empty={<p className="text-sm text-faint">No written instructions.</p>} />
@@ -78,6 +85,16 @@ export default function AssignmentDetail() {
             </div>
           </div>
           {editing && <AssignmentDialog assignmentId={a.id} onClose={() => setEditing(false)} />}
+          <PostToClassesModal
+            open={posting}
+            onClose={() => setPosting(false)}
+            title={`Post “${a.title}” to other classes`}
+            excludeClassId={cls.id}
+            teacherId={cls.teacher?.id}
+            defaultStatus={a.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT'}
+            hint="Attached files, rubrics, dates, and matching modules or gradebook categories are copied to each selected class."
+            onSubmit={({ targetClassIds, status }) => api.post(`/assignments/${a.id}/copy`, { targetClassIds, status })}
+          />
         </>
       )}
     </QueryState>

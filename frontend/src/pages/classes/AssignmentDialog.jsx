@@ -1,7 +1,8 @@
 // Create or edit an assignment.
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { AlsoPostToClasses } from '../../components/ClassTargets.jsx';
 import { FileUpload } from '../../components/Files.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { PublishFields } from '../../components/Publish.jsx';
@@ -33,12 +34,14 @@ export default function AssignmentDialog({ assignmentId, onClose }) {
 
 function Form({ existing, onSaved, onCancel }) {
   const { cls, base } = useClass();
+  const client = useQueryClient();
   const modules = useQuery({ queryKey: ['class', cls.id, 'modules'], queryFn: () => api.get(`${base}/modules`) });
   const categories = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'categories'], queryFn: () => api.get(`${base}/gradebook/categories`) });
   const rubrics = useQuery({ queryKey: ['rubrics'], queryFn: () => api.get('/rubrics') });
   const [v, setV] = useState(() => existing ? {
     ...blank, ...existing, rubricId: existing.rubric?.id ?? '', moduleId: existing.module?.id ?? '', categoryId: existing.gradeCategory?.id ?? '', files: existing.attachments ?? [],
   } : blank);
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const set = (name, value) => setV((s) => ({ ...s, [name]: value }));
 
@@ -49,12 +52,20 @@ function Form({ existing, onSaved, onCancel }) {
       latePenaltyType: v.allowLate ? v.latePenaltyType : 'NONE', latePenaltyValue: Number(v.latePenaltyValue) || 0, latePenaltyMax: Number(v.latePenaltyMax) || 100,
       allowText: v.allowText, allowFiles: v.allowFiles, maxFiles: Number(v.maxFiles) || 1, allowResubmission: v.allowResubmission,
       rubricId: v.rubricId || null, moduleId: v.moduleId || null, categoryId: v.categoryId || null, fileIds: v.files.map((f) => f.id),
+      ...(existing ? {} : { targetClassIds }),
     };
     return existing ? api.patch(`/assignments/${existing.id}`, body) : api.post(`${base}/assignments`, body);
   }, {
     invalidate: [['class', cls.id], ['dashboard'], ['calendar']],
-    success: existing ? 'Assignment saved.' : 'Assignment created.',
-    onSuccess: onSaved,
+    success: existing
+      ? 'Assignment saved.'
+      : targetClassIds.length > 0
+        ? `Assignment created in ${targetClassIds.length + 1} classes.`
+        : 'Assignment created.',
+    onSuccess: (saved) => {
+      for (const id of targetClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      onSaved(saved);
+    },
     onError: (err) => { if (err.fields) { setErrors(err.fields); return true; } return false; },
   });
 
@@ -137,6 +148,15 @@ function Form({ existing, onSaved, onCancel }) {
       </div>
 
       <PublishFields status={v.status} publishAt={v.publishAt} onChange={(p) => setV((s) => ({ ...s, ...p }))} error={errors.publishAt} noun="assignment" />
+      {!existing && (
+        <AlsoPostToClasses
+          excludeClassId={cls.id}
+          teacherId={cls.teacher?.id}
+          value={targetClassIds}
+          onChange={setTargetClassIds}
+          hint="Attached files and rubrics are copied to each selected class. Matching modules and gradebook categories are linked automatically when available."
+        />
+      )}
       <ModalActions>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
         <Button type="submit" loading={save.isPending}>{existing ? 'Save changes' : 'Create assignment'}</Button>

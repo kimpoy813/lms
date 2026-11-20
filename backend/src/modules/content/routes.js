@@ -14,6 +14,7 @@ import { builtinCompletion } from '../../services/aiBuiltin.js';
 import { enrolledStudentIds, notify } from '../../services/notifications.js';
 import { fileSummary } from '../../services/storage.js';
 import { assertClassWritable, classIdsFor, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
+import { matchingModuleId, resolveOrCreateModule, resolveTargetClasses } from '../classes/distribute.js';
 
 export const classContentRouter = Router({ mergeParams: true }); // /classes/:classId
 classContentRouter.use(requireAuth);
@@ -174,7 +175,11 @@ async function announceModule(mod, cls) {
   });
 }
 
-classContentRouter.post('/modules', validate({ params: classParams, body: moduleBody }), async (req, res) => {
+const createModuleBody = moduleBody.extend({
+  targetClassIds: z.array(zId).max(50).default([]),
+});
+
+classContentRouter.post('/modules', validate({ params: classParams, body: createModuleBody }), async (req, res) => {
   const { cls } = await requireWritableClassManager(req.user, req.valid.params.classId);
   const body = req.valid.body;
   const publication = resolvePublication(body, null);
@@ -183,22 +188,53 @@ classContentRouter.post('/modules', validate({ params: classParams, body: module
     throw fieldErrors({ availableUntil: 'The closing date must be after the publishing date.' });
   }
   await assertPrerequisite(cls.id, body.prerequisiteModuleId, null);
-  const last = await prisma.learningModule.aggregate({ where: { classId: cls.id, deletedAt: null }, _max: { position: true } });
-  const mod = await prisma.learningModule.create({
-    data: {
-      classId: cls.id,
-      title: plainText(body.title, 200),
-      description: body.description ? plainText(body.description, 2000) : null,
-      objectives: cleanList(body.objectives),
-      position: (last._max.position ?? -1) + 1,
-      ...publication,
-      availableUntil: body.availableUntil ?? null,
-      prerequisiteModuleId: body.prerequisiteModuleId ?? null,
-      createdById: req.user.id,
-    },
+  const targets = await resolveTargetClasses(req.user, cls.id, body.targetClassIds);
+  const title = plainText(body.title, 200);
+  const description = body.description ? plainText(body.description, 2000) : null;
+  const cleanObjectives = cleanList(body.objectives);
+
+  const { mod, copies } = await prisma.$transaction(async (tx) => {
+    const last = await tx.learningModule.aggregate({ where: { classId: cls.id, deletedAt: null }, _max: { position: true } });
+    const primary = await tx.learningModule.create({
+      data: {
+        classId: cls.id,
+        title,
+        description,
+        objectives: cleanObjectives,
+        position: (last._max.position ?? -1) + 1,
+        ...publication,
+        availableUntil: body.availableUntil ?? null,
+        prerequisiteModuleId: body.prerequisiteModuleId ?? null,
+        createdById: req.user.id,
+      },
+    });
+    const extra = [];
+    for (const target of targets) {
+      const tLast = await tx.learningModule.aggregate({ where: { classId: target.cls.id, deletedAt: null }, _max: { position: true } });
+      const row = await tx.learningModule.create({
+        data: {
+          classId: target.cls.id,
+          title,
+          description,
+          objectives: cleanObjectives,
+          position: (tLast._max.position ?? -1) + 1,
+          ...publication,
+          availableUntil: body.availableUntil ?? null,
+          prerequisiteModuleId: null,
+          createdById: req.user.id,
+        },
+      });
+      extra.push({ mod: row, cls: target.cls });
+    }
+    return { mod: primary, copies: extra };
   });
-  if (mod.status === 'PUBLISHED') await announceModule(mod, cls);
-  created(res, (await listModules(req.user, { cls, canManage: true })).find((m) => m.id === mod.id));
+
+  if (mod.status === 'PUBLISHED') {
+    await announceModule(mod, cls);
+    for (const c of copies) await announceModule(c.mod, c.cls);
+  }
+  const view = (await listModules(req.user, { cls, canManage: true })).find((m) => m.id === mod.id);
+  created(res, copies.length > 0 ? { ...view, createdCopies: copies.map((c) => ({ id: c.mod.id, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.mod.status })) } : view);
 });
 
 async function loadModule(moduleId) {
@@ -290,16 +326,17 @@ contentRouter.put('/modules/:moduleId/lessons/order', validate({ params: idParam
   ok(res, (await listModules(req.user, { cls, canManage: true })).find((m) => m.id === mod.id));
 });
 
-/** Copy a module (lessons and resources) into the same or another class the teacher owns. Always arrives as a draft. */
-export async function copyModule(tx, mod, targetClassId, userId, position) {
+/** Copy a module (lessons and resources) into the same or another class the teacher owns. */
+export async function copyModule(tx, mod, targetClassId, userId, position, { status = 'DRAFT', now = new Date() } = {}) {
   const source = await tx.learningModule.findUnique({
     where: { id: mod.id },
     include: { lessons: { where: { deletedAt: null }, orderBy: { position: 'asc' }, include: { resources: true } }, resources: { where: { lessonId: null } } },
   });
+  const pub = status === 'PUBLISHED' ? { status: 'PUBLISHED', publishAt: now, publishedAt: now } : { status: 'DRAFT' };
   const copy = await tx.learningModule.create({
     data: {
       classId: targetClassId, title: source.title, description: source.description, objectives: source.objectives, position,
-      status: 'DRAFT', source: source.source, createdById: userId,
+      ...pub, source: source.source, createdById: userId,
     },
   });
   const resourceData = (r, lessonId) => ({
@@ -326,16 +363,46 @@ export async function copyModule(tx, mod, targetClassId, userId, position) {
   return copy;
 }
 
-contentRouter.post('/modules/:moduleId/copy', validate({ params: idParams('moduleId'), body: z.object({ targetClassId: zId.optional() }) }), async (req, res) => {
+const copyModuleBody = z.object({
+  targetClassId: zId.optional(),
+  targetClassIds: z.array(zId).min(1).max(50).optional(),
+  status: z.enum(['DRAFT', 'PUBLISHED']).default('DRAFT'),
+});
+
+contentRouter.post('/modules/:moduleId/copy', validate({ params: idParams('moduleId'), body: copyModuleBody }), async (req, res) => {
   const { mod } = await loadManagedModule(req, { writable: false });
-  const target = await requireWritableClassManager(req.user, req.valid.body.targetClassId ?? mod.classId);
-  const copy = await prisma.$transaction(async (tx) => {
-    const last = await tx.learningModule.aggregate({ where: { classId: target.cls.id, deletedAt: null }, _max: { position: true } });
-    const row = await copyModule(tx, mod, target.cls.id, req.user.id, (last._max.position ?? -1) + 1);
-    if (target.cls.id === mod.classId) await tx.learningModule.update({ where: { id: row.id }, data: { title: `${mod.title} (copy)`.slice(0, 200) } });
-    return row;
+  const body = req.valid.body;
+  const multiMode = Boolean(body.targetClassIds?.length);
+  const rawTargets = multiMode ? [...new Set(body.targetClassIds)] : [body.targetClassId ?? mod.classId];
+  const targets = [];
+  for (const id of rawTargets) targets.push(await requireWritableClassManager(req.user, id));
+
+  const now = new Date();
+  const copied = await prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const target of targets) {
+      const last = await tx.learningModule.aggregate({ where: { classId: target.cls.id, deletedAt: null }, _max: { position: true } });
+      const row = await copyModule(tx, mod, target.cls.id, req.user.id, (last._max.position ?? -1) + 1, { status: body.status, now });
+      if (target.cls.id === mod.classId) {
+        await tx.learningModule.update({ where: { id: row.id }, data: { title: `${mod.title} (copy)`.slice(0, 200) } });
+      }
+      out.push({ row, cls: target.cls });
+    }
+    return out;
   });
-  created(res, (await listModules(req.user, { cls: target.cls, canManage: true })).find((m) => m.id === copy.id));
+
+  if (body.status === 'PUBLISHED') {
+    for (const item of copied) await announceModule(item.row, item.cls);
+  }
+  const firstView = (await listModules(req.user, { cls: copied[0].cls, canManage: true })).find((m) => m.id === copied[0].row.id);
+  if (!multiMode && copied.length === 1) {
+    created(res, firstView);
+    return;
+  }
+  created(res, {
+    ...firstView,
+    createdCopies: copied.map((item) => ({ id: item.row.id, classId: item.cls.id, classLabel: classLabel(item.cls), status: item.row.status })),
+  });
 });
 
 // ── Lessons ──────────────────────────────────────────────────────────────────
@@ -349,6 +416,29 @@ const lessonBody = z.object({
   prerequisiteLessonId: zId.nullable().optional(),
 });
 
+const lessonTargetSchema = z.object({ classId: zId, moduleId: zId.nullable().optional() });
+const createLessonBody = lessonBody.extend({
+  targetClassIds: z.array(zId).max(50).default([]),
+  targets: z.array(lessonTargetSchema).max(50).default([]),
+});
+
+async function resolveLessonTargets(user, primaryClassId, { targets = [], targetClassIds = [] }) {
+  const raw = targets.length > 0 ? targets : targetClassIds.map((classId) => ({ classId, moduleId: null }));
+  const seen = new Set([primaryClassId]);
+  const resolved = [];
+  for (const t of raw) {
+    if (!t?.classId || seen.has(t.classId)) continue;
+    seen.add(t.classId);
+    const access = await requireWritableClassManager(user, t.classId);
+    if (t.moduleId) {
+      const targetMod = await prisma.learningModule.findFirst({ where: { id: t.moduleId, classId: access.cls.id, deletedAt: null }, select: { id: true } });
+      if (!targetMod) throw fieldErrors({ targets: `Choose an active module in ${classLabel(access.cls)}.` });
+    }
+    resolved.push({ cls: access.cls, moduleId: t.moduleId ?? null });
+  }
+  return resolved;
+}
+
 async function assertLessonPrerequisite(moduleId, prerequisiteLessonId, selfId) {
   if (!prerequisiteLessonId) return;
   if (prerequisiteLessonId === selfId) throw fieldErrors({ prerequisiteLessonId: 'A lesson cannot require itself.' });
@@ -361,25 +451,167 @@ async function assertLessonPrerequisite(moduleId, prerequisiteLessonId, selfId) 
   }
 }
 
-contentRouter.post('/modules/:moduleId/lessons', validate({ params: idParams('moduleId'), body: lessonBody }), async (req, res) => {
+contentRouter.post('/modules/:moduleId/lessons', validate({ params: idParams('moduleId'), body: createLessonBody }), async (req, res) => {
   const { mod } = await loadManagedModule(req);
   const body = req.valid.body;
   await assertLessonPrerequisite(mod.id, body.prerequisiteLessonId, null);
-  const last = await prisma.lesson.aggregate({ where: { moduleId: mod.id, deletedAt: null }, _max: { position: true } });
-  const lesson = await prisma.lesson.create({
-    data: {
-      moduleId: mod.id,
-      title: plainText(body.title, 200),
-      contentHtml: sanitizeRichText(body.contentHtml),
-      objectives: cleanList(body.objectives),
-      kind: body.kind,
-      estimatedMinutes: body.estimatedMinutes ?? null,
-      status: body.status,
-      prerequisiteLessonId: body.prerequisiteLessonId ?? null,
-      position: (last._max.position ?? -1) + 1,
-    },
+  const targets = await resolveLessonTargets(req.user, mod.classId, body);
+  const title = plainText(body.title, 200);
+  const contentHtml = sanitizeRichText(body.contentHtml);
+  const cleanObjectives = cleanList(body.objectives);
+  const now = new Date();
+
+  const { primary, extra } = await prisma.$transaction(async (tx) => {
+    const last = await tx.lesson.aggregate({ where: { moduleId: mod.id, deletedAt: null }, _max: { position: true } });
+    const row = await tx.lesson.create({
+      data: {
+        moduleId: mod.id,
+        title,
+        contentHtml,
+        objectives: cleanObjectives,
+        kind: body.kind,
+        estimatedMinutes: body.estimatedMinutes ?? null,
+        status: body.status,
+        prerequisiteLessonId: body.prerequisiteLessonId ?? null,
+        position: (last._max.position ?? -1) + 1,
+      },
+    });
+    const copies = [];
+    for (const target of targets) {
+      let targetModuleId = target.moduleId;
+      let autoMod = null;
+      if (!targetModuleId) {
+        const resolved = await resolveOrCreateModule(tx, mod, target.cls.id, req.user.id, now);
+        targetModuleId = resolved.id;
+        autoMod = resolved.created ? resolved.module : null;
+      }
+      const tLast = await tx.lesson.aggregate({ where: { moduleId: targetModuleId, deletedAt: null }, _max: { position: true } });
+      const copy = await tx.lesson.create({
+        data: {
+          moduleId: targetModuleId,
+          title,
+          contentHtml,
+          objectives: cleanObjectives,
+          kind: body.kind,
+          estimatedMinutes: body.estimatedMinutes ?? null,
+          status: body.status,
+          prerequisiteLessonId: null,
+          position: (tLast._max.position ?? -1) + 1,
+        },
+      });
+      copies.push({ lesson: copy, cls: target.cls, autoMod });
+    }
+    return { primary: row, extra: copies };
   });
-  created(res, await lessonDetail(req.user, lesson.id));
+
+  for (const c of extra) {
+    if (c.autoMod?.status === 'PUBLISHED') await announceModule(c.autoMod, c.cls);
+  }
+  const detail = await lessonDetail(req.user, primary.id);
+  created(res, extra.length > 0 ? { ...detail, createdCopies: extra.map((c) => ({ id: c.lesson.id, moduleId: c.lesson.moduleId, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.lesson.status })) } : detail);
+});
+
+const copyLessonBody = z.object({
+  targetClassId: zId.optional(),
+  targetClassIds: z.array(zId).min(1).max(50).optional(),
+  targets: z.array(lessonTargetSchema).min(1).max(50).optional(),
+  status: z.enum(['DRAFT', 'PUBLISHED']).optional(),
+});
+
+contentRouter.post('/lessons/:lessonId/copy', validate({ params: idParams('lessonId'), body: copyLessonBody }), async (req, res) => {
+  const source = await prisma.lesson.findUnique({
+    where: { id: req.valid.params.lessonId },
+    include: { module: true, resources: { orderBy: { position: 'asc' } } },
+  });
+  if (!source || source.deletedAt || source.module.deletedAt) throw notFound('Lesson');
+  await requireClassManager(req.user, source.module.classId);
+  const body = req.valid.body;
+  const multiMode = Boolean(body.targets?.length || body.targetClassIds?.length);
+  const rawTargets = body.targets?.length
+    ? body.targets
+    : body.targetClassIds?.length
+      ? body.targetClassIds.map((classId) => ({ classId, moduleId: null }))
+      : [{ classId: body.targetClassId ?? source.module.classId, moduleId: body.targetClassId ? null : source.moduleId }];
+
+  const seen = new Set();
+  const targets = [];
+  for (const t of rawTargets) {
+    const key = `${t.classId}:${t.moduleId ?? ''}`;
+    if (!t.classId || seen.has(key)) continue;
+    seen.add(key);
+    const access = await requireWritableClassManager(req.user, t.classId);
+    if (t.moduleId) {
+      const m = await prisma.learningModule.findFirst({ where: { id: t.moduleId, classId: access.cls.id, deletedAt: null }, select: { id: true } });
+      if (!m) throw fieldErrors({ targets: `Choose an active module in ${classLabel(access.cls)}.` });
+    }
+    targets.push({ cls: access.cls, moduleId: t.moduleId ?? null });
+  }
+
+  const now = new Date();
+  const copied = await prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const target of targets) {
+      let targetModuleId = target.moduleId;
+      let autoMod = null;
+      if (!targetModuleId) {
+        if (target.cls.id === source.module.classId) {
+          targetModuleId = source.moduleId;
+        } else {
+          const resolved = await resolveOrCreateModule(tx, source.module, target.cls.id, req.user.id, now);
+          targetModuleId = resolved.id;
+          autoMod = resolved.created ? resolved.module : null;
+        }
+      }
+      const sameModule = targetModuleId === source.moduleId;
+      const last = await tx.lesson.aggregate({ where: { moduleId: targetModuleId, deletedAt: null }, _max: { position: true } });
+      const createdLesson = await tx.lesson.create({
+        data: {
+          moduleId: targetModuleId,
+          title: sameModule ? `${source.title} (copy)`.slice(0, 200) : source.title,
+          contentHtml: source.contentHtml,
+          objectives: source.objectives,
+          kind: source.kind,
+          estimatedMinutes: source.estimatedMinutes,
+          status: body.status ?? (sameModule ? 'DRAFT' : source.status),
+          prerequisiteLessonId: null,
+          position: (last._max.position ?? -1) + 1,
+        },
+      });
+      if (source.resources.length > 0) {
+        await tx.learningResource.createMany({
+          data: source.resources.map((r) => ({
+            classId: target.cls.id,
+            moduleId: targetModuleId,
+            lessonId: createdLesson.id,
+            title: r.title,
+            description: r.description,
+            type: r.type,
+            fileId: r.fileId,
+            url: r.url,
+            allowDownload: r.allowDownload,
+            isPublished: r.isPublished,
+            position: r.position,
+            createdById: req.user.id,
+          })),
+        });
+      }
+      out.push({ lesson: createdLesson, cls: target.cls, autoMod });
+    }
+    return out;
+  });
+
+  for (const item of copied) {
+    if (item.autoMod?.status === 'PUBLISHED') await announceModule(item.autoMod, item.cls);
+  }
+  const firstDetail = await lessonDetail(req.user, copied[0].lesson.id);
+  if (!multiMode && copied.length === 1) {
+    created(res, firstDetail);
+    return;
+  }
+  created(res, {
+    ...firstDetail,
+    createdCopies: copied.map((item) => ({ id: item.lesson.id, moduleId: item.lesson.moduleId, classId: item.cls.id, classLabel: classLabel(item.cls), status: item.lesson.status })),
+  });
 });
 
 async function loadLesson(lessonId) {
@@ -623,19 +855,36 @@ const resourceBody = z.object({
 
 async function resolvePlacement(classId, { moduleId, lessonId }) {
   if (lessonId) {
-    const lesson = await prisma.lesson.findFirst({ where: { id: lessonId, deletedAt: null, module: { classId, deletedAt: null } }, select: { id: true, moduleId: true } });
+    const lesson = await prisma.lesson.findFirst({ where: { id: lessonId, deletedAt: null, module: { classId, deletedAt: null } }, select: { id: true, moduleId: true, title: true, module: { select: { title: true } } } });
     if (!lesson) throw fieldErrors({ lessonId: 'Choose a lesson from this class.' });
-    return { moduleId: lesson.moduleId, lessonId: lesson.id };
+    return { moduleId: lesson.moduleId, lessonId: lesson.id, moduleTitle: lesson.module.title, lessonTitle: lesson.title };
   }
   if (moduleId) {
-    const mod = await prisma.learningModule.findFirst({ where: { id: moduleId, classId, deletedAt: null }, select: { id: true } });
+    const mod = await prisma.learningModule.findFirst({ where: { id: moduleId, classId, deletedAt: null }, select: { id: true, title: true } });
     if (!mod) throw fieldErrors({ moduleId: 'Choose a module from this class.' });
-    return { moduleId: mod.id, lessonId: null };
+    return { moduleId: mod.id, lessonId: null, moduleTitle: mod.title, lessonTitle: null };
   }
-  return { moduleId: null, lessonId: null };
+  return { moduleId: null, lessonId: null, moduleTitle: null, lessonTitle: null };
 }
 
-classContentRouter.post('/resources', validate({ params: classParams, body: resourceBody }), async (req, res) => {
+async function resolveTargetResourcePlacement(tx, { moduleTitle, lessonTitle }, targetClassId) {
+  if (!moduleTitle) return { moduleId: null, lessonId: null };
+  const targetModuleId = await matchingModuleId(tx, { title: moduleTitle }, targetClassId);
+  if (!targetModuleId) return { moduleId: null, lessonId: null };
+  if (!lessonTitle) return { moduleId: targetModuleId, lessonId: null };
+  const targetLesson = await tx.lesson.findFirst({
+    where: { moduleId: targetModuleId, deletedAt: null, title: { equals: lessonTitle, mode: 'insensitive' } },
+    orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  });
+  return { moduleId: targetModuleId, lessonId: targetLesson?.id ?? null };
+}
+
+const createResourceBody = resourceBody.extend({
+  targetClassIds: z.array(zId).max(50).default([]),
+});
+
+classContentRouter.post('/resources', validate({ params: classParams, body: createResourceBody }), async (req, res) => {
   const { cls } = await requireWritableClassManager(req.user, req.valid.params.classId);
   const body = req.valid.body;
   const placement = await resolvePlacement(cls.id, body);
@@ -650,15 +899,80 @@ classContentRouter.post('/resources', validate({ params: classParams, body: reso
   } else {
     url = normalizeUrl(body.type, body.url);
   }
-  const last = await prisma.learningResource.aggregate({ where: { classId: cls.id, moduleId: placement.moduleId, lessonId: placement.lessonId }, _max: { position: true } });
-  const row = await prisma.learningResource.create({
-    data: {
-      classId: cls.id, ...placement, title: plainText(body.title, 200), description: body.description ? plainText(body.description, 1000) : null,
-      type: body.type, fileId, url, allowDownload: body.allowDownload, isPublished: body.isPublished, position: (last._max.position ?? -1) + 1, createdById: req.user.id,
-    },
-    include: { file: true },
+  const targets = await resolveTargetClasses(req.user, cls.id, body.targetClassIds);
+  const title = plainText(body.title, 200);
+  const description = body.description ? plainText(body.description, 1000) : null;
+
+  const { row, copies } = await prisma.$transaction(async (tx) => {
+    const last = await tx.learningResource.aggregate({ where: { classId: cls.id, moduleId: placement.moduleId, lessonId: placement.lessonId }, _max: { position: true } });
+    const primary = await tx.learningResource.create({
+      data: {
+        classId: cls.id, moduleId: placement.moduleId, lessonId: placement.lessonId, title, description,
+        type: body.type, fileId, url, allowDownload: body.allowDownload, isPublished: body.isPublished, position: (last._max.position ?? -1) + 1, createdById: req.user.id,
+      },
+      include: { file: true },
+    });
+    const extra = [];
+    for (const target of targets) {
+      const targetPlace = await resolveTargetResourcePlacement(tx, placement, target.cls.id);
+      const tLast = await tx.learningResource.aggregate({ where: { classId: target.cls.id, moduleId: targetPlace.moduleId, lessonId: targetPlace.lessonId }, _max: { position: true } });
+      const copy = await tx.learningResource.create({
+        data: {
+          classId: target.cls.id, ...targetPlace, title, description,
+          type: body.type, fileId, url, allowDownload: body.allowDownload, isPublished: body.isPublished, position: (tLast._max.position ?? -1) + 1, createdById: req.user.id,
+        },
+      });
+      extra.push({ resource: copy, cls: target.cls });
+    }
+    return { row: primary, copies: extra };
   });
-  created(res, resourceView(row, { manage: true }));
+
+  const view = resourceView(row, { manage: true });
+  created(res, copies.length > 0 ? { ...view, createdCopies: copies.map((c) => ({ id: c.resource.id, classId: c.cls.id, classLabel: classLabel(c.cls), moduleId: c.resource.moduleId, lessonId: c.resource.lessonId })) } : view);
+});
+
+contentRouter.post('/resources/:resourceId/copy', validate({ params: idParams('resourceId'), body: z.object({ targetClassIds: z.array(zId).min(1).max(50), isPublished: z.boolean().optional() }) }), async (req, res) => {
+  const source = await prisma.learningResource.findUnique({
+    where: { id: req.valid.params.resourceId },
+    include: { file: true, module: { select: { title: true } }, lesson: { select: { title: true } } },
+  });
+  if (!source) throw notFound('Resource');
+  await requireClassManager(req.user, source.classId);
+  const body = req.valid.body;
+  const targets = await resolveTargetClasses(req.user, source.classId, body.targetClassIds);
+  if (targets.length === 0) throw fieldErrors({ targetClassIds: 'Choose at least one other class.' });
+  const placementNames = { moduleTitle: source.module?.title ?? null, lessonTitle: source.lesson?.title ?? null };
+
+  const copies = await prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const target of targets) {
+      const targetPlace = await resolveTargetResourcePlacement(tx, placementNames, target.cls.id);
+      const tLast = await tx.learningResource.aggregate({ where: { classId: target.cls.id, moduleId: targetPlace.moduleId, lessonId: targetPlace.lessonId }, _max: { position: true } });
+      const copy = await tx.learningResource.create({
+        data: {
+          classId: target.cls.id,
+          ...targetPlace,
+          title: source.title,
+          description: source.description,
+          type: source.type,
+          fileId: source.fileId,
+          url: source.url,
+          allowDownload: source.allowDownload,
+          isPublished: body.isPublished ?? source.isPublished,
+          position: (tLast._max.position ?? -1) + 1,
+          createdById: req.user.id,
+        },
+        include: { file: true },
+      });
+      out.push({ copy, cls: target.cls });
+    }
+    return out;
+  });
+
+  created(res, {
+    ...resourceView(copies[0].copy, { manage: true }),
+    createdCopies: copies.map((c) => ({ id: c.copy.id, classId: c.cls.id, classLabel: classLabel(c.cls), moduleId: c.copy.moduleId, lessonId: c.copy.lessonId })),
+  });
 });
 
 /** The class library: every resource a member may see, with where it lives. */
