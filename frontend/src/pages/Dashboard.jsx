@@ -8,10 +8,12 @@ import {
 import { lazy, Suspense, useCallback } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
+import PushNotificationsCard from '../components/PushNotificationsCard.jsx';
 import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, ProgressBar, QueryState, Skeleton, StatCard } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { dueLabel, formatBytes, formatClock, formatDateKey, formatDay, formatPercent, formatScore, formatTime, getTimeZone, plural, relativeTime } from '../lib/format.js';
 import { useLiveInterval, useOnReturn } from '../lib/live.js';
+import { isStandaloneMode } from '../lib/pwa.js';
 import { classColor } from './classes/classColors.js';
 import SetupGuide from './SetupGuide.jsx';
 
@@ -31,6 +33,7 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader title={`${greeting()}, ${user.firstName}`} description={query.data ? formatDateKey(query.data.date) : ' '} />
+      {isStandaloneMode() && <PushNotificationsCard compact hideWhenSubscribed />}
       <QueryState query={query} loader={<DashboardSkeleton />}>
         {(data) => (data.role === 'STUDENT' ? <StudentDashboard data={data} /> : data.role === 'TEACHER' ? <TeacherDashboard data={data} /> : <AdminDashboard data={data} />)}
       </QueryState>

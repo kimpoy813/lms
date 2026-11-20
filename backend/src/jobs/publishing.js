@@ -4,10 +4,13 @@
 // read time); this job flips the stored status and sends the "new …" notifications exactly once.
 import { prisma } from '../db/prisma.js';
 import { logger } from '../lib/logger.js';
+import { excerpt } from '../lib/sanitize.js';
+import { formatDateTimeInZone } from '../lib/time.js';
 import { classLabel } from '../modules/classes/access.js';
 import { notifyAnnouncement } from '../modules/announcements/routes.js';
 import { enrolledStudentIds, notify } from '../services/notifications.js';
 import { registerJob } from '../services/scheduler.js';
+import { getTimeZone } from '../services/settings.js';
 
 const classInclude = { class: { include: { course: { select: { code: true, title: true } }, section: { select: { name: true } } } } };
 
@@ -24,24 +27,46 @@ async function claimDue(model, now, extraWhere = {}) {
 
 export async function publishScheduled(now = new Date()) {
   const counts = { modules: 0, assignments: 0, quizzes: 0, announcements: 0 };
+  const tz = await getTimeZone();
 
   for (const id of await claimDue('learningModule', now)) {
     const m = await prisma.learningModule.findUnique({ where: { id }, include: classInclude });
-    await notify(await enrolledStudentIds(m.classId), { type: 'module.published', title: `New module in ${classLabel(m.class)}: ${m.title}`, link: `/classes/${m.classId}/modules/${m.id}`, classId: m.classId });
+    const summary = m.description ? excerpt(m.description, 200) : '';
+    await notify(await enrolledStudentIds(m.classId), {
+      type: 'module.published',
+      title: `New module in ${classLabel(m.class)}: ${m.title}`,
+      body: summary || `"${m.title}" is now available to study in ${classLabel(m.class)}.`,
+      link: `/classes/${m.classId}/modules/${m.id}`,
+      classId: m.classId,
+    });
     counts.modules += 1;
   }
   for (const id of await claimDue('assignment', now)) {
     const a = await prisma.assignment.findUnique({ where: { id }, include: classInclude });
+    const parts = [classLabel(a.class)];
+    if (a.points != null) parts.push(`${a.points} pts`);
+    if (a.dueAt) parts.push(`Due ${formatDateTimeInZone(a.dueAt, tz)}`);
+    const desc = a.instructionsHtml ? excerpt(a.instructionsHtml, 140) : '';
     await notify(await enrolledStudentIds(a.classId), {
-      type: 'assignment.published', title: `New assignment in ${classLabel(a.class)}: ${a.title}`,
-      body: a.dueAt ? `Due ${a.dueAt.toISOString()}` : undefined, link: `/classes/${a.classId}/assignments/${a.id}`, classId: a.classId,
+      type: 'assignment.published',
+      title: `New assignment in ${classLabel(a.class)}: ${a.title}`,
+      body: desc ? `${parts.join(' · ')} — ${desc}` : `${parts.join(' · ')}. Open EduSphere to view instructions and submit.`,
+      link: `/classes/${a.classId}/assignments/${a.id}`,
+      classId: a.classId,
     });
     counts.assignments += 1;
   }
   for (const id of await claimDue('quiz', now)) {
     const q = await prisma.quiz.findUnique({ where: { id }, include: classInclude });
+    const parts = [classLabel(q.class)];
+    if (q.timeLimitMin) parts.push(`${q.timeLimitMin} min`);
+    if (q.availableUntil) parts.push(`Closes ${formatDateTimeInZone(q.availableUntil, tz)}`);
     await notify(await enrolledStudentIds(q.classId), {
-      type: 'quiz.published', title: `New ${q.kind.toLowerCase()} in ${classLabel(q.class)}: ${q.title}`, link: `/classes/${q.classId}/quizzes/${q.id}`, classId: q.classId,
+      type: 'quiz.published',
+      title: `New ${q.kind.toLowerCase()} in ${classLabel(q.class)}: ${q.title}`,
+      body: `${parts.join(' · ')}. Open EduSphere to review details and start when ready.`,
+      link: `/classes/${q.classId}/quizzes/${q.id}`,
+      classId: q.classId,
     });
     counts.quizzes += 1;
   }

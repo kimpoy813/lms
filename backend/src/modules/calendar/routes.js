@@ -12,7 +12,7 @@ import { conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js'
 import { created, fullName, idParams, noContent, ok, patchOf, zDateTime, zId, zTitle } from '../../lib/http.js';
 import { buildIcsCalendar } from '../../lib/ics.js';
 import { plainText } from '../../lib/sanitize.js';
-import { addDays, atTime, dateKey, weekdayOf } from '../../lib/time.js';
+import { addDays, atTime, dateKey, formatDateTimeInZone, weekdayOf } from '../../lib/time.js';
 import { publishedWhere } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
@@ -519,7 +519,13 @@ consultationsRouter.post('/slots/:slotId/book', requireRole('STUDENT'), validate
     return { slot, booking, isNew: true };
   });
   if (result.isNew) {
-    await notify([result.slot.teacherId], { type: 'consultation.booked', title: `${fullName(req.user)} booked a consultation`, body: topic ?? undefined, link: '/consultations' });
+    const tz = await getTimeZone();
+    await notify([result.slot.teacherId], {
+      type: 'consultation.booked',
+      title: `${fullName(req.user)} booked a consultation`,
+      body: topic ?? `Scheduled for ${formatDateTimeInZone(result.slot.startAt, tz)}.`,
+      link: '/consultations',
+    });
   }
   (result.isNew ? created : ok)(res, { id: result.booking.id, slotId, topic: result.booking.topic, status: result.booking.status });
 });

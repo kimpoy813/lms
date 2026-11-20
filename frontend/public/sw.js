@@ -5,8 +5,8 @@
 // grades, attendance, and messages are private and must always come from the server.
 // What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
 // page has to come from the server with its own security headers, and is not the app's page.
-const VERSION = 'edusphere-v3';
-const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const VERSION = 'edusphere-v4';
+const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png'];
 const SHELL_SET = new Set(SHELL);
 
 self.addEventListener('install', (event) => {
@@ -95,22 +95,76 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
-self.addEventListener('push', (event) => {
-  let data;
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch {
-    data = { body: event.data?.text?.() ?? '' };
+function parsePushPayload(event) {
+  let raw = null;
+  if (event.data) {
+    try {
+      raw = typeof event.data.json === 'function' ? event.data.json() : JSON.parse(event.data.text());
+    } catch {
+      try {
+        const text = typeof event.data.text === 'function' ? event.data.text() : '';
+        if (text && text.trim()) {
+          try {
+            raw = JSON.parse(text);
+          } catch {
+            raw = { body: text.trim() };
+          }
+        }
+      } catch {
+        raw = {};
+      }
+    }
   }
-  const title = data.title || 'EduSphere';
-  const options = {
-    body: data.body || '',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/maskable-192.png',
-    tag: data.tag || 'edusphere-notification',
-    data: { url: data.link || '/' },
+  if (typeof raw === 'string') {
+    raw = raw.trim() ? { body: raw.trim() } : {};
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    raw = {};
+  }
+  if (!raw.title && !raw.body && !raw.message) {
+    if (raw.notification && typeof raw.notification === 'object') raw = raw.notification;
+    else if (raw.data && typeof raw.data === 'object') raw = raw.data;
+  }
+
+  const pick = (...vals) => {
+    for (const val of vals) {
+      if (typeof val === 'string' && val.trim()) return val.trim();
+    }
+    return '';
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+
+  const title = pick(raw.title, raw.heading, raw.subject) || 'EduSphere';
+  const bodyText = pick(raw.body, raw.message, raw.summary, raw.description, raw.text);
+  const body = bodyText || (title === 'EduSphere' ? 'You have a new notification. Open EduSphere to view details.' : 'Open EduSphere to view details.');
+  const link = pick(raw.link, raw.url) || '/notifications';
+  const tag = pick(raw.tag) || `edusphere-${Date.now()}`;
+  const timestamp = typeof raw.timestamp === 'number' && Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now();
+
+  return {
+    title,
+    options: {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/badge-96.png',
+      tag,
+      renotify: true,
+      timestamp,
+      data: { url: link },
+    },
+  };
+}
+
+self.addEventListener('push', (event) => {
+  const { title, options } = parsePushPayload(event);
+  event.waitUntil(
+    self.registration.showNotification(title, options).catch(() =>
+      self.registration.showNotification('EduSphere', {
+        body: 'You have a new notification. Open EduSphere to view details.',
+        icon: '/icons/icon-192.png',
+        data: { url: '/notifications' },
+      }),
+    ),
+  );
 });
 
 self.addEventListener('notificationclick', (event) => {
@@ -119,11 +173,15 @@ self.addEventListener('notificationclick', (event) => {
   const targetUrl = new URL(rawUrl, self.location.origin);
   if (targetUrl.origin !== self.location.origin) return;
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (windowClients) => {
       for (const client of windowClients) {
         if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
           if ('navigate' in client && client.url !== targetUrl.href) {
-            client.navigate(targetUrl.href);
+            try {
+              await client.navigate(targetUrl.href);
+            } catch {
+              // Ignore navigation failure and focus or open a window below.
+            }
           }
           return client.focus();
         }

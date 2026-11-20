@@ -171,8 +171,13 @@ async function assertPrerequisite(classId, prerequisiteModuleId, selfId) {
 }
 
 async function announceModule(mod, cls) {
+  const summary = mod.description ? excerpt(mod.description, 200) : '';
   await notify(await enrolledStudentIds(cls.id), {
-    type: 'module.published', title: `New module in ${classLabel(cls)}: ${mod.title}`, link: `/classes/${cls.id}/modules/${mod.id}`, classId: cls.id,
+    type: 'module.published',
+    title: `New module in ${classLabel(cls)}: ${mod.title}`,
+    body: summary || `"${mod.title}" is now available to study in ${classLabel(cls)}.`,
+    link: `/classes/${cls.id}/modules/${mod.id}`,
+    classId: cls.id,
   });
 }
 

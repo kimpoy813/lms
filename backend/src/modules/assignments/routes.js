@@ -7,11 +7,13 @@ import { AppError, conflict, fieldErrors, forbidden, notFound } from '../../lib/
 import { safeFilename, sendBuffer } from '../../lib/exporter.js';
 import { created, fullName, idParams, noContent, ok, patchOf, round, zDateTime, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { escapeHtml, excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
+import { formatDateTimeInZone } from '../../lib/time.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
 import { enrolledStudentIds, notify } from '../../services/notifications.js';
+import { getTimeZone } from '../../services/settings.js';
 import { cloneFilesForParent, fileSummary, readStoredFile, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
 import { cleanupStoredFiles, matchingCategoryId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
@@ -222,8 +224,17 @@ async function resolveLinks(user, classId, { rubricId, moduleId }) {
 }
 
 async function announce(assignment, cls) {
+  const tz = await getTimeZone();
+  const parts = [classLabel(cls)];
+  if (assignment.points != null) parts.push(`${assignment.points} pts`);
+  if (assignment.dueAt) parts.push(`Due ${formatDateTimeInZone(assignment.dueAt, tz)}`);
+  const desc = assignment.instructionsHtml ? excerpt(assignment.instructionsHtml, 140) : '';
   await notify(await enrolledStudentIds(cls.id), {
-    type: 'assignment.published', title: `New assignment in ${classLabel(cls)}: ${assignment.title}`, link: `/classes/${cls.id}/assignments/${assignment.id}`, classId: cls.id,
+    type: 'assignment.published',
+    title: `New assignment in ${classLabel(cls)}: ${assignment.title}`,
+    body: desc ? `${parts.join(' · ')} — ${desc}` : `${parts.join(' · ')}. Open EduSphere to view instructions and submit.`,
+    link: `/classes/${cls.id}/assignments/${assignment.id}`,
+    classId: cls.id,
   });
 }
 
@@ -420,7 +431,15 @@ assignmentsRouter.patch('/:assignmentId', validate({ params: assignmentParams, b
   const full = await fullAssignment(assignment.id);
   if (!wasVisible && full.status === 'PUBLISHED') await announce(full, cls);
   else if (dueChanged && wasVisible && isPublished(full)) {
-    await notify(await enrolledStudentIds(cls.id), { type: 'assignment.updated', title: `Due date changed: ${full.title}`, link: `/classes/${cls.id}/assignments/${full.id}`, classId: cls.id });
+    const tz = await getTimeZone();
+    const dueText = full.dueAt ? `New deadline: ${formatDateTimeInZone(full.dueAt, tz)}.` : 'The due date was removed.';
+    await notify(await enrolledStudentIds(cls.id), {
+      type: 'assignment.updated',
+      title: `Due date changed: ${full.title}`,
+      body: `${classLabel(cls)} — ${dueText}`,
+      link: `/classes/${cls.id}/assignments/${full.id}`,
+      classId: cls.id,
+    });
   }
   ok(res, { ...detailView(full), ...manageFields(full, new Date()) });
 });
@@ -752,7 +771,13 @@ assignmentsRouter.post('/:assignmentId/return', validate({ params: assignmentPar
   if (graded.length > 0) {
     await prisma.assignmentSubmission.updateMany({ where: { id: { in: graded.map((g) => g.id) }, status: 'GRADED' }, data: { status: 'RETURNED', returnedAt: now } });
     const activeIds = await prisma.enrollment.findMany({ where: { classId: cls.id, studentId: { in: graded.map((g) => g.studentId) }, status: 'ENROLLED' }, select: { studentId: true } });
-    await notify(activeIds.map((e) => e.studentId), { type: 'assignment.returned', title: `Graded: ${assignment.title}`, body: classLabel(cls), link: `/classes/${cls.id}/assignments/${assignment.id}`, classId: cls.id });
+    await notify(activeIds.map((e) => e.studentId), {
+      type: 'assignment.returned',
+      title: `Graded: ${assignment.title}`,
+      body: `${classLabel(cls)} — your score and feedback have been returned.`,
+      link: `/classes/${cls.id}/assignments/${assignment.id}`,
+      classId: cls.id,
+    });
   }
   ok(res, { returned: graded.length });
 });
@@ -773,9 +798,14 @@ assignmentsRouter.post(
       create: { assignmentId: assignment.id, studentId, reopenedUntil: until },
       update: { reopenedUntil: until },
     });
+    const tz = await getTimeZone();
     await audit(req, { action: 'submission.reopen', entityType: 'AssignmentSubmission', entityId: row.id, classId: cls.id, summary: `Reopened "${assignment.title}" for one student until ${until.toISOString()}${note ? ` — ${plainText(note, 500)}` : ''}` });
     await notify([studentId], {
-      type: 'assignment.reopened', title: `You can submit again: ${assignment.title}`, body: note ? plainText(note, 200) : undefined, link: `/classes/${cls.id}/assignments/${assignment.id}`, classId: cls.id,
+      type: 'assignment.reopened',
+      title: `You can submit again: ${assignment.title}`,
+      body: note ? plainText(note, 200) : `${classLabel(cls)} — open until ${formatDateTimeInZone(until, tz)}.`,
+      link: `/classes/${cls.id}/assignments/${assignment.id}`,
+      classId: cls.id,
     });
     ok(res, { reopenedUntil: row.reopenedUntil });
   },

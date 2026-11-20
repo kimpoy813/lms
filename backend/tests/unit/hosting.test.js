@@ -352,4 +352,33 @@ describe('PWABuilder readiness', () => {
       vi.resetModules();
     }
   });
+
+  it('normalizes VAPID keys and derives an Apple-compatible HTTPS VAPID_SUBJECT from APP_URL', async () => {
+    const prev = {
+      VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+      APP_URL: process.env.APP_URL,
+    };
+    try {
+      process.env.VAPID_PUBLIC_KEY = '"BEl6+Test/Key=="';
+      process.env.VAPID_PRIVATE_KEY = 'UUxI+Priv/Key=';
+      delete process.env.VAPID_SUBJECT;
+      process.env.APP_URL = 'https://edusphere.example.edu/';
+      vi.resetModules();
+      const { env: freshEnv } = await import('../../src/config/env.js');
+      expect(freshEnv.push).toEqual({
+        configured: true,
+        publicKey: 'BEl6-Test_Key',
+        privateKey: 'UUxI-Priv_Key',
+        subject: 'https://edusphere.example.edu',
+      });
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      vi.resetModules();
+    }
+  });
 });

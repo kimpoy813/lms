@@ -13,7 +13,7 @@ import { MAX_IMPORT_QUESTIONS, questionsToJson } from '../../lib/questionJson.js
 import { arrangeQuestions, hasNamedParts, hasParts, partsInOrder } from '../../lib/quizParts.js';
 import { MANUAL_TYPES, attemptTotals, buildSnapshot, correctAnswer, isAnswered, keyWordsOf, normalizeQuestion, pieceResults, publicQuestion, sanitizeResponse, scoreAnswer, shortAnswerCheck, shuffle, toEditorShape } from '../../lib/quizScoring.js';
 import { excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
-import { dateKey, timeKey } from '../../lib/time.js';
+import { dateKey, formatDateTimeInZone, timeKey } from '../../lib/time.js';
 import { isPublished, publishedWhere, quizResultsVisible, resolvePublication } from '../../lib/visibility.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
 import { uploadLimiter } from '../../middleware/rateLimit.js';
@@ -256,8 +256,16 @@ async function assertPublishable(quiz) {
 const fullQuiz = (id, db = prisma) => db.quiz.findUnique({ where: { id }, include: quizInclude });
 
 async function announce(quiz, cls) {
+  const tz = await getTimeZone();
+  const parts = [classLabel(cls)];
+  if (quiz.timeLimitMin) parts.push(`${quiz.timeLimitMin} min`);
+  if (quiz.availableUntil) parts.push(`Closes ${formatDateTimeInZone(quiz.availableUntil, tz)}`);
   await notify(await enrolledStudentIds(cls.id), {
-    type: 'quiz.published', title: `New ${quiz.kind.toLowerCase()} in ${classLabel(cls)}: ${quiz.title}`, link: `/classes/${cls.id}/quizzes/${quiz.id}`, classId: cls.id,
+    type: 'quiz.published',
+    title: `New ${quiz.kind.toLowerCase()} in ${classLabel(cls)}: ${quiz.title}`,
+    body: `${parts.join(' · ')}. Open EduSphere to review details and start when ready.`,
+    link: `/classes/${cls.id}/quizzes/${quiz.id}`,
+    classId: cls.id,
   });
 }
 
@@ -1776,7 +1784,13 @@ const release = (publish) => async (req, res) => {
   await audit(req, { action: publish ? 'quiz.results.publish' : 'quiz.results.withhold', entityType: 'Quiz', entityId: quiz.id, classId: cls.id, summary: `${publish ? 'Released' : 'Withdrew'} the results of "${quiz.title}"` });
   if (publish && !quiz.resultsPublishedAt && quiz.resultVisibility === 'MANUAL') {
     const takers = await prisma.quizAttempt.findMany({ where: { quizId: quiz.id, status: { in: FINISHED } }, distinct: ['studentId'], select: { studentId: true } });
-    await notify(takers.map((t) => t.studentId), { type: 'quiz.results', title: `Results are available: ${quiz.title}`, body: classLabel(cls), link: `/classes/${cls.id}/quizzes/${quiz.id}`, classId: cls.id });
+    await notify(takers.map((t) => t.studentId), {
+      type: 'quiz.results',
+      title: `Results are available: ${quiz.title}`,
+      body: `${classLabel(cls)} — open EduSphere to view your score and review.`,
+      link: `/classes/${cls.id}/quizzes/${quiz.id}`,
+      classId: cls.id,
+    });
   }
   ok(res, manageView(await fullQuiz(quiz.id), new Date()));
 };

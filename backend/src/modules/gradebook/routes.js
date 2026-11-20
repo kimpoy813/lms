@@ -805,7 +805,13 @@ const periodAction = (action, { needsReason = false } = {}) => [
       }, tx);
     });
     if (action === 'publish' && !wasPublished) {
-      await notify(await enrolledStudentIds(cls.id), { type: 'grades.published', title: `${period.name} grades are available — ${classLabel(cls)}`, link: `/classes/${cls.id}/grades`, classId: cls.id });
+      await notify(await enrolledStudentIds(cls.id), {
+        type: 'grades.published',
+        title: `${period.name} grades are available — ${classLabel(cls)}`,
+        body: `Your ${period.name} scores and standing in ${classLabel(cls)} have been posted.`,
+        link: `/classes/${cls.id}/grades`,
+        classId: cls.id,
+      });
     }
     ok(res, periodHead((await loadStructure(cls.id)).find((p) => p.id === period.id)));
   },
@@ -858,7 +864,13 @@ classGradebookRouter.post('/finalize', validate({ params: classParams, body: z.o
     }, tx);
     return { studentIds: activeStudents.map((s) => s.student.id), finalizedAt: now, updatedClass };
   }, { timeout: 60_000 });
-  await notify(result.studentIds, { type: 'grades.finalized', title: `Final grades are available — ${classLabel(cls)}`, link: `/classes/${cls.id}/grades`, classId: cls.id });
+  await notify(result.studentIds, {
+    type: 'grades.finalized',
+    title: `Final grades are available — ${classLabel(cls)}`,
+    body: `Your final grade and summary for ${classLabel(cls)} have been posted.`,
+    link: `/classes/${cls.id}/grades`,
+    classId: cls.id,
+  });
   ok(res, await matrix({ ...cls, ...result.updatedClass, gradesFinalizedAt: result.finalizedAt }));
 });
 
@@ -1049,7 +1061,13 @@ classGradebookRouter.post(
       if (pending) throw conflict('You already have a pending request about this. Your teacher will respond to it.', 'APPEAL_PENDING');
       return tx.gradeAppeal.create({ data: { classId: cls.id, studentId: req.user.id, gradeItemId: body.gradeItemId ?? null, reason: plainText(body.reason, 2000) }, include: appealInclude });
     });
-    await notify([cls.teacherId], { type: 'grade.appeal', title: `${fullName(req.user)} asked for a grade review — ${classLabel(cls)}`, link: `/classes/${cls.id}/gradebook?tab=appeals`, classId: cls.id });
+    await notify([cls.teacherId], {
+      type: 'grade.appeal',
+      title: `${fullName(req.user)} asked for a grade review — ${classLabel(cls)}`,
+      body: plainText(body.reason, 180) || `${fullName(req.user)} submitted a grade review request.`,
+      link: `/classes/${cls.id}/gradebook?tab=appeals`,
+      classId: cls.id,
+    });
     created(res, appealView(appeal));
   },
 );
@@ -1075,7 +1093,13 @@ classGradebookRouter.post(
     });
     if (done.count === 0) throw conflict('This request has already been answered.', 'ALREADY_RESOLVED');
     await audit(req, { action: 'grade.appeal.resolve', entityType: 'GradeAppeal', entityId: appeal.id, classId: cls.id, summary: `${req.valid.body.status === 'APPROVED' ? 'Accepted' : 'Declined'} a grade review request` });
-    await notify([appeal.studentId], { type: 'grade.appeal.resolved', title: `Your grade review request was ${req.valid.body.status === 'APPROVED' ? 'accepted' : 'declined'} — ${classLabel(cls)}`, link: `/classes/${cls.id}/grades`, classId: cls.id });
+    await notify([appeal.studentId], {
+      type: 'grade.appeal.resolved',
+      title: `Your grade review request was ${req.valid.body.status === 'APPROVED' ? 'accepted' : 'declined'} — ${classLabel(cls)}`,
+      body: plainText(req.valid.body.response, 200),
+      link: `/classes/${cls.id}/grades`,
+      classId: cls.id,
+    });
     ok(res, appealView(await prisma.gradeAppeal.findUnique({ where: { id: appeal.id }, include: appealInclude })));
   },
 );

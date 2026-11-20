@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
+import { runInBackground } from '../../lib/background.js';
 import { fieldErrors, forbidden, notFound } from '../../lib/errors.js';
 import { created, fullName, idParams, noContent, ok, zId } from '../../lib/http.js';
 import { cleanText } from '../../lib/sanitize.js';
@@ -16,6 +17,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { messageLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { hasPermission } from '../../services/permissions.js';
+import { pushConfigured, sendPushToUsers } from '../../services/push.js';
 import { emitToUser } from '../../services/realtime.js';
 import { attachFiles, fileSummary } from '../../services/storage.js';
 
@@ -192,6 +194,20 @@ messagesRouter.post(
     const view = messageView(message);
     emitToUser(other.userId, 'message:new', { ...view, from: { id: req.user.id, name: fullName(req.user) } });
     emitToUser(req.user.id, 'message:sent', view);
+    if (pushConfigured()) {
+      const senderName = fullName(req.user);
+      const body = text ? text.slice(0, 220) : `Sent ${fileIds.length} attachment${fileIds.length === 1 ? '' : 's'}`;
+      runInBackground(
+        () => sendPushToUsers([other.userId], {
+          type: 'message.new',
+          title: `Message from ${senderName}`,
+          body,
+          link: `/messages?c=${conversation.id}`,
+          tag: `message-${conversation.id}`,
+        }),
+        'delivering message push',
+      );
+    }
     created(res, view);
   },
 );
