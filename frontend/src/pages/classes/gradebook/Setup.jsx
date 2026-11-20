@@ -1,6 +1,6 @@
 // Grading periods, weighted categories and the policy that turns scores into a grade.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, LayoutTemplate, Lock, Plus, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, LayoutTemplate, Lock, Plus, Save, Trash2, Trophy } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, CardHeader, cn, ConfirmDialog, Field, IconButton, Input, Select, Switch } from '../../../components/ui.jsx';
 import { api } from '../../../lib/api.js';
@@ -97,6 +97,7 @@ export default function Setup({ data }) {
 
       <div className="min-w-0 space-y-5">
         <Policy data={data} scales={scales.data ?? []} invalidate={invalidate} readOnly={readOnly} />
+        <RankingPolicy data={data} invalidate={invalidate} archived={cls.status === 'ARCHIVED'} />
       </div>
 
       <ConfirmDialog open={Boolean(template)} onClose={() => setTemplate(null)} onConfirm={() => applyTemplate.mutate(template.key)} loading={applyTemplate.isPending} tone="primary" title={`Use “${template?.label}”?`} confirmLabel="Apply template">
@@ -150,6 +151,40 @@ function Policy({ data, scales, invalidate, readOnly }) {
         ) : <p className="rounded-xl bg-raised p-3 text-[13px] text-soft">Attendance is not part of grades at this institution. An administrator can change this policy under Settings.</p>}
         {!readOnly && <Button icon={Save} loading={save.isPending} onClick={() => save.mutate()} className="w-full">Save policy</Button>}
       </fieldset>
+    </Card>
+  );
+}
+
+function RankingPolicy({ data, invalidate, archived }) {
+  const { base } = useClass();
+  const c = data.class;
+  const save = useAction((patch) => api.patch(`${base}/gradebook/ranking-settings`, patch), {
+    invalidate: [...invalidate, ['class']],
+    success: (_, patch) => (
+      patch.gradeRankingEnabled !== undefined
+        ? (patch.gradeRankingEnabled ? 'Anonymous class ranking enabled.' : 'Anonymous class ranking hidden.')
+        : (patch.gradeRankingShowScores ? 'Grades shown beside ranking codes.' : 'Only rank order and codes shown.')
+    ),
+  });
+  return (
+    <Card>
+      <CardHeader icon={Trophy} title="Grade release ranking" description="Controlled separately from grade computation so you can turn it on or off anytime." />
+      <div className="space-y-4">
+        <Switch
+          checked={Boolean(c.gradeRankingEnabled)}
+          disabled={archived || save.isPending}
+          onChange={(on) => save.mutate({ gradeRankingEnabled: on })}
+          label="Show anonymous ranking on grade release"
+          description="Students see standings using private per-class codes instead of names."
+        />
+        <Switch
+          checked={c.gradeRankingShowScores !== false}
+          disabled={archived || !c.gradeRankingEnabled || save.isPending}
+          onChange={(on) => save.mutate({ gradeRankingShowScores: on })}
+          label="Show grades alongside ranking codes"
+          description="Off: displays rank and secret codes without classmate percentages."
+        />
+      </div>
     </Card>
   );
 }

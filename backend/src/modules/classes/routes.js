@@ -53,6 +53,8 @@ export function serializeClass(cls, { role, counts } = {}) {
     enrollmentRequiresApproval: cls.enrollmentRequiresApproval,
     classmatesVisible: cls.classmatesVisible,
     aiStudyCoachEnabled: Boolean(cls.aiStudyCoachEnabled),
+    gradeRankingEnabled: Boolean(cls.gradeRankingEnabled),
+    gradeRankingShowScores: cls.gradeRankingShowScores !== false,
     gradesFinalizedAt: cls.gradesFinalizedAt,
     myRole: role,
     // The enrolment code is a secret shared by the teacher — students never receive it from the API.
@@ -197,6 +199,8 @@ const classBody = z.object({
   enrollmentRequiresApproval: z.boolean().optional(),
   classmatesVisible: z.boolean().optional(),
   aiStudyCoachEnabled: z.boolean().optional(),
+  gradeRankingEnabled: z.boolean().optional(),
+  gradeRankingShowScores: z.boolean().optional(),
 });
 
 classesRouter.post('/', requireRole('TEACHER', 'ADMIN'), validate({ body: classBody }), async (req, res) => {
@@ -264,6 +268,8 @@ classesRouter.post('/', requireRole('TEACHER', 'ADMIN'), validate({ body: classB
         enrollmentRequiresApproval: body.enrollmentRequiresApproval ?? false,
         classmatesVisible: body.classmatesVisible ?? classmatesDefault,
         aiStudyCoachEnabled: body.aiStudyCoachEnabled ?? false,
+        gradeRankingEnabled: body.gradeRankingEnabled ?? false,
+        gradeRankingShowScores: body.gradeRankingShowScores ?? true,
         schedules: { create: body.schedules.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime, room: s.room || null })) },
       },
       include: listInclude,
@@ -315,6 +321,8 @@ const updateBody = z.object({
   enrollmentRequiresApproval: z.boolean().optional(),
   classmatesVisible: z.boolean().optional(),
   aiStudyCoachEnabled: z.boolean().optional(),
+  gradeRankingEnabled: z.boolean().optional(),
+  gradeRankingShowScores: z.boolean().optional(),
   syllabusHtml: zHtml.optional(),
   learningOutcomes: z.array(z.string().trim().min(1).max(500)).max(30).optional(),
   // Administrators may reassign a class to another teacher.
@@ -333,6 +341,8 @@ classesRouter.patch('/:classId', validate({ params: idParams('classId'), body: u
   if (body.enrollmentRequiresApproval !== undefined) data.enrollmentRequiresApproval = body.enrollmentRequiresApproval;
   if (body.classmatesVisible !== undefined) data.classmatesVisible = body.classmatesVisible;
   if (body.aiStudyCoachEnabled !== undefined) data.aiStudyCoachEnabled = body.aiStudyCoachEnabled;
+  if (body.gradeRankingEnabled !== undefined) data.gradeRankingEnabled = body.gradeRankingEnabled;
+  if (body.gradeRankingShowScores !== undefined) data.gradeRankingShowScores = body.gradeRankingShowScores;
   if (body.syllabusHtml !== undefined) data.syllabusHtml = sanitizeRichText(body.syllabusHtml);
   if (body.learningOutcomes !== undefined) data.learningOutcomes = body.learningOutcomes.map((o) => plainText(o, 500)).filter(Boolean);
   if (body.sectionId !== undefined) {
@@ -454,6 +464,8 @@ classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({
         enrollmentRequiresApproval: source.enrollmentRequiresApproval,
         classmatesVisible: source.classmatesVisible,
         aiStudyCoachEnabled: source.aiStudyCoachEnabled,
+        gradeRankingEnabled: source.gradeRankingEnabled,
+        gradeRankingShowScores: source.gradeRankingShowScores,
         syllabusHtml: body.includeSyllabus ? source.syllabusHtml : null,
         learningOutcomes: body.includeSyllabus ? source.learningOutcomes : [],
       },

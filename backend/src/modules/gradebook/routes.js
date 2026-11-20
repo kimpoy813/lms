@@ -17,6 +17,7 @@ import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, 
 import { quizOutcome } from '../quizzes/attemptScore.js';
 import { OVERALL_SCOPE, validateStructure } from './compute.js';
 import { STRUCTURE_TEMPLATES } from './defaults.js';
+import { buildClassRanking, regenerateStudentRankingCode, setCustomStudentRankingCode } from './ranking.js';
 import { assertItemOpen, categoryOptions, computeClassGrades, finalSnapshot, loadStructure, recordGrade, studentGradeView } from './service.js';
 
 export const classGradebookRouter = Router({ mergeParams: true }); // /classes/:classId/gradebook
@@ -62,6 +63,8 @@ async function classSettingsView(cls, settings) {
     transmutationBase: cls.transmutationBase,
     gradeRounding: cls.gradeRounding,
     attendanceLateCredit: cls.attendanceLateCredit,
+    gradeRankingEnabled: Boolean(cls.gradeRankingEnabled),
+    gradeRankingShowScores: cls.gradeRankingShowScores !== false,
     gradingScale: settings.scale ? { ...settings.scale, entries: [...settings.scaleEntries].sort((a, b) => b.minPercent - a.minPercent) } : null,
     usesDefaultScale: !cls.gradingScaleId,
     attendanceAllowed: settings.attendanceCounts,
@@ -131,11 +134,152 @@ classGradebookRouter.get('/templates', validate({ params: classParams }), async 
 });
 
 /** A student's own grades. */
-classGradebookRouter.get('/mine', validate({ params: classParams }), async (req, res) => {
+classGradebookRouter.get(
+  '/mine',
+  validate({ params: classParams, query: z.object({ rankingScope: z.string().trim().max(60).optional() }) }),
+  async (req, res) => {
+    const { cls } = await requireClassStudent(req.user, req.valid.params.classId);
+    const view = await studentGradeView(cls, req.user.id);
+    const ranking = cls.gradeRankingEnabled
+      ? await buildClassRanking(cls, { viewerUser: req.user, canManage: false, requestedScope: req.valid.query.rankingScope ?? null })
+      : null;
+    ok(res, { class: { id: cls.id, label: classLabel(cls), title: cls.course.title }, ...view, ranking });
+  },
+);
+
+// ── Anonymous grade-release ranking ──────────────────────────────────────────
+classGradebookRouter.get(
+  '/ranking',
+  validate({ params: classParams, query: z.object({ scope: z.string().trim().max(60).optional() }) }),
+  async (req, res) => {
+    const access = await loadClassAccess(req.user, req.valid.params.classId);
+    if (!access.canManage && !access.cls.gradeRankingEnabled) {
+      throw new AppError(403, 'RANKING_DISABLED', 'Class ranking is not enabled for this class.');
+    }
+    ok(res, await buildClassRanking(access.cls, {
+      viewerUser: req.user,
+      canManage: access.canManage,
+      requestedScope: req.valid.query.scope ?? null,
+    }));
+  },
+);
+
+classGradebookRouter.patch(
+  '/ranking-settings',
+  validate({ params: classParams, body: z.object({ gradeRankingEnabled: z.boolean().optional(), gradeRankingShowScores: z.boolean().optional() }) }),
+  async (req, res) => {
+    const cls = await managed(req);
+    const body = req.valid.body;
+    const data = {};
+    if (body.gradeRankingEnabled !== undefined) data.gradeRankingEnabled = body.gradeRankingEnabled;
+    if (body.gradeRankingShowScores !== undefined) data.gradeRankingShowScores = body.gradeRankingShowScores;
+    if (Object.keys(data).length === 0) {
+      return ok(res, { gradeRankingEnabled: Boolean(cls.gradeRankingEnabled), gradeRankingShowScores: cls.gradeRankingShowScores !== false });
+    }
+    const updated = await prisma.class.update({ where: { id: cls.id }, data });
+    await audit(req, {
+      action: 'gradebook.ranking_settings.update',
+      entityType: 'Class',
+      entityId: cls.id,
+      classId: cls.id,
+      summary: `${updated.gradeRankingEnabled ? 'Enabled' : 'Disabled'} anonymous class ranking`,
+      before: Object.fromEntries(Object.keys(data).map((k) => [k, cls[k]])),
+      after: data,
+    });
+    ok(res, { gradeRankingEnabled: Boolean(updated.gradeRankingEnabled), gradeRankingShowScores: updated.gradeRankingShowScores !== false });
+  },
+);
+
+classGradebookRouter.post('/ranking-code/regenerate', requireRole('STUDENT'), validate({ params: classParams }), async (req, res) => {
   const { cls } = await requireClassStudent(req.user, req.valid.params.classId);
-  const view = await studentGradeView(cls, req.user.id);
-  ok(res, { class: { id: cls.id, label: classLabel(cls), title: cls.course.title }, ...view });
+  assertClassWritable(cls);
+  if (!cls.gradeRankingEnabled) {
+    throw new AppError(403, 'RANKING_DISABLED', 'Class ranking is not enabled for this class.');
+  }
+  const result = await regenerateStudentRankingCode(cls.id, req.user.id);
+  await audit(req, { action: 'gradebook.ranking_code.regenerate', entityType: 'Enrollment', classId: cls.id, summary: 'Regenerated private class ranking code' });
+  ok(res, result);
 });
+
+classGradebookRouter.put(
+  '/ranking-code',
+  requireRole('STUDENT'),
+  validate({ params: classParams, body: z.object({ code: z.string().trim().min(1, 'Enter a secret code').max(40) }) }),
+  async (req, res) => {
+    const { cls } = await requireClassStudent(req.user, req.valid.params.classId);
+    assertClassWritable(cls);
+    if (!cls.gradeRankingEnabled) {
+      throw new AppError(403, 'RANKING_DISABLED', 'Class ranking is not enabled for this class.');
+    }
+    const result = await setCustomStudentRankingCode(cls.id, req.user, req.valid.body.code);
+    await audit(req, { action: 'gradebook.ranking_code.customize', entityType: 'Enrollment', classId: cls.id, summary: 'Updated private class ranking code' });
+    ok(res, result);
+  },
+);
+
+classGradebookRouter.get(
+  '/ranking/export',
+  validate({ params: classParams, query: z.object({ format: exportFormat, scope: z.string().trim().max(60).optional(), anonymous: z.enum(['true', 'false']).optional() }) }),
+  async (req, res) => {
+    const cls = await managed(req, { writable: false });
+    await assertPermission(req.user, 'grades.export');
+    const { format, scope } = req.valid.query;
+    const anonymous = req.valid.query.anonymous !== 'false';
+    const ranking = await buildClassRanking(cls, { viewerUser: req.user, canManage: true, requestedScope: scope ?? null });
+    const tz = await getTimeZone();
+    const scopeLabel = ranking.activeScopeName ?? 'Class standing';
+    const rows = anonymous ? ranking.anonymousEntries : ranking.namedEntries;
+    const columns = anonymous
+      ? [
+          { header: 'Rank', value: (r) => r.rank, width: 8, pdfWidth: 0.8, align: 'center' },
+          { header: 'Student Code', value: (r) => r.code, width: 20, pdfWidth: 2.2 },
+          ...(ranking.showScores
+            ? [
+                { header: 'Grade %', value: (r) => r.percent ?? '', width: 12, pdfWidth: 1.0, align: 'right' },
+                { header: 'Grade', value: (r) => r.label ?? '', width: 10, pdfWidth: 0.9, align: 'center' },
+                { header: 'Remark', value: (r) => r.remark ?? '', width: 18, pdfWidth: 1.6 },
+              ]
+            : []),
+        ]
+      : [
+          { header: 'Rank', value: (r) => r.rank, width: 8, pdfWidth: 0.8, align: 'center' },
+          { header: 'Student No.', value: (r) => r.studentNumber ?? '', width: 16, pdfWidth: 1.4 },
+          { header: 'Name', value: (r) => `${r.lastName}, ${r.firstName}`, width: 28, pdfWidth: 2.8 },
+          { header: 'Grade %', value: (r) => r.percent ?? '', width: 12, pdfWidth: 1.0, align: 'right' },
+          { header: 'Grade', value: (r) => r.label ?? '', width: 10, pdfWidth: 0.9, align: 'center' },
+          { header: 'Remark', value: (r) => `${r.remark ?? ''}${r.isOverridden ? ' (override)' : ''}`, width: 18, pdfWidth: 1.5 },
+        ];
+
+    await audit(req, {
+      action: 'grades.ranking.export',
+      entityType: 'Class',
+      entityId: cls.id,
+      classId: cls.id,
+      summary: `Exported ${anonymous ? 'anonymous coded ranking' : 'teacher honor roll'} for ${scopeLabel} (${format.toUpperCase()})`,
+      after: { format, scope: scopeLabel, anonymous },
+    });
+
+    await sendTable(res, format, {
+      filename: `${anonymous ? 'ranking' : 'honor-roll'}-${cls.course.code}${cls.section ? `-${cls.section.name}` : ''}`,
+      title: `${anonymous ? 'Class Ranking' : 'Honor Roll'} — ${classLabel(cls)}`,
+      subtitle: `${cls.course.title} · ${scopeLabel} · ${cls.semester.name}, ${cls.semester.academicYear.name}`,
+      meta: [
+        `${ranking.stats.totalRanked} ranked of ${ranking.stats.totalStudents} student(s) · ${ranking.released ? 'Released' : 'Not yet released to students'}`,
+        `Generated ${dateKey(new Date(), tz)} (${tz})`,
+      ],
+      columns,
+      rows,
+      footer: anonymous
+        ? 'Anonymous class ranking — students are identified solely by their private class codes.'
+        : 'Confidential student record — handle in accordance with the Data Privacy Act of 2012 (RA 10173).',
+      summary: [
+        ranking.stats.topPercent !== null && (ranking.showScores || !anonymous) ? `Top grade: ${ranking.stats.topPercent}%` : null,
+        ranking.stats.averagePercent !== null && (ranking.showScores || !anonymous) ? `Class average: ${ranking.stats.averagePercent}%` : null,
+        ranking.stats.unrankedCount > 0 ? `${ranking.stats.unrankedCount} student(s) had no graded work in this scope.` : null,
+      ].filter(Boolean),
+    });
+  },
+);
 
 /** One student's full breakdown, for the teacher. */
 classGradebookRouter.get('/students/:studentId', validate({ params: idParams('classId', 'studentId') }), async (req, res) => {
@@ -521,7 +665,13 @@ classGradebookRouter.delete('/overrides/:overrideId', validate({ params: idParam
 
 // ── Publishing and locking ───────────────────────────────────────────────────
 const periodAction = (action, { needsReason = false } = {}) => [
-  validate({ params: idParams('classId', 'periodId'), body: z.object({ note: needsReason ? reasonField : z.string().trim().max(500).optional() }) }),
+  validate({
+    params: idParams('classId', 'periodId'),
+    body: z.object({
+      note: needsReason ? reasonField : z.string().trim().max(500).optional(),
+      ...(action === 'publish' ? { gradeRankingEnabled: z.boolean().optional(), gradeRankingShowScores: z.boolean().optional() } : {}),
+    }),
+  }),
   async (req, res) => {
     const cls = await managed(req);
     assertNotFinalized(cls);
@@ -536,11 +686,24 @@ const periodAction = (action, { needsReason = false } = {}) => [
     }
     const note = req.valid.body.note ? plainText(req.valid.body.note, 500) : null;
     const wasPublished = Boolean(period.publishedAt);
+    const rankingPatch = action === 'publish'
+      ? {
+          ...(req.valid.body.gradeRankingEnabled !== undefined ? { gradeRankingEnabled: req.valid.body.gradeRankingEnabled } : {}),
+          ...(req.valid.body.gradeRankingShowScores !== undefined ? { gradeRankingShowScores: req.valid.body.gradeRankingShowScores } : {}),
+        }
+      : {};
     await prisma.$transaction(async (tx) => {
       await tx.gradingPeriod.update({ where: { id: period.id }, data: change });
+      if (Object.keys(rankingPatch).length > 0) {
+        await tx.class.update({ where: { id: cls.id }, data: rankingPatch });
+      }
       if (action === 'unlock') await resyncLinkedItems(tx, period.id, req.user.id);
       await tx.gradePublishingRecord.create({ data: { classId: cls.id, scope: period.id, action: record, note, performedById: req.user.id } });
-      await audit(req, { action: `grades.${action}`, entityType: 'GradingPeriod', entityId: period.id, classId: cls.id, summary: `${record[0]}${record.slice(1).toLowerCase()} ${period.name} grades${note ? ` — ${note}` : ''}` }, tx);
+      await audit(req, {
+        action: `grades.${action}`, entityType: 'GradingPeriod', entityId: period.id, classId: cls.id,
+        summary: `${record[0]}${record.slice(1).toLowerCase()} ${period.name} grades${note ? ` — ${note}` : ''}`,
+        ...(Object.keys(rankingPatch).length > 0 ? { after: rankingPatch } : {}),
+      }, tx);
     });
     if (action === 'publish' && !wasPublished) {
       await notify(await enrolledStudentIds(cls.id), { type: 'grades.published', title: `${period.name} grades are available — ${classLabel(cls)}`, link: `/classes/${cls.id}/grades`, classId: cls.id });
@@ -555,9 +718,13 @@ classGradebookRouter.post('/periods/:periodId/lock', ...periodAction('lock'));
 classGradebookRouter.post('/periods/:periodId/unlock', ...periodAction('unlock', { needsReason: true }));
 
 // ── Finalisation ─────────────────────────────────────────────────────────────
-classGradebookRouter.post('/finalize', validate({ params: classParams, body: z.object({ confirmIncomplete: z.boolean().default(false) }) }), async (req, res) => {
+classGradebookRouter.post('/finalize', validate({ params: classParams, body: z.object({ confirmIncomplete: z.boolean().default(false), gradeRankingEnabled: z.boolean().optional(), gradeRankingShowScores: z.boolean().optional() }) }), async (req, res) => {
   const cls = await managed(req);
   assertNotFinalized(cls);
+  const rankingPatch = {
+    ...(req.valid.body.gradeRankingEnabled !== undefined ? { gradeRankingEnabled: req.valid.body.gradeRankingEnabled } : {}),
+    ...(req.valid.body.gradeRankingShowScores !== undefined ? { gradeRankingShowScores: req.valid.body.gradeRankingShowScores } : {}),
+  };
   const result = await prisma.$transaction(async (tx) => {
     await lockKey(tx, `gradebook:${cls.id}`);
     const fresh = await tx.class.findUnique({ where: { id: cls.id } });
@@ -582,17 +749,17 @@ classGradebookRouter.post('/finalize', validate({ params: classParams, body: z.o
     }
     if (rows.length > 0) await tx.finalGrade.createMany({ data: rows });
     for (const p of periods) await tx.gradingPeriod.update({ where: { id: p.id }, data: { publishedAt: p.publishedAt ?? now, lockedAt: p.lockedAt ?? now } });
-    await tx.class.update({ where: { id: fresh.id }, data: { gradesFinalizedAt: now } });
+    const updatedClass = await tx.class.update({ where: { id: fresh.id }, data: { gradesFinalizedAt: now, ...rankingPatch } });
     await tx.gradePublishingRecord.create({ data: { classId: fresh.id, scope: OVERALL_SCOPE, action: 'FINALIZED', performedById: req.user.id, note: incomplete.length > 0 ? `${incomplete.length} student(s) had ungraded work` : null } });
     await audit(req, {
       action: 'grades.finalize', entityType: 'Class', entityId: fresh.id, classId: fresh.id,
       summary: `Finalised grades for ${students.length} student(s)`,
-      after: { students: students.length, passing: students.filter((s) => s.result.overall.isPassing === true).length, failing: students.filter((s) => s.result.overall.isPassing === false).length, incomplete: incomplete.length },
+      after: { students: students.length, passing: students.filter((s) => s.result.overall.isPassing === true).length, failing: students.filter((s) => s.result.overall.isPassing === false).length, incomplete: incomplete.length, ...rankingPatch },
     }, tx);
-    return { studentIds: students.map((s) => s.student.id), finalizedAt: now };
+    return { studentIds: students.map((s) => s.student.id), finalizedAt: now, updatedClass };
   }, { timeout: 60_000 });
   await notify(result.studentIds, { type: 'grades.finalized', title: `Final grades are available — ${classLabel(cls)}`, link: `/classes/${cls.id}/grades`, classId: cls.id });
-  ok(res, await matrix({ ...cls, gradesFinalizedAt: result.finalizedAt }));
+  ok(res, await matrix({ ...cls, ...result.updatedClass, gradesFinalizedAt: result.finalizedAt }));
 });
 
 classGradebookRouter.post('/reopen', validate({ params: classParams, body: z.object({ reason: reasonField }) }), async (req, res) => {
@@ -735,6 +902,7 @@ async function academicRecord(studentId, { semesterId } = {}) {
     const view = await studentGradeView(cls, studentId);
     const final = cls.gradesFinalizedAt ? await prisma.finalGrade.findUnique({ where: { classId_studentId_scope: { classId: cls.id, studentId, scope: OVERALL_SCOPE } } }) : null;
     const overall = final ? { percent: final.percent, label: final.label, remark: final.remark, isPassing: final.isPassing } : view?.overall ?? null;
+    const ranking = cls.gradeRankingEnabled ? await buildClassRanking(cls, { viewerUser: { id: studentId }, canManage: false }) : null;
     rows.push({
       classId: cls.id,
       semesterId: cls.semesterId,
@@ -749,6 +917,7 @@ async function academicRecord(studentId, { semesterId } = {}) {
       finalized: Boolean(final),
       overall: overall ? { percent: overall.percent, label: overall.label, remark: overall.remark, isPassing: overall.isPassing } : null,
       periods: (view?.periods ?? final?.breakdown?.periods ?? []).map((p) => ({ name: p.name, published: p.published !== false, percent: p.percent, label: p.label })),
+      ranking: ranking?.released && ranking.myRank !== null ? { scopeName: ranking.activeScopeName, rank: ranking.myRank, totalRanked: ranking.totalRanked } : null,
     });
   }
   return rows;

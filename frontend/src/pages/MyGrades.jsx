@@ -87,7 +87,12 @@ export default function MyGrades() {
                   <Link to={`/classes/${c.classId}/grades`} className="block rounded-2xl border border-line bg-surface p-5 shadow-card transition-colors hover:border-line-strong">
                     <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
                       <div className="min-w-0">
-                        <p className="flex flex-wrap items-center gap-2 font-semibold text-ink">{c.code}{c.section ? ` · ${c.section}` : ''}{c.finalized && <Badge tone="ok">Final</Badge>}{c.classStatus === 'ARCHIVED' && <Badge>Archived</Badge>}</p>
+                        <p className="flex flex-wrap items-center gap-2 font-semibold text-ink">
+                          {c.code}{c.section ? ` · ${c.section}` : ''}
+                          {c.finalized && <Badge tone="ok">Final</Badge>}
+                          {c.ranking && <Badge tone="brand">Rank #{c.ranking.rank} of {c.ranking.totalRanked}</Badge>}
+                          {c.classStatus === 'ARCHIVED' && <Badge>Archived</Badge>}
+                        </p>
                         <p className="text-sm text-soft">{c.title} · {c.units} {c.units === 1 ? 'unit' : 'units'}</p>
                         <p className="text-xs text-faint">{c.teacher} · {c.semester}, {c.academicYear}</p>
                       </div>

@@ -4,16 +4,17 @@
 // All arithmetic happens on the server (GET …/gradebook returns computed percentages and
 // transmuted grades); this page only displays and edits scores.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, ClipboardList, Download, Eye, EyeOff, FileQuestion, History, Inbox, Lock, LockOpen, MoreHorizontal, Pencil, Plus, Save, Settings2, Table2, Trash2, Undo2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardList, Download, Eye, EyeOff, FileQuestion, History, Inbox, Lock, LockOpen, MoreHorizontal, Pencil, Plus, Save, Settings2, Table2, Trash2, Trophy, Undo2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, QueryState, Select, StatCard, Tabs, Textarea } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, QueryState, Select, StatCard, Switch, Tabs, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, fromLocalInput, plural, relativeTime, toLocalInput } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import Appeals from './gradebook/Appeals.jsx';
+import { TeacherRankingTab } from './gradebook/ClassRanking.jsx';
 import Setup from './gradebook/Setup.jsx';
 import StudentGrades from './gradebook/StudentGrades.jsx';
 import { useClass } from './useClass.js';
@@ -33,17 +34,19 @@ export default function Gradebook() {
     <>
       <Tabs className="mb-5" value={tab} onChange={(t) => setParams(t === 'grades' ? {} : { tab: t })} tabs={[
         { value: 'grades', label: 'Grades', icon: Table2 },
+        { value: 'ranking', label: 'Ranking', icon: Trophy },
         { value: 'setup', label: 'Weights and settings', icon: Settings2 },
         { value: 'appeals', label: 'Appeals', icon: Inbox, count: pendingAppeals },
         { value: 'log', label: 'Release log', icon: History },
       ]} />
       {tab === 'appeals' ? <Appeals query={appeals} />
-        : tab === 'log' ? <ReleaseLog />
-          : (
-            <QueryState query={query}>
-              {(data) => (tab === 'setup' ? <Setup data={data} /> : <Grid data={data} />)}
-            </QueryState>
-          )}
+        : tab === 'ranking' ? <TeacherRankingTab />
+          : tab === 'log' ? <ReleaseLog />
+            : (
+              <QueryState query={query}>
+                {(data) => (tab === 'setup' ? <Setup data={data} /> : <Grid data={data} />)}
+              </QueryState>
+            )}
     </>
   );
 }
@@ -99,8 +102,12 @@ function Grid({ data }) {
     onSuccess: () => { setDirty({}); setReasonPrompt(null); setReason(''); },
     onError: (err) => { if (err.fields?.reason) { setReasonPrompt(err.fields.reason); return true; } return false; },
   });
-  const periodAction = useAction(({ action, note }) => api.post(`${base}/gradebook/periods/${period.id}/${action}`, note ? { note } : {}), {
-    invalidate, onSuccess: () => setDialog(null),
+  const periodAction = useAction(({ action, note, gradeRankingEnabled, gradeRankingShowScores }) => api.post(`${base}/gradebook/periods/${period.id}/${action}`, {
+    ...(note ? { note } : {}),
+    ...(action === 'publish' && gradeRankingEnabled !== undefined ? { gradeRankingEnabled } : {}),
+    ...(action === 'publish' && gradeRankingShowScores !== undefined ? { gradeRankingShowScores } : {}),
+  }), {
+    invalidate: [...invalidate, ['class']], onSuccess: () => setDialog(null),
     success: (_, { action }) => ({ publish: `${period.name} grades are now visible to students.`, unpublish: `${period.name} grades are hidden from students.`, lock: `${period.name} is locked.`, unlock: `${period.name} is unlocked.` }[action]),
   });
   const removeItem = useAction((itemId) => api.delete(`${base}/gradebook/items/${itemId}`), { invalidate, success: 'Column deleted.', onSuccess: () => setDialog(null) });
@@ -219,13 +226,27 @@ function Grid({ data }) {
       <ConfirmDialog open={Boolean(dialog?.remove)} onClose={() => setDialog(null)} onConfirm={() => removeItem.mutate(dialog.remove.id)} loading={removeItem.isPending} title={`Delete the column “${dialog?.remove?.title}”?`} confirmLabel="Delete column">
         All scores in this column are deleted and grades are recomputed.
       </ConfirmDialog>
-      <ConfirmDialog open={dialog === 'publish'} onClose={() => setDialog(null)} onConfirm={() => periodAction.mutate({ action: 'publish' })} loading={periodAction.isPending} tone="primary" title={`Publish ${period.name} grades?`} confirmLabel="Publish">
-        Students will see their {period.name} grade and the scores behind it, and are notified. You can keep editing scores until you lock the period.
-      </ConfirmDialog>
+      {dialog === 'publish' && (
+        <PublishDialog
+          periodName={period.name}
+          defaultRankingEnabled={Boolean(data.class.gradeRankingEnabled)}
+          defaultShowScores={data.class.gradeRankingShowScores !== false}
+          loading={periodAction.isPending}
+          onClose={() => setDialog(null)}
+          onConfirm={(opts) => periodAction.mutate({ action: 'publish', ...opts })}
+        />
+      )}
       <NoteDialog open={dialog === 'unlock'} title={`Unlock ${period.name}?`} label="Reason for unlocking" confirmLabel="Unlock" loading={periodAction.isPending} onClose={() => setDialog(null)} onConfirm={(note) => periodAction.mutate({ action: 'unlock', note })}>
         Unlocking lets scores change again. The reason is kept in the release log.
       </NoteDialog>
-      {dialog === 'finalize' && <FinalizeDialog invalidate={invalidate} onClose={() => setDialog(null)} />}
+      {dialog === 'finalize' && (
+        <FinalizeDialog
+          defaultRankingEnabled={Boolean(data.class.gradeRankingEnabled)}
+          defaultShowScores={data.class.gradeRankingShowScores !== false}
+          invalidate={invalidate}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'reopen' && <ReopenDialog invalidate={invalidate} onClose={() => setDialog(null)} />}
       <Modal open={Boolean(reasonPrompt)} onClose={() => setReasonPrompt(null)} title="A reason is needed" size="sm" footer={<><Button variant="secondary" onClick={() => setReasonPrompt(null)}>Cancel</Button><Button loading={save.isPending} disabled={reason.trim().length < 5} onClick={() => save.mutate(true)}>Save grades</Button></>}>
         <Alert tone="info" className="mb-4">{reasonPrompt}</Alert>
@@ -417,11 +438,47 @@ function NoteDialog({ open, title, label, confirmLabel, loading, onClose, onConf
   );
 }
 
-function FinalizeDialog({ invalidate, onClose }) {
+function PublishDialog({ periodName, defaultRankingEnabled, defaultShowScores, loading, onClose, onConfirm }) {
+  const [rankingEnabled, setRankingEnabled] = useState(defaultRankingEnabled);
+  const [showScores, setShowScores] = useState(defaultShowScores);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Publish ${periodName} grades?`}
+      size="sm"
+      footer={<><Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button><Button loading={loading} onClick={() => onConfirm({ gradeRankingEnabled: rankingEnabled, gradeRankingShowScores: showScores })} data-autofocus>Publish</Button></>}
+    >
+      <div className="space-y-4 text-sm text-soft">
+        <p>Students will see their {periodName} grade and the scores behind it, and are notified. You can keep editing scores until you lock the period.</p>
+        <div className="space-y-3 rounded-xl border border-line bg-raised/50 p-3.5">
+          <Switch
+            checked={rankingEnabled}
+            onChange={setRankingEnabled}
+            label="Include anonymous class ranking"
+            description="Students see standings using private secret codes known only to each student."
+          />
+          {rankingEnabled && (
+            <Switch
+              checked={showScores}
+              onChange={setShowScores}
+              label="Show grades alongside ranking codes"
+              description="Off: shows rank order and codes only."
+            />
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function FinalizeDialog({ defaultRankingEnabled, defaultShowScores, invalidate, onClose }) {
   const { base } = useClass();
   const [incomplete, setIncomplete] = useState(null);
   const [error, setError] = useState(null);
-  const finalize = useAction((confirmIncomplete) => api.post(`${base}/gradebook/finalize`, { confirmIncomplete }), {
+  const [rankingEnabled, setRankingEnabled] = useState(defaultRankingEnabled);
+  const [showScores, setShowScores] = useState(defaultShowScores);
+  const finalize = useAction((confirmIncomplete) => api.post(`${base}/gradebook/finalize`, { confirmIncomplete, gradeRankingEnabled: rankingEnabled, gradeRankingShowScores: showScores }), {
     invalidate: [...invalidate, ['class']], success: 'Final grades submitted. Students can now see their final grade.', onSuccess: onClose,
     onError: (err) => { if (err.code === 'INCOMPLETE_GRADES') { setIncomplete(err.details); return true; } setError(err.message); return true; },
   });
@@ -430,17 +487,33 @@ function FinalizeDialog({ invalidate, onClose }) {
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button icon={Lock} loading={finalize.isPending} onClick={() => finalize.mutate(Boolean(incomplete))}>{incomplete ? 'Submit anyway' : 'Submit final grades'}</Button></>}>
       {error && <Alert tone="bad" className="mb-4">{error}</Alert>}
       {incomplete ? (
-        <Alert tone="warn" title={`${plural(incomplete.count, 'student')} still ${incomplete.count === 1 ? 'has' : 'have'} work that is not graded`}>
+        <Alert tone="warn" title={`${plural(incomplete.count, 'student')} still ${incomplete.count === 1 ? 'has' : 'have'} work that is not graded`} className="mb-4">
           <p>{incomplete.students.join(', ')}{incomplete.count > incomplete.students.length ? '…' : ''}</p>
           <p className="mt-1">Ungraded work is left out of their grade. Grade it first, or submit anyway.</p>
         </Alert>
       ) : (
-        <ul className="list-disc space-y-1.5 pl-5 text-sm text-soft">
+        <ul className="mb-4 list-disc space-y-1.5 pl-5 text-sm text-soft">
           <li>Every score in this class is locked.</li>
           <li>Students see their final grade for the course.</li>
           <li>Changing a grade afterwards means reopening the class with a written reason, which is recorded in the audit log.</li>
         </ul>
       )}
+      <div className="space-y-3 rounded-xl border border-line bg-raised/50 p-3.5">
+        <Switch
+          checked={rankingEnabled}
+          onChange={setRankingEnabled}
+          label="Include anonymous class ranking"
+          description="Students can check their standing using private per-class secret codes."
+        />
+        {rankingEnabled && (
+          <Switch
+            checked={showScores}
+            onChange={setShowScores}
+            label="Show grades alongside ranking codes"
+            description="Off: displays rank order and secret codes without classmate percentages."
+          />
+        )}
+      </div>
     </Modal>
   );
 }
