@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, QueryState, Select, StatCard, Switch, Tabs, Textarea } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, QueryState, Segmented, Select, StatCard, Switch, Tabs, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, fromLocalInput, plural, relativeTime, toLocalInput } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -25,6 +25,7 @@ export default function Gradebook() {
   const { cls, canManage, base } = useClass();
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') ?? 'grades';
+  const initialStudentId = params.get('student');
   const query = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'grid'], queryFn: () => api.get(`${base}/gradebook`), enabled: canManage });
   const appeals = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'appeals'], queryFn: () => api.get(`${base}/gradebook/appeals`), enabled: canManage });
   if (!canManage) return <EmptyState title="The gradebook is for the teacher" description="Open Grades to see your own scores." action={<Button to={`${base}/grades`}>My grades</Button>} />;
@@ -44,7 +45,19 @@ export default function Gradebook() {
           : tab === 'log' ? <ReleaseLog />
             : (
               <QueryState query={query}>
-                {(data) => (tab === 'setup' ? <Setup data={data} /> : <Grid data={data} />)}
+                {(data) => (tab === 'setup' ? <Setup data={data} /> : (
+                  <Grid
+                    data={data}
+                    initialStudentId={initialStudentId}
+                    onClearInitialStudent={() => {
+                      if (params.has('student')) {
+                        const next = new URLSearchParams(params);
+                        next.delete('student');
+                        setParams(next, { replace: true });
+                      }
+                    }}
+                  />
+                ))}
               </QueryState>
             )}
     </>
@@ -76,16 +89,17 @@ function ReleaseLog() {
 }
 
 // ── The grid ─────────────────────────────────────────────────────────────────
-function Grid({ data }) {
+function Grid({ data, initialStudentId, onClearInitialStudent }) {
   const { cls, base } = useClass();
   const { can } = useAuth();
   const { structure, students, stats } = data;
   // Start on the period that is being worked on: the first one that has columns and is not locked yet.
   const hasItems = (p) => p.categories.some((c) => c.items.length > 0);
   const [periodId, setPeriodId] = useState(() => (structure.periods.find((p) => !p.lockedAt && hasItems(p)) ?? structure.periods.find((p) => !p.lockedAt) ?? structure.periods[0])?.id ?? '');
+  const [rosterFilter, setRosterFilter] = useState('ALL');
   const [dirty, setDirty] = useState({}); // cellKey → { status, score }
   const [dialog, setDialog] = useState(null);
-  const [studentId, setStudentId] = useState(null);
+  const [studentId, setStudentId] = useState(() => initialStudentId || null);
   const [reasonPrompt, setReasonPrompt] = useState(null);
   const [reason, setReason] = useState('');
   const invalidate = [['class', cls.id, 'gradebook'], ['dashboard'], ['grades']];
@@ -93,6 +107,15 @@ function Grid({ data }) {
   const readOnly = cls.status === 'ARCHIVED' || finalized;
   const period = structure.periods.find((p) => p.id === periodId) ?? structure.periods[0];
   const locked = Boolean(period?.lockedAt) || readOnly;
+  const droppedCount = stats.dropped ?? students.filter((s) => s.enrollmentStatus === 'DROPPED').length;
+  const visibleStudents = useMemo(
+    () => (rosterFilter === 'ALL' ? students : students.filter((s) => s.enrollmentStatus === rosterFilter)),
+    [students, rosterFilter],
+  );
+
+  useEffect(() => {
+    if (initialStudentId) setStudentId(initialStudentId);
+  }, [initialStudentId]);
 
   const save = useAction((withReason) => api.put(`${base}/gradebook/entries`, {
     entries: Object.entries(dirty).map(([key, v]) => { const [sid, itemId] = key.split(':'); return { studentId: sid, itemId, status: v.status, score: v.status === 'GRADED' ? v.score : null }; }),
@@ -149,7 +172,7 @@ function Grid({ data }) {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Class average" value={stats.average === null ? '—' : formatPercent(stats.average)} icon={Table2} hint={stats.highest !== null ? `Highest ${formatPercent(stats.highest, 0)} · lowest ${formatPercent(stats.lowest, 0)}` : 'No grades yet'} />
-        <StatCard label="Passing" value={stats.passing} icon={CheckCircle2} tone="ok" hint={`of ${plural(stats.graded, 'graded student')}`} />
+        <StatCard label="Passing" value={stats.passing} icon={CheckCircle2} tone="ok" hint={`of ${plural(stats.graded, 'graded student')}${droppedCount > 0 ? ` · ${droppedCount} dropped kept` : ''}`} />
         <StatCard label="Failing" value={stats.failing} icon={AlertTriangle} tone={stats.failing > 0 ? 'bad' : 'ok'} hint="Below the passing mark so far" />
         <StatCard label="Grading scale" value={data.class.gradingScale?.entries?.[0]?.label ? `${data.class.gradingScale.entries[0].label}–${data.class.gradingScale.entries.at(-1).label}` : '—'} icon={Settings2} hint={data.class.gradingScale?.name ?? 'Not chosen'} />
       </div>
@@ -168,6 +191,19 @@ function Grid({ data }) {
             {period.publishedAt ? <Badge tone="ok" icon={Eye}>Visible to students</Badge> : <Badge tone="warn" icon={EyeOff}>Hidden from students</Badge>}
             {period.lockedAt && <Badge icon={Lock}>Locked</Badge>}
           </span>
+          {droppedCount > 0 && (
+            <Segmented
+              size="sm"
+              label="Filter students"
+              value={rosterFilter}
+              onChange={setRosterFilter}
+              options={[
+                { value: 'ALL', label: `All (${students.length})` },
+                { value: 'ENROLLED', label: `Enrolled (${students.length - droppedCount})` },
+                { value: 'DROPPED', label: `Dropped (${droppedCount})` },
+              ]}
+            />
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {!locked && <Button size="sm" variant="secondary" icon={Plus} onClick={() => setDialog({ item: null })}>Add column</Button>}
             {!readOnly && (
@@ -190,8 +226,8 @@ function Grid({ data }) {
           </div>
         </div>
 
-        {students.length === 0 ? <EmptyState icon={Table2} title="No students are enrolled yet" /> : (
-          <GridTable period={period} items={items} students={students} dirty={dirty} locked={locked} structure={structure}
+        {visibleStudents.length === 0 ? <EmptyState icon={Table2} title={students.length === 0 ? 'No students are enrolled yet' : 'No students match this filter'} /> : (
+          <GridTable period={period} items={items} students={visibleStudents} dirty={dirty} locked={locked} structure={structure}
             onCell={setCell} onStudent={setStudentId} onEditItem={(item) => setDialog({ item })} onDeleteItem={(item) => setDialog({ remove: item })} base={base} />
         )}
 
@@ -222,7 +258,7 @@ function Grid({ data }) {
       )}
 
       {dialog?.item !== undefined && <ItemDialog item={dialog.item} period={period} structure={structure} invalidate={invalidate} onClose={() => setDialog(null)} />}
-      {studentId && <StudentDialog studentId={studentId} structure={structure} invalidate={invalidate} readOnly={readOnly} onClose={() => setStudentId(null)} />}
+      {studentId && <StudentDialog studentId={studentId} structure={structure} invalidate={invalidate} readOnly={readOnly} onClose={() => { setStudentId(null); onClearInitialStudent?.(); }} />}
       <ConfirmDialog open={Boolean(dialog?.remove)} onClose={() => setDialog(null)} onConfirm={() => removeItem.mutate(dialog.remove.id)} loading={removeItem.isPending} title={`Delete the column “${dialog?.remove?.title}”?`} confirmLabel="Delete column">
         All scores in this column are deleted and grades are recomputed.
       </ConfirmDialog>
@@ -301,10 +337,12 @@ function GridTable({ period, items, students, dirty, locked, onCell, onStudent, 
         <tbody>
           {students.map((s, row) => {
             const p = s.periods[period.id];
+            const dropped = s.enrollmentStatus === 'DROPPED';
             return (
-              <tr key={s.id} className="group/row">
-                <th scope="row" className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface px-4 py-1.5 text-left font-medium group-hover/row:bg-raised">
+              <tr key={s.id} className={cn('group/row', dropped && 'bg-warn-soft/20')}>
+                <th scope="row" className={cn('sticky left-0 z-10 whitespace-nowrap border-b border-r border-line px-4 py-1.5 text-left font-medium group-hover/row:bg-raised', dropped ? 'bg-warn-soft/20' : 'bg-surface')}>
                   <button type="button" onClick={() => onStudent(s.id)} className="max-w-[13rem] truncate text-left text-ink hover:text-brand hover:underline" title="Show how this grade is computed">{s.lastName}, {s.firstName}</button>
+                  {dropped && <Badge tone="warn" className="ml-1.5" title={s.droppedNote ?? 'Dropped student kept in gradebook'}>Dropped</Badge>}
                   {s.missingCount > 0 && <span className="ml-1.5 text-[11px] font-normal text-bad">{s.missingCount} missing</span>}
                 </th>
                 {items.map((item, col) => (
@@ -541,6 +579,12 @@ function StudentDialog({ studentId, structure, invalidate, readOnly, onClose }) 
       <QueryState query={query}>
         {(d) => (
           <div className="space-y-5">
+            {d.student.enrollmentStatus === 'DROPPED' && (
+              <Alert tone="warn" title="Dropped student">
+                {d.student.droppedAt ? `Dropped ${formatDateTime(d.student.droppedAt)}` : 'This student was dropped'}
+                {d.student.droppedNote ? ` — ${d.student.droppedNote}` : ''}. Kept in your class gradebook so you still have their grades.
+              </Alert>
+            )}
             <StudentGrades data={d} teacher />
             {d.overrides.length > 0 && (
               <section>

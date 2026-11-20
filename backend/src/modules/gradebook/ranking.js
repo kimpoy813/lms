@@ -266,7 +266,7 @@ function buildScopes(periods, cls) {
  */
 export async function buildClassRanking(cls, { viewerUser = null, canManage = false, requestedScope = null, db = prisma } = {}) {
   const codesByStudent = await ensureClassRankingCodes(cls.id, db);
-  const { periods, students } = await computeClassGrades(cls, { db });
+  const { periods, students } = await computeClassGrades(cls, { includeDropped: false, db });
 
   const finalsMap = new Map();
   if (cls.gradesFinalizedAt) {

@@ -462,8 +462,12 @@ export async function classAttendanceSummary(classId, { studentId, month } = {})
   const sessionIds = sessions.map((s) => s.id);
 
   const enrollments = await prisma.enrollment.findMany({
-    where: { classId, status: 'ENROLLED', ...(studentId ? { studentId } : {}) },
-    select: { student: { select: { id: true, firstName: true, lastName: true, studentProfile: { select: { studentNumber: true } } } } },
+    where: { classId, status: { in: studentId ? ['ENROLLED'] : ['ENROLLED', 'DROPPED'] }, ...(studentId ? { studentId } : {}) },
+    select: {
+      status: true,
+      droppedAt: true,
+      student: { select: { id: true, firstName: true, lastName: true, studentProfile: { select: { studentNumber: true } } } },
+    },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
   });
   const records = sessionIds.length === 0
@@ -477,7 +481,7 @@ export async function classAttendanceSummary(classId, { studentId, month } = {})
     if (!byStudent.has(r.studentId)) byStudent.set(r.studentId, new Map());
     byStudent.get(r.studentId).set(r.sessionId, r);
   }
-  const students = enrollments.map(({ student }) => {
+  const students = enrollments.map(({ status: enrollmentStatus, droppedAt, student }) => {
     const mine = byStudent.get(student.id) ?? new Map();
     const totals = { present: 0, late: 0, absent: 0, excused: 0 };
     for (const r of mine.values()) totals[r.status.toLowerCase()] += 1;
@@ -487,6 +491,8 @@ export async function classAttendanceSummary(classId, { studentId, month } = {})
       lastName: student.lastName,
       firstName: student.firstName,
       studentNumber: student.studentProfile?.studentNumber ?? null,
+      enrollmentStatus,
+      droppedAt: droppedAt ?? null,
       ...totals,
       rate: attendanceRate(totals),
       statuses: Object.fromEntries([...mine.entries()].map(([sid, r]) => [sid, r.status])),

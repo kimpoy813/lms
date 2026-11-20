@@ -54,6 +54,7 @@ enrollmentsRouter.post(
     });
     if (existing?.status === 'ENROLLED') throw conflict('You are already enrolled in this class.', 'ALREADY_ENROLLED');
     if (existing?.status === 'PENDING') throw conflict('Your request to join this class is still waiting for the teacher.', 'REQUEST_PENDING');
+    if (existing?.status === 'DROPPED') throw conflict('You were dropped from this class. Ask your teacher to reinstate you.', 'ENROLLED_DROPPED');
 
     const status = cls.enrollmentRequiresApproval ? 'PENDING' : 'ENROLLED';
     const now = new Date();
@@ -190,6 +191,7 @@ classPeopleRouter.get('/', validate({ params: classParams }), async (req, res) =
       teacher: teacherInfo,
       canManage: true,
       classmatesVisible: access.cls.classmatesVisible,
+      gradesFinalized: Boolean(access.cls.gradesFinalizedAt),
       students: enrollments.map((e) => ({
         enrollmentId: e.id,
         status: e.status,
@@ -295,15 +297,108 @@ classPeopleRouter.post('/:enrollmentId/drop', validate({ params: enrollmentParam
   const { classId, enrollmentId } = req.valid.params;
   const { cls } = await requireWritableClassManager(req.user, classId);
   const enrollment = await loadEnrollment(classId, enrollmentId);
-  if (enrollment.status !== 'ENROLLED') throw conflict('Only enrolled students can be removed from the roster.', 'NOT_ENROLLED');
+  if (enrollment.status !== 'ENROLLED') throw conflict('Only enrolled students can be dropped from active access.', 'NOT_ENROLLED');
   const note = req.valid.body.note ? plainText(req.valid.body.note, 500) : null;
+  const droppedAt = new Date();
   await prisma.$transaction(async (tx) => {
-    // The student's records (submissions, attendance, grades) are kept; only access ends.
-    await tx.enrollment.update({ where: { id: enrollmentId }, data: { status: 'DROPPED', droppedAt: new Date(), decidedById: req.user.id, note } });
-    await audit(req, { action: 'enrollment.drop', entityType: 'Enrollment', entityId: enrollmentId, classId, summary: `Removed ${fullName(enrollment.student)} from the roster`, after: { note } }, tx);
+    // The student stays on the class roster and gradebook so the teacher keeps their grades,
+    // submissions, and attendance records; only active class access ends.
+    await tx.enrollment.update({ where: { id: enrollmentId }, data: { status: 'DROPPED', droppedAt, decidedById: req.user.id, note } });
+    await audit(req, {
+      action: 'enrollment.drop',
+      entityType: 'Enrollment',
+      entityId: enrollmentId,
+      classId,
+      summary: `Dropped ${fullName(enrollment.student)} from active access (kept in class gradebook)`,
+      after: { note },
+    }, tx);
   });
-  await notify([enrollment.studentId], { type: 'enrollment.dropped', title: `You were removed from ${classLabel(cls)}`, body: note ?? undefined, link: '/classes' });
-  ok(res, { status: 'DROPPED' });
+  await notify([enrollment.studentId], { type: 'enrollment.dropped', title: `You were dropped from ${classLabel(cls)}`, body: note ?? undefined, link: '/classes' });
+  ok(res, { status: 'DROPPED', droppedAt });
+});
+
+classPeopleRouter.post('/:enrollmentId/remove', validate({ params: enrollmentParams, body: noteBody }), async (req, res) => {
+  const { classId, enrollmentId } = req.valid.params;
+  const { cls } = await requireWritableClassManager(req.user, classId);
+  const enrollment = await loadEnrollment(classId, enrollmentId);
+  if (cls.gradesFinalizedAt && (enrollment.status === 'ENROLLED' || enrollment.status === 'DROPPED')) {
+    throw conflict('Grades for this class are finalised. Reopen the gradebook before removing a student.', 'GRADES_FINALIZED');
+  }
+  const note = req.valid.body.note ? plainText(req.valid.body.note, 500) : null;
+  const studentId = enrollment.studentId;
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.gradeHistory.deleteMany({ where: { gradeEntry: { studentId, gradeItem: { classId } } } });
+    await tx.gradeEntry.deleteMany({ where: { studentId, gradeItem: { classId } } });
+    await tx.gradeOverride.deleteMany({ where: { classId, studentId } });
+    await tx.finalGrade.deleteMany({ where: { classId, studentId } });
+    await tx.gradeAppeal.deleteMany({ where: { classId, studentId } });
+
+    const submissions = await tx.assignmentSubmission.findMany({
+      where: { studentId, assignment: { classId } },
+      select: { id: true },
+    });
+    const submissionIds = submissions.map((s) => s.id);
+    if (submissionIds.length > 0) {
+      await tx.programmingSubmission.deleteMany({ where: { submissionId: { in: submissionIds } } });
+      await tx.file.updateMany({ where: { submissionId: { in: submissionIds } }, data: { submissionId: null, deletedAt: now } });
+      await tx.assignmentSubmission.deleteMany({ where: { id: { in: submissionIds } } });
+    }
+
+    const attempts = await tx.quizAttempt.findMany({
+      where: { studentId, quiz: { classId } },
+      select: { id: true },
+    });
+    const attemptIds = attempts.map((a) => a.id);
+    if (attemptIds.length > 0) {
+      const answers = await tx.studentAnswer.findMany({
+        where: { attemptId: { in: attemptIds } },
+        select: { id: true },
+      });
+      const answerIds = answers.map((a) => a.id);
+      if (answerIds.length > 0) {
+        await tx.programmingSubmission.deleteMany({ where: { studentAnswerId: { in: answerIds } } });
+        await tx.file.updateMany({ where: { studentAnswerId: { in: answerIds } }, data: { studentAnswerId: null, deletedAt: now } });
+      }
+      await tx.studentAnswer.deleteMany({ where: { attemptId: { in: attemptIds } } });
+      await tx.quizAttempt.deleteMany({ where: { id: { in: attemptIds } } });
+    }
+
+    const corrections = await tx.attendanceCorrectionRequest.findMany({
+      where: { studentId, session: { classId } },
+      select: { id: true },
+    });
+    const correctionIds = corrections.map((c) => c.id);
+    if (correctionIds.length > 0) {
+      await tx.file.updateMany({ where: { correctionRequestId: { in: correctionIds } }, data: { correctionRequestId: null, deletedAt: now } });
+      await tx.attendanceCorrectionRequest.deleteMany({ where: { id: { in: correctionIds } } });
+    }
+
+    await tx.attendanceAttempt.deleteMany({ where: { studentId, session: { classId } } });
+    await tx.attendanceRecord.deleteMany({ where: { studentId, session: { classId } } });
+    await tx.lessonProgress.deleteMany({ where: { studentId, lesson: { module: { classId } } } });
+    await tx.announcementRecipient.deleteMany({ where: { studentId, announcement: { classId } } });
+    await tx.enrollment.delete({ where: { id: enrollmentId } });
+
+    await audit(req, {
+      action: 'enrollment.remove',
+      entityType: 'Enrollment',
+      entityId: enrollmentId,
+      classId,
+      summary: `Removed ${fullName(enrollment.student)} from the class`,
+      before: { status: enrollment.status, studentId },
+      after: { note },
+    }, tx);
+  });
+  if (enrollment.status === 'ENROLLED' || enrollment.status === 'DROPPED') {
+    await notify([studentId], {
+      type: 'enrollment.removed',
+      title: `You were removed from ${classLabel(cls)}`,
+      body: note ?? undefined,
+      link: '/classes',
+    });
+  }
+  ok(res, { removed: true, studentId, previousStatus: enrollment.status });
 });
 
 classPeopleRouter.post('/:enrollmentId/reinstate', validate({ params: enrollmentParams }), async (req, res) => {
@@ -311,7 +406,7 @@ classPeopleRouter.post('/:enrollmentId/reinstate', validate({ params: enrollment
   const { cls } = await requireWritableClassManager(req.user, classId);
   const enrollment = await loadEnrollment(classId, enrollmentId);
   if (enrollment.status !== 'DROPPED' && enrollment.status !== 'REJECTED') {
-    throw conflict('Only removed or rejected students can be reinstated.', 'INVALID_STATUS');
+    throw conflict('Only dropped or rejected students can be reinstated.', 'INVALID_STATUS');
   }
   const now = new Date();
   await prisma.$transaction(async (tx) => {

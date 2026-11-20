@@ -1274,23 +1274,36 @@ attemptsRouter.post('/:attemptId/open', requireRole('STUDENT'), validate({ param
 async function resultRows(quiz) {
   const [enrollments, attempts] = await Promise.all([
     prisma.enrollment.findMany({
-      where: { classId: quiz.classId, status: 'ENROLLED' },
-      select: { student: { select: { id: true, firstName: true, lastName: true, studentProfile: { select: { studentNumber: true } } } } },
+      where: { classId: quiz.classId, status: { in: ['ENROLLED', 'DROPPED'] } },
+      select: {
+        status: true,
+        droppedAt: true,
+        student: { select: { id: true, firstName: true, lastName: true, studentProfile: { select: { studentNumber: true } } } },
+      },
       orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
     }),
     prisma.quizAttempt.findMany({ where: { quizId: quiz.id }, orderBy: { attemptNumber: 'asc' } }),
   ]);
   const total = totalPoints(quiz);
   const now = new Date();
-  return enrollments.map(({ student }) => {
+  return enrollments.map(({ status: enrollmentStatus, droppedAt, student }) => {
     const mine = attempts.filter((a) => a.studentId === student.id);
     const outcome = quizOutcome(mine, quiz.attemptScoring);
     const percent = outcome && outcome.fraction !== null ? round(outcome.fraction * 100, 1) : null;
     const finished = mine.filter((a) => FINISHED.includes(a.status));
+    const missingDue = quiz.availableUntil && quiz.availableUntil <= now && isPublished(quiz, now) && !(enrollmentStatus === 'DROPPED' && droppedAt && quiz.availableUntil > droppedAt);
     return {
-      student: { id: student.id, name: fullName(student), firstName: student.firstName, lastName: student.lastName, studentNumber: student.studentProfile?.studentNumber ?? null },
+      student: {
+        id: student.id,
+        name: fullName(student),
+        firstName: student.firstName,
+        lastName: student.lastName,
+        studentNumber: student.studentProfile?.studentNumber ?? null,
+        enrollmentStatus,
+        droppedAt: droppedAt ?? null,
+      },
       // TERMINATED: an attempt was ended for a rule violation and waits for the teacher's decision.
-      status: mine.some((a) => a.status === 'IN_PROGRESS') ? 'IN_PROGRESS' : mine.some((a) => a.terminatedAt) ? 'TERMINATED' : finished.length > 0 ? (finished.some((a) => a.needsManualGrading) ? 'NEEDS_GRADING' : 'GRADED') : quiz.availableUntil && quiz.availableUntil <= now && isPublished(quiz, now) ? 'MISSING' : 'NOT_STARTED',
+      status: mine.some((a) => a.status === 'IN_PROGRESS') ? 'IN_PROGRESS' : mine.some((a) => a.terminatedAt) ? 'TERMINATED' : finished.length > 0 ? (finished.some((a) => a.needsManualGrading) ? 'NEEDS_GRADING' : 'GRADED') : missingDue ? 'MISSING' : 'NOT_STARTED',
       attempts: mine.map((a) => ({
         id: a.id, attemptNumber: a.attemptNumber, status: a.status, startedAt: a.startedAt, submittedAt: a.submittedAt, totalScore: a.totalScore, maxScore: a.maxScore, needsManualGrading: a.needsManualGrading,
         terminated: a.terminatedAt ? { at: a.terminatedAt, kind: a.terminationKind, text: violationText(a.terminationKind) } : null,
@@ -1656,7 +1669,7 @@ quizzesRouter.get('/:quizId/export', validate({ params: quizParams, query: z.obj
       { header: 'Attempts', value: (r) => r.attempts.length, pdfWidth: 0.9, align: 'right' },
       { header: 'Score', value: (r) => r.score ?? '', pdfWidth: 0.9, align: 'right' },
       { header: '%', value: (r) => r.percent ?? '', pdfWidth: 0.8, align: 'right' },
-      { header: 'Status', value: (r) => label[r.status], width: 22, pdfWidth: 1.7 },
+      { header: 'Status', value: (r) => `${label[r.status]}${r.student.enrollmentStatus === 'DROPPED' ? ' (Dropped)' : ''}`, width: 24, pdfWidth: 1.8 },
       { header: 'Submitted', value: (r) => (r.lastSubmittedAt ? `${dateKey(r.lastSubmittedAt, tz)} ${timeKey(r.lastSubmittedAt, tz)}` : ''), width: 18, pdfWidth: 1.6 },
     ],
     rows,

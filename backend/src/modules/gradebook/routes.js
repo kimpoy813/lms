@@ -11,7 +11,7 @@ import { dateKey } from '../../lib/time.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
-import { enrolledStudentIds, notify } from '../../services/notifications.js';
+import { classStudentIds, enrolledStudentIds, notify } from '../../services/notifications.js';
 import { getSetting, getTimeZone } from '../../services/settings.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireClassStudent } from '../classes/access.js';
 import { quizOutcome } from '../quizzes/attemptScore.js';
@@ -96,18 +96,23 @@ async function matrix(cls) {
     firstName: student.firstName,
     lastName: student.lastName,
     studentNumber: student.studentNumber,
+    enrollmentStatus: student.enrollmentStatus,
+    droppedAt: student.droppedAt,
+    droppedNote: student.droppedNote,
     entries: Object.fromEntries([...entries.entries()].map(([itemId, e]) => [itemId, { score: e.score, status: e.status, isLate: e.isLate, feedback: e.feedback ?? null, derived: Boolean(e.derived) }])),
     periods: Object.fromEntries(result.periods.map((p) => [p.id, gradeCell(p)])),
     overall: gradeCell(result.overall),
     missingCount: [...entries.values()].filter((e) => e.status === 'MISSING').length,
   })));
-  const graded = rows.filter((r) => r.overall.percent !== null);
+  const activeRows = rows.filter((r) => r.enrollmentStatus === 'ENROLLED');
+  const graded = activeRows.filter((r) => r.overall.percent !== null);
   return {
     class: { id: cls.id, label: classLabel(cls), title: cls.course.title, status: cls.status, ...(await classSettingsView(cls, settings)) },
     structure: { valid: structureErrors.length === 0, errors: structureErrors, periods: periods.map(periodHead) },
     students: rows,
     stats: {
-      students: rows.length,
+      students: activeRows.length,
+      dropped: rows.length - activeRows.length,
       graded: graded.length,
       average: graded.length === 0 ? null : round(graded.reduce((s, r) => s + r.overall.percent, 0) / graded.length, 2),
       highest: graded.length === 0 ? null : Math.max(...graded.map((r) => r.overall.percent)),
@@ -578,11 +583,11 @@ classGradebookRouter.put('/entries', validate({ params: classParams, body: entri
     seen.add(key);
   }
   const items = new Map((await prisma.gradeItem.findMany({ where: { classId: cls.id, id: { in: [...new Set(entries.map((e) => e.itemId))] } } })).map((i) => [i.id, i]));
-  const enrolled = new Set(await enrolledStudentIds(cls.id));
+  const rosterIds = new Set(await classStudentIds(cls.id, { includeDropped: true }));
   for (const e of entries) {
     const item = items.get(e.itemId);
     if (!item) throw fieldErrors({ entries: 'One of the grade items does not belong to this class.' });
-    if (!enrolled.has(e.studentId)) throw fieldErrors({ entries: 'One of the students is not enrolled in this class.' });
+    if (!rosterIds.has(e.studentId)) throw fieldErrors({ entries: 'One of the students is not enrolled in this class.' });
     if (item.source !== 'MANUAL' && !['EXEMPT', 'UNGRADED'].includes(e.status)) {
       throw conflict(`"${item.title}" is scored in its ${item.source === 'QUIZ' ? 'quiz' : 'assignment'}. Here you can only exempt a student from it.`, 'LINKED_ITEM');
     }
@@ -732,7 +737,8 @@ classGradebookRouter.post('/finalize', validate({ params: classParams, body: z.o
     const { periods, settings, structureErrors, students } = await computeClassGrades(fresh, { db: tx });
     if (structureErrors.length > 0) throw new AppError(422, 'INVALID_STRUCTURE', `Fix the gradebook weights before finalising: ${structureErrors[0]}`, { errors: structureErrors });
     if (settings.scaleEntries.length === 0) throw new AppError(422, 'NO_GRADING_SCALE', 'Choose a grading scale before finalising grades.');
-    const incomplete = students.filter((s) => !s.result.overall.isComplete && !s.result.overall.isOverridden);
+    const activeStudents = students.filter((s) => s.student.enrollmentStatus === 'ENROLLED');
+    const incomplete = activeStudents.filter((s) => !s.result.overall.isComplete && !s.result.overall.isOverridden);
     if (incomplete.length > 0 && !req.valid.body.confirmIncomplete) {
       throw new AppError(409, 'INCOMPLETE_GRADES', `${incomplete.length} student(s) still have work that is not graded. Finalise anyway?`, { count: incomplete.length, students: incomplete.slice(0, 20).map((s) => s.student.name) });
     }
@@ -754,9 +760,9 @@ classGradebookRouter.post('/finalize', validate({ params: classParams, body: z.o
     await audit(req, {
       action: 'grades.finalize', entityType: 'Class', entityId: fresh.id, classId: fresh.id,
       summary: `Finalised grades for ${students.length} student(s)`,
-      after: { students: students.length, passing: students.filter((s) => s.result.overall.isPassing === true).length, failing: students.filter((s) => s.result.overall.isPassing === false).length, incomplete: incomplete.length, ...rankingPatch },
+      after: { students: students.length, passing: activeStudents.filter((s) => s.result.overall.isPassing === true).length, failing: activeStudents.filter((s) => s.result.overall.isPassing === false).length, incomplete: incomplete.length, ...rankingPatch },
     }, tx);
-    return { studentIds: students.map((s) => s.student.id), finalizedAt: now, updatedClass };
+    return { studentIds: activeStudents.map((s) => s.student.id), finalizedAt: now, updatedClass };
   }, { timeout: 60_000 });
   await notify(result.studentIds, { type: 'grades.finalized', title: `Final grades are available — ${classLabel(cls)}`, link: `/classes/${cls.id}/grades`, classId: cls.id });
   ok(res, await matrix({ ...cls, ...result.updatedClass, gradesFinalizedAt: result.finalizedAt }));
@@ -795,9 +801,11 @@ classGradebookRouter.get('/export', validate({ params: classParams, query: z.obj
   // A PDF page cannot hold one column per graded item, so it carries period and overall grades.
   const detailed = format !== 'pdf';
   const multiPeriod = data.structure.periods.length > 1;
+  const hasDropped = data.students.some((s) => s.enrollmentStatus === 'DROPPED');
   const columns = [
     { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.3 },
     { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.8 },
+    ...(hasDropped ? [{ header: 'Status', value: (s) => (s.enrollmentStatus === 'DROPPED' ? 'Dropped' : 'Enrolled'), width: 11, pdfWidth: 1.0 }] : []),
     ...data.structure.periods.flatMap((p) => [
       ...(detailed
         ? p.categories.flatMap((c) => c.items.map((i) => ({ header: `${multiPeriod ? `${p.name} · ` : ''}${i.title} (${i.maxPoints})`, value: (s) => cell(s.entries[i.id]), width: 16, align: 'right' })))
@@ -814,7 +822,7 @@ classGradebookRouter.get('/export', validate({ params: classParams, query: z.obj
     title: `Grades — ${classLabel(cls)}`,
     subtitle: `${cls.course.title} · ${cls.semester.name}, ${cls.semester.academicYear.name}`,
     meta: [
-      `${data.students.length} student(s) · ${cls.gradesFinalizedAt ? `Finalised ${dateKey(cls.gradesFinalizedAt, tz)}` : 'NOT FINAL — grades may still change'}`,
+      `${data.stats.students} enrolled${hasDropped ? ` · ${data.stats.dropped} dropped` : ''} · ${cls.gradesFinalizedAt ? `Finalised ${dateKey(cls.gradesFinalizedAt, tz)}` : 'NOT FINAL — grades may still change'}`,
       `Scale: ${data.class.gradingScale?.name ?? 'none'} · M = missing, EX = exempt · Generated ${dateKey(new Date(), tz)} (${tz})`,
     ],
     columns,
@@ -887,22 +895,22 @@ classGradebookRouter.post(
 );
 
 // ── Academic record across classes ───────────────────────────────────────────
-async function academicRecord(studentId, { semesterId } = {}) {
+async function academicRecord(studentId, { semesterId, includeDropped = false } = {}) {
   const enrollments = await prisma.enrollment.findMany({
     where: {
       studentId,
-      status: 'ENROLLED',
+      status: { in: includeDropped ? ['ENROLLED', 'DROPPED'] : ['ENROLLED'] },
       ...(semesterId ? { class: { semesterId } } : {}),
     },
     include: { class: { include: { course: { select: { id: true, code: true, title: true, units: true } }, section: { select: { id: true, name: true } }, semester: { select: { id: true, name: true, startDate: true, endDate: true, academicYear: { select: { id: true, name: true } } } }, teacher: { select: { firstName: true, lastName: true } } } } },
     orderBy: { class: { semester: { startDate: 'desc' } } },
   });
   const rows = [];
-  for (const { class: cls } of enrollments) {
+  for (const { status: enrollmentStatus, droppedAt, class: cls } of enrollments) {
     const view = await studentGradeView(cls, studentId);
     const final = cls.gradesFinalizedAt ? await prisma.finalGrade.findUnique({ where: { classId_studentId_scope: { classId: cls.id, studentId, scope: OVERALL_SCOPE } } }) : null;
     const overall = final ? { percent: final.percent, label: final.label, remark: final.remark, isPassing: final.isPassing } : view?.overall ?? null;
-    const ranking = cls.gradeRankingEnabled ? await buildClassRanking(cls, { viewerUser: { id: studentId }, canManage: false }) : null;
+    const ranking = enrollmentStatus === 'ENROLLED' && cls.gradeRankingEnabled ? await buildClassRanking(cls, { viewerUser: { id: studentId }, canManage: false }) : null;
     rows.push({
       classId: cls.id,
       semesterId: cls.semesterId,
@@ -914,6 +922,8 @@ async function academicRecord(studentId, { semesterId } = {}) {
       academicYear: cls.semester.academicYear.name,
       teacher: fullName(cls.teacher),
       classStatus: cls.status,
+      enrollmentStatus,
+      droppedAt: droppedAt ?? null,
       finalized: Boolean(final),
       overall: overall ? { percent: overall.percent, label: overall.label, remark: overall.remark, isPassing: overall.isPassing } : null,
       periods: (view?.periods ?? final?.breakdown?.periods ?? []).map((p) => ({ name: p.name, published: p.published !== false, percent: p.percent, label: p.label })),
@@ -923,10 +933,10 @@ async function academicRecord(studentId, { semesterId } = {}) {
   return rows;
 }
 
-async function sendReportCard(res, student, { format, semesterId }) {
-  const rows = await academicRecord(student.id, { semesterId });
+async function sendReportCard(res, student, { format, semesterId, includeDropped = false }) {
+  const rows = await academicRecord(student.id, { semesterId, includeDropped });
   const [institution, tz] = await Promise.all([getSetting('institution.name'), getTimeZone()]);
-  const totalUnits = rows.reduce((sum, r) => sum + (Number(r.units) || 0), 0);
+  const totalUnits = round(rows.reduce((sum, r) => sum + (Number(r.units) || 0), 0), 4);
   const graded = rows.filter((r) => r.overall && typeof r.overall.percent === 'number');
   const totalWeightedUnits = graded.reduce((sum, r) => sum + (Number(r.units) > 0 ? Number(r.units) : 1), 0);
   const weightedPercent =
@@ -966,7 +976,7 @@ async function sendReportCard(res, student, { format, semesterId }) {
       },
       { header: 'Final %', value: (r) => (r.overall?.percent !== undefined && r.overall?.percent !== null ? r.overall.percent : '—'), width: 10, pdfWidth: 0.85, align: 'right' },
       { header: 'Grade', value: (r) => r.overall?.label ?? '—', width: 9, pdfWidth: 0.75, align: 'center' },
-      { header: 'Remarks', value: (r) => `${r.overall?.remark ?? (r.overall ? '' : 'In progress')}${r.finalized ? '' : r.overall ? ' (unofficial)' : ''}`, width: 18, pdfWidth: 1.4 },
+      { header: 'Remarks', value: (r) => `${r.overall?.remark ?? (r.overall ? '' : 'In progress')}${r.finalized ? '' : r.overall ? ' (unofficial)' : ''}${r.enrollmentStatus === 'DROPPED' ? ' (Dropped)' : ''}`, width: 20, pdfWidth: 1.5 },
     ],
     rows,
     landscape: true,
@@ -1002,7 +1012,7 @@ gradesRouter.get('/students/:studentId', requireRole('ADMIN'), validate({ params
   const student = await prisma.user.findFirst({ where: { id: req.valid.params.studentId, role: 'STUDENT' }, select: { id: true, firstName: true, lastName: true, email: true, studentProfile: { select: { studentNumber: true } } } });
   if (!student) throw notFound('Student');
   await audit(req, { action: 'records.view', entityType: 'User', entityId: student.id, summary: `Viewed the academic record of ${fullName(student)}` });
-  ok(res, { student: { id: student.id, name: fullName(student), email: student.email, studentNumber: student.studentProfile?.studentNumber ?? null }, classes: await academicRecord(student.id) });
+  ok(res, { student: { id: student.id, name: fullName(student), email: student.email, studentNumber: student.studentProfile?.studentNumber ?? null }, classes: await academicRecord(student.id, { includeDropped: true }) });
 });
 
 gradesRouter.get('/students/:studentId/export', requireRole('ADMIN'), validate({ params: idParams('studentId'), query: reportCardQuery }), async (req, res) => {
@@ -1017,5 +1027,5 @@ gradesRouter.get('/students/:studentId/export', requireRole('ADMIN'), validate({
   });
   if (!student) throw notFound('Student');
   await audit(req, { action: 'records.export', entityType: 'User', entityId: student.id, summary: `Exported report card for ${fullName(student)} (${req.valid.query.format.toUpperCase()})` });
-  await sendReportCard(res, student, req.valid.query);
+  await sendReportCard(res, student, { ...req.valid.query, includeDropped: true });
 });

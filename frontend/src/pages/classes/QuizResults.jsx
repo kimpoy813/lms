@@ -126,7 +126,13 @@ export default function QuizResults() {
                         <Td>
                           <div className="flex items-center gap-3">
                             <Avatar name={s.student.name} size={32} />
-                            <div className="min-w-0"><p className="truncate font-medium">{s.student.lastName}, {s.student.firstName}</p><p className="text-xs text-faint">{s.student.studentNumber ?? ''}</p></div>
+                            <div className="min-w-0">
+                              <p className="flex flex-wrap items-center gap-1.5 font-medium">
+                                <span className="truncate">{s.student.lastName}, {s.student.firstName}</span>
+                                {s.student.enrollmentStatus === 'DROPPED' && <Badge tone="warn">Dropped</Badge>}
+                              </p>
+                              <p className="text-xs text-faint">{s.student.studentNumber ?? ''}</p>
+                            </div>
                           </div>
                         </Td>
                         <Td><Badge tone={st.tone} icon={s.status === 'TERMINATED' ? ShieldAlert : undefined}>{st.label}</Badge>{note && <span className="mt-1 block text-xs text-faint">{note}</span>}</Td>
