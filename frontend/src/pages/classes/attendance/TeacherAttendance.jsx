@@ -141,7 +141,10 @@ function Summary({ onOpen }) {
                 <tbody>
                   {data.students.map((st) => (
                     <tr key={st.id} className="hover:bg-raised/40">
-                      <th scope="row" className="sticky left-0 z-10 border-b border-line bg-surface px-4 py-2 text-left font-medium text-ink whitespace-nowrap">{st.lastName}, {st.firstName}</th>
+                      <th scope="row" className="sticky left-0 z-10 border-b border-line bg-surface px-4 py-2 text-left font-medium text-ink whitespace-nowrap">
+                        {st.lastName}, {st.firstName}
+                        {st.enrollmentStatus === 'DROPPED' && <Badge tone="warn" className="ml-1.5">Dropped</Badge>}
+                      </th>
                       <td className={cn('border-b border-line px-3 py-2 text-right font-semibold tabular-nums', st.rate === null ? 'text-faint' : st.rate < 80 ? 'text-bad' : 'text-ink')}>{st.rate === null ? '—' : formatPercent(st.rate, 0)}</td>
                       {data.sessions.map((s) => <td key={s.id} className="border-b border-line px-1 py-1.5"><span className="flex justify-center"><StatusCell status={s.status === 'CANCELLED' ? null : st.statuses[s.id]} /></span></td>)}
                     </tr>

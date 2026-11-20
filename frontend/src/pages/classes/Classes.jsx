@@ -216,7 +216,7 @@ function CreateClassDialog({ onClose }) {
     setError(null);
     create.mutate({
       semesterId,
-      ...(v.courseId === 'new' ? { newCourse: { code: v.newCode.trim(), title: v.newTitle.trim(), units: Number(v.newUnits) || 3 } } : { courseId: v.courseId }),
+      ...(v.courseId === 'new' ? { newCourse: { code: v.newCode.trim(), title: v.newTitle.trim(), units: v.newUnits === '' ? 3 : Number(v.newUnits) } } : { courseId: v.courseId }),
       ...(v.sectionId === 'new' ? { newSectionName: v.newSectionName.trim() } : v.sectionId ? { sectionId: v.sectionId } : {}),
       ...(isAdmin && v.teacherId ? { teacherId: v.teacherId } : {}),
       room: v.room.trim() || null,
@@ -251,10 +251,10 @@ function CreateClassDialog({ onClose }) {
             </Field>
           </div>
           {v.courseId === 'new' && (
-            <div className="grid gap-4 rounded-xl bg-raised p-4 sm:grid-cols-[8rem_1fr_5rem]">
+            <div className="grid gap-4 rounded-xl bg-raised p-4 sm:grid-cols-[8rem_1fr_6rem]">
               <Field label="Code" required error={form.errors['newCourse.code']}><Input {...form.bind('newCode')} placeholder="IT 102" /></Field>
               <Field label="Course title" required error={form.errors['newCourse.title']}><Input {...form.bind('newTitle')} placeholder="Computer Programming 1" /></Field>
-              <Field label="Units"><Input type="number" min="0" max="12" step="0.5" {...form.bind('newUnits')} /></Field>
+              <Field label="Units" error={form.errors['newCourse.units']}><Input type="number" min="0" max="12" step="any" inputMode="decimal" placeholder="e.g. 4.25" {...form.bind('newUnits')} /></Field>
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-2">

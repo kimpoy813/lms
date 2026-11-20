@@ -33,11 +33,13 @@ describe('institution structure', () => {
     expect(program.status).toBe(201);
     const section = await admin.post('/api/catalog/sections', { name: uid('BSIT-2A'), programId: program.body.data.id, yearLevel: 2 });
     expect(section.status).toBe(201);
-    const course = await admin.post('/api/catalog/courses', { code: uid('IT').toUpperCase(), title: 'Data Structures', units: 3, departmentId: dept.body.data.id });
+    const course = await admin.post('/api/catalog/courses', { code: uid('IT').toUpperCase(), title: 'Data Structures', units: 4.25, departmentId: dept.body.data.id });
     expect(course.status).toBe(201);
+    expect(course.body.data.units).toBe(4.25);
 
-    const renamed = await admin.patch(`/api/catalog/courses/${course.body.data.id}`, { title: 'Data Structures and Algorithms' });
+    const renamed = await admin.patch(`/api/catalog/courses/${course.body.data.id}`, { title: 'Data Structures and Algorithms', units: 3.75 });
     expect(renamed.body.data.title).toBe('Data Structures and Algorithms');
+    expect(renamed.body.data.units).toBe(3.75);
 
     // A department that still has programs cannot be deleted.
     const blocked = await admin.delete(`/api/catalog/departments/${dept.body.data.id}`);

@@ -452,27 +452,43 @@ assignmentsRouter.put('/:assignmentId/submission', requireRole('STUDENT'), valid
 });
 
 // ── Teacher: review and grade ────────────────────────────────────────────────
-const rosterStatus = (assignment, s, now) => {
+const rosterStatus = (assignment, s, now, enrollment) => {
   if (hasSubmitted(s)) return s.status;
+  if (enrollment?.status === 'DROPPED' && (!assignment.dueAt || (enrollment.droppedAt && assignment.dueAt > enrollment.droppedAt))) {
+    return 'NOT_SUBMITTED';
+  }
   return assignment.dueAt && assignment.dueAt <= now && isPublished(assignment, now) ? 'MISSING' : 'NOT_SUBMITTED';
 };
 
 async function roster(assignment) {
   const [enrollments, submissions] = await Promise.all([
     prisma.enrollment.findMany({
-      where: { classId: assignment.classId, status: 'ENROLLED' },
-      select: { student: { select: { id: true, firstName: true, lastName: true, avatarFileId: true, studentProfile: { select: { studentNumber: true } } } } },
+      where: { classId: assignment.classId, status: { in: ['ENROLLED', 'DROPPED'] } },
+      select: {
+        status: true,
+        droppedAt: true,
+        student: { select: { id: true, firstName: true, lastName: true, avatarFileId: true, studentProfile: { select: { studentNumber: true } } } },
+      },
       orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
     }),
     prisma.assignmentSubmission.findMany({ where: { assignmentId: assignment.id }, include: { _count: { select: { files: { where: { deletedAt: null } } } } } }),
   ]);
   const byStudent = new Map(submissions.map((s) => [s.studentId, s]));
   const now = new Date();
-  return enrollments.map(({ student }) => {
+  return enrollments.map(({ status: enrollmentStatus, droppedAt, student }) => {
     const s = byStudent.get(student.id);
     return {
-      student: { id: student.id, name: fullName(student), firstName: student.firstName, lastName: student.lastName, avatarFileId: student.avatarFileId, studentNumber: student.studentProfile?.studentNumber ?? null },
-      status: rosterStatus(assignment, s, now),
+      student: {
+        id: student.id,
+        name: fullName(student),
+        firstName: student.firstName,
+        lastName: student.lastName,
+        avatarFileId: student.avatarFileId,
+        studentNumber: student.studentProfile?.studentNumber ?? null,
+        enrollmentStatus,
+        droppedAt: droppedAt ?? null,
+      },
+      status: rosterStatus(assignment, s, now, { status: enrollmentStatus, droppedAt }),
       submittedAt: hasSubmitted(s) ? s.submittedAt : null,
       isLate: Boolean(s?.isLate) && hasSubmitted(s),
       attemptNumber: s?.attemptNumber ?? 0,
@@ -525,7 +541,7 @@ assignmentsRouter.put('/:assignmentId/submissions/:studentId/grade', validate({ 
   const { studentId } = req.valid.params;
   const b = req.valid.body;
   const enrollment = await prisma.enrollment.findUnique({ where: { classId_studentId: { classId: cls.id, studentId } }, select: { status: true } });
-  if (enrollment?.status !== 'ENROLLED') throw notFound('Student');
+  if (!enrollment || !['ENROLLED', 'DROPPED'].includes(enrollment.status)) throw notFound('Student');
 
   let rawScore;
   let rubricScores = null;
@@ -578,7 +594,7 @@ assignmentsRouter.put('/:assignmentId/submissions/:studentId/grade', validate({ 
     }
     return { row, newlyReturned: returning && !wasReleased, changedAfterReturn: wasReleased && existing.finalScore !== finalScore };
   });
-  if (result.newlyReturned || result.changedAfterReturn) {
+  if (enrollment.status === 'ENROLLED' && (result.newlyReturned || result.changedAfterReturn)) {
     await notify([studentId], {
       type: 'assignment.returned', title: `${result.changedAfterReturn ? 'Grade updated' : 'Graded'}: ${assignment.title}`,
       body: `${classLabel(cls)} — ${result.row.finalScore} / ${assignment.points}`, link: `/classes/${cls.id}/assignments/${assignment.id}`, classId: cls.id,
@@ -598,7 +614,8 @@ assignmentsRouter.post('/:assignmentId/return', validate({ params: assignmentPar
   });
   if (graded.length > 0) {
     await prisma.assignmentSubmission.updateMany({ where: { id: { in: graded.map((g) => g.id) }, status: 'GRADED' }, data: { status: 'RETURNED', returnedAt: now } });
-    await notify(graded.map((g) => g.studentId), { type: 'assignment.returned', title: `Graded: ${assignment.title}`, body: classLabel(cls), link: `/classes/${cls.id}/assignments/${assignment.id}`, classId: cls.id });
+    const activeIds = await prisma.enrollment.findMany({ where: { classId: cls.id, studentId: { in: graded.map((g) => g.studentId) }, status: 'ENROLLED' }, select: { studentId: true } });
+    await notify(activeIds.map((e) => e.studentId), { type: 'assignment.returned', title: `Graded: ${assignment.title}`, body: classLabel(cls), link: `/classes/${cls.id}/assignments/${assignment.id}`, classId: cls.id });
   }
   ok(res, { returned: graded.length });
 });

@@ -31,7 +31,7 @@ const ENTITIES = {
   courses: {
     label: 'Courses', one: 'course', icon: BookOpen, title: (r) => `${r.code} — ${r.title}`,
     columns: [['Code', (r) => <span className="font-semibold">{r.code}</span>], ['Title', (r) => r.title], ['Units', (r) => r.units, 'num'], ['Department', (r) => r.department?.code ?? '—'], ['Classes', (r) => r.classCount, 'num'], ['Status', active]],
-    fields: [{ name: 'code', label: 'Course code', required: true, placeholder: 'e.g. IT 101' }, { name: 'units', label: 'Units', type: 'number', min: 0, max: 12, step: 0.5, initial: 3 }, { name: 'title', label: 'Title', required: true, placeholder: 'e.g. Introduction to Computing', wide: true }, { name: 'departmentId', label: 'Department', type: 'select', options: 'departments' }, { name: 'isActive', label: 'Active', type: 'checkbox', initial: true }, { name: 'description', label: 'Description', type: 'textarea', wide: true }],
+    fields: [{ name: 'code', label: 'Course code', required: true, placeholder: 'e.g. IT 101' }, { name: 'units', label: 'Units', type: 'number', min: 0, max: 12, step: 'any', initial: 3, placeholder: 'e.g. 3 or 4.25' }, { name: 'title', label: 'Title', required: true, placeholder: 'e.g. Introduction to Computing', wide: true }, { name: 'departmentId', label: 'Department', type: 'select', options: 'departments' }, { name: 'isActive', label: 'Active', type: 'checkbox', initial: true }, { name: 'description', label: 'Description', type: 'textarea', wide: true }],
     search: (r) => `${r.code} ${r.title}`,
   },
   sections: {
@@ -143,7 +143,7 @@ function EntityDialog({ name, config, row, onClose }) {
               <Field key={f.name} label={f.label} optional={!f.required} error={errors[f.name]} hint={f.hint} className={f.wide ? 'sm:col-span-2' : undefined}>
                 {f.type === 'textarea' ? <Textarea rows={2} {...common} maxLength={1000} />
                   : f.type === 'select' ? <Select {...common}><option value="">{f.required ? 'Choose…' : '—'}</option>{options[f.options].map((o) => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}</Select>
-                    : <Input {...common} type={f.type === 'number' ? 'number' : 'text'} min={f.min} max={f.max} step={f.step} placeholder={f.placeholder} data-autofocus={i === 0 ? '' : undefined} />}
+                    : <Input {...common} type={f.type === 'number' ? 'number' : 'text'} min={f.min} max={f.max} step={f.step} inputMode={f.type === 'number' && f.step === 'any' ? 'decimal' : undefined} placeholder={f.placeholder} data-autofocus={i === 0 ? '' : undefined} />}
               </Field>
             );
           })}

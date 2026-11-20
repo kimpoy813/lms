@@ -88,3 +88,12 @@ export async function enrolledStudentIds(classId, db = prisma) {
   });
   return rows.map((r) => r.studentId);
 }
+
+/** Ids of students in a class, optionally including dropped students kept on the roster. */
+export async function classStudentIds(classId, { includeDropped = false, db = prisma } = {}) {
+  const rows = await db.enrollment.findMany({
+    where: { classId, status: { in: includeDropped ? ['ENROLLED', 'DROPPED'] : ['ENROLLED'] } },
+    select: { studentId: true },
+  });
+  return rows.map((r) => r.studentId);
+}

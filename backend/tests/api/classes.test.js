@@ -1,9 +1,12 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  actor, anonymous, classroom, createClass, createCourse, createSemester, createUser, loginAs, prepare, prisma, uid,
+  actor, anonymous, classroom, createClass, createCourse, createSemester, createUser, defaultScale, loginAs, prepare, prisma, uid,
 } from '../helpers/index.js';
 
-beforeAll(prepare);
+beforeAll(async () => {
+  await prepare();
+  await defaultScale();
+});
 
 const schedule = [{ dayOfWeek: 1, startTime: '08:00', endTime: '09:30', room: 'Rm 204' }];
 
@@ -13,10 +16,11 @@ describe('creating a class', () => {
     const semester = await createSemester();
     const code = uid('IT').toUpperCase();
     const res = await teacher.post('/api/classes', {
-      newCourse: { code, title: 'Web Systems', units: 3 }, newSectionName: uid('BSIT-3'), semesterId: semester.id, schedules: schedule, room: 'Lab 2',
+      newCourse: { code, title: 'Web Systems', units: 4.25 }, newSectionName: uid('BSIT-3'), semesterId: semester.id, schedules: schedule, room: 'Lab 2',
     });
     expect(res.status).toBe(201);
     expect(res.body.data.course.code).toBe(code);
+    expect(res.body.data.course.units).toBe(4.25);
     expect(res.body.data.enrollmentCode).toMatch(/^[A-Z2-9]{7}$/);
     expect(res.body.data.myRole).toBe('TEACHER');
     // A default gradebook structure exists and its category weights total 100 %.
@@ -205,6 +209,163 @@ describe('enrolment requests', () => {
     expect((await students[0].get(`/api/classes/${cls.id}`)).status).toBe(404);
     expect((await teacher.post(`/api/classes/${cls.id}/people/${enrollmentId}/reinstate`)).status).toBe(200);
     expect((await students[0].get(`/api/classes/${cls.id}`)).status).toBe(200);
+  });
+
+  it('keeps a dropped student on the teacher roster, gradebook, work, and attendance until removed', async () => {
+    const admin = await actor('ADMIN');
+    const { teacher, cls, students } = await classroom(2);
+    const [s0, s1] = students;
+    const peopleBefore = await teacher.get(`/api/classes/${cls.id}/people`);
+    const enroll0 = peopleBefore.body.data.students.find((s) => s.id === s0.user.id).enrollmentId;
+
+    // Set up a simple gradebook, assignment submission, quiz attempt, and attendance record.
+    const structureRes = await teacher.put(`/api/classes/${cls.id}/gradebook/structure`, {
+      periods: [
+        {
+          name: 'Midterm',
+          weight: 50,
+          categories: [{ name: 'Quizzes', kind: 'QUIZ', weight: 100 }],
+        },
+        {
+          name: 'Final',
+          weight: 50,
+          categories: [{ name: 'Exam', kind: 'EXAM', weight: 100 }],
+        },
+      ],
+    });
+    expect(structureRes.status).toBe(200);
+    const [midterm, finals] = structureRes.body.data.structure.periods;
+    const itemMid = (await teacher.post(`/api/classes/${cls.id}/gradebook/items`, {
+      categoryId: midterm.categories[0].id,
+      title: 'Recitation 1',
+      maxPoints: 100,
+    })).body.data;
+    const itemFin = (await teacher.post(`/api/classes/${cls.id}/gradebook/items`, {
+      categoryId: finals.categories[0].id,
+      title: 'Final Paper',
+      maxPoints: 100,
+    })).body.data;
+    await teacher.put(`/api/classes/${cls.id}/gradebook/entries`, {
+      entries: [
+        { itemId: itemMid.id, studentId: s0.user.id, status: 'GRADED', score: 88 },
+        { itemId: itemMid.id, studentId: s1.user.id, status: 'GRADED', score: 94 },
+        { itemId: itemFin.id, studentId: s1.user.id, status: 'GRADED', score: 92 },
+      ],
+    });
+
+    const assignment = (await teacher.post(`/api/classes/${cls.id}/assignments`, {
+      title: 'Homework 1',
+      points: 20,
+      status: 'PUBLISHED',
+      submissionType: 'TEXT',
+    })).body.data;
+    expect((await s0.put(`/api/assignments/${assignment.id}/submission`, { textContent: 'My homework', submit: true })).status).toBe(200);
+
+    const createdQuiz = await teacher.post(`/api/classes/${cls.id}/quizzes`, {
+      title: 'Short Quiz',
+      resultVisibility: 'IMMEDIATE',
+      answerVisibility: 'RESPONSES',
+    });
+    expect(createdQuiz.status).toBe(201);
+    const quizId = createdQuiz.body.data.id;
+    expect((await teacher.post(`/api/quizzes/${quizId}/questions`, {
+      question: { type: 'MULTIPLE_CHOICE', text: '<p>1+1?</p>', points: 1, choices: [{ text: '2', isCorrect: true }, { text: '3', isCorrect: false }] },
+    })).status).toBe(201);
+    const quiz = (await teacher.patch(`/api/quizzes/${quizId}`, { status: 'PUBLISHED' })).body.data;
+    const startRes = await s0.post(`/api/quizzes/${quiz.id}/attempts`, { acceptRules: true });
+    expect([200, 201]).toContain(startRes.status);
+    await s0.post(`/api/attempts/${startRes.body.data.attemptId}/submit`, {});
+
+    const day = new Date(Date.UTC(2026, 9, 10));
+    const session = await prisma.attendanceSession.create({
+      data: { classId: cls.id, teacherId: teacher.user.id, date: day, startTime: day, endTime: new Date(day.getTime() + 3_600_000), status: 'CLOSED' },
+    });
+    await prisma.attendanceRecord.create({
+      data: { sessionId: session.id, studentId: s0.user.id, status: 'PRESENT', verificationMethod: 'MANUAL' },
+    });
+
+    // Drop s0: active access ends, but teacher keeps s0 on roster, gradebook, assignments, quizzes, and attendance.
+    const dropRes = await teacher.post(`/api/classes/${cls.id}/people/${enroll0}/drop`, { note: 'Needs final grade later' });
+    expect(dropRes.status).toBe(200);
+    expect((await s0.get(`/api/classes/${cls.id}`)).status).toBe(404);
+    expect((await s0.post('/api/enrollments/join', { code: cls.enrollmentCode })).body.error.code).toBe('ENROLLED_DROPPED');
+
+    const peopleAfterDrop = (await teacher.get(`/api/classes/${cls.id}/people`)).body.data.students;
+    expect(peopleAfterDrop.find((s) => s.id === s0.user.id)).toMatchObject({ status: 'DROPPED', note: 'Needs final grade later' });
+
+    const gb = (await teacher.get(`/api/classes/${cls.id}/gradebook`)).body.data;
+    expect(gb.stats.students).toBe(1);
+    expect(gb.stats.dropped).toBe(1);
+    const s0Row = gb.students.find((s) => s.id === s0.user.id);
+    expect(s0Row).toMatchObject({ enrollmentStatus: 'DROPPED', overall: { percent: 88 } });
+
+    // Teacher can still inspect & update a dropped student's grade and export CSV with Status column.
+    expect((await teacher.get(`/api/classes/${cls.id}/gradebook/students/${s0.user.id}`)).body.data.student.enrollmentStatus).toBe('DROPPED');
+    expect((await teacher.put(`/api/classes/${cls.id}/gradebook/entries`, {
+      entries: [{ itemId: itemMid.id, studentId: s0.user.id, status: 'GRADED', score: 90 }],
+    })).status).toBe(200);
+
+    const csv = await teacher.get(`/api/classes/${cls.id}/gradebook/export?format=csv`);
+    expect(csv.status).toBe(200);
+    expect(csv.text).toContain('Status');
+    expect(csv.text).toContain('Dropped');
+
+    // Assignment submission, quiz results, and attendance summary still include the dropped student.
+    const subRoster = (await teacher.get(`/api/assignments/${assignment.id}/submissions`)).body.data.students;
+    expect(subRoster.find((r) => r.student.id === s0.user.id).student.enrollmentStatus).toBe('DROPPED');
+    expect((await teacher.put(`/api/assignments/${assignment.id}/submissions/${s0.user.id}/grade`, { score: 18 })).status).toBe(200);
+
+    const quizRows = (await teacher.get(`/api/quizzes/${quiz.id}/results`)).body.data.students;
+    expect(quizRows.find((r) => r.student.id === s0.user.id)).toMatchObject({ status: 'GRADED', student: { enrollmentStatus: 'DROPPED' } });
+
+    const attSummary = (await teacher.get(`/api/classes/${cls.id}/attendance/summary`)).body.data.students;
+    expect(attSummary.find((r) => r.id === s0.user.id)).toMatchObject({ enrollmentStatus: 'DROPPED', present: 1 });
+
+    // Dropped students are excluded from active rankings & analytics, and admin tools see droppedClasses & academic record.
+    const ranking = (await teacher.get(`/api/classes/${cls.id}/gradebook/ranking`)).body.data;
+    expect(ranking.namedEntries.map((e) => e.studentId)).toEqual([s1.user.id]);
+    const analytics = (await teacher.get(`/api/classes/${cls.id}/analytics`)).body.data;
+    expect(analytics.summary.students).toBe(1);
+    const adminStudents = (await admin.get(`/api/admin/students?search=${encodeURIComponent(s0.user.email)}`)).body.data;
+    expect(adminStudents[0].droppedClasses).toHaveLength(1);
+    const adminRec = (await admin.get(`/api/grades/students/${s0.user.id}`)).body.data;
+    expect(adminRec.classes.find((c) => c.classId === cls.id)).toMatchObject({ enrollmentStatus: 'DROPPED' });
+    expect((await s0.get('/api/grades/mine')).body.data).toHaveLength(0);
+
+    // Finalizing succeeds without treating dropped student's incomplete future period as blocking, and stores FinalGrade for s0 too.
+    expect((await teacher.post(`/api/classes/${cls.id}/gradebook/finalize`, {})).status).toBe(200);
+    expect(await prisma.finalGrade.count({ where: { classId: cls.id, studentId: s0.user.id, scope: 'OVERALL' } })).toBe(1);
+
+    // Removing while finalized is blocked until reopened.
+    const blockedRemove = await teacher.post(`/api/classes/${cls.id}/people/${enroll0}/remove`, { note: 'Remove attempt' });
+    expect(blockedRemove.status).toBe(409);
+    expect(blockedRemove.body.error.code).toBe('GRADES_FINALIZED');
+
+    expect((await teacher.post(`/api/classes/${cls.id}/gradebook/reopen`, { reason: 'Need to remove withdrawn student' })).status).toBe(200);
+
+    // Also enroll s0 in another class to ensure removing from cls does NOT touch other classes.
+    const otherClass = await createClass(teacher.user);
+    await admin.post('/api/admin/enrollments', { classId: otherClass.id, studentId: s0.user.id });
+
+    // Remove s0 completely from cls.
+    const removeRes = await teacher.post(`/api/classes/${cls.id}/people/${enroll0}/remove`, { note: 'Enrolled by mistake' });
+    expect(removeRes.status).toBe(200);
+    expect(removeRes.body.data).toMatchObject({ removed: true, studentId: s0.user.id, previousStatus: 'DROPPED' });
+
+    const peopleAfterRemove = (await teacher.get(`/api/classes/${cls.id}/people`)).body.data.students;
+    expect(peopleAfterRemove.some((s) => s.id === s0.user.id)).toBe(false);
+    const gbAfterRemove = (await teacher.get(`/api/classes/${cls.id}/gradebook`)).body.data;
+    expect(gbAfterRemove.students.some((s) => s.id === s0.user.id)).toBe(false);
+    expect(await prisma.gradeEntry.count({ where: { studentId: s0.user.id, gradeItem: { classId: cls.id } } })).toBe(0);
+    expect(await prisma.finalGrade.count({ where: { classId: cls.id, studentId: s0.user.id } })).toBe(0);
+    expect(await prisma.assignmentSubmission.count({ where: { assignmentId: assignment.id, studentId: s0.user.id } })).toBe(0);
+    expect(await prisma.quizAttempt.count({ where: { quizId: quiz.id, studentId: s0.user.id } })).toBe(0);
+    expect(await prisma.attendanceRecord.count({ where: { sessionId: session.id, studentId: s0.user.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { classId: cls.id, action: 'enrollment.remove' } })).toBe(1);
+
+    // Other class enrollment remains intact, and student can rejoin cls cleanly if needed later.
+    expect((await s0.get(`/api/classes/${otherClass.id}`)).status).toBe(200);
+    expect((await s0.post('/api/enrollments/join', { code: cls.enrollmentCode })).status).toBe(201);
   });
 });
 

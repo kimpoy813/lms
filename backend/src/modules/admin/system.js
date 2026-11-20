@@ -370,8 +370,8 @@ adminSystemRouter.get('/students', validate({ query: z.object({ search: z.string
         id: true, firstName: true, lastName: true, email: true, status: true,
         studentProfile: { select: { studentNumber: true, yearLevel: true, program: { select: { code: true } }, section: { select: { name: true } } } },
         enrollments: {
-          where: { status: 'ENROLLED', class: { status: 'ACTIVE' } },
-          select: { id: true, class: { select: { id: true, course: { select: { code: true, title: true } }, section: { select: { name: true } } } } },
+          where: { status: { in: ['ENROLLED', 'DROPPED'] }, class: { status: 'ACTIVE' } },
+          select: { id: true, status: true, droppedAt: true, note: true, class: { select: { id: true, course: { select: { code: true, title: true } }, section: { select: { name: true } } } } },
         },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -384,7 +384,8 @@ adminSystemRouter.get('/students', validate({ query: z.object({ search: z.string
       id: s.id, name: fullName(s), email: s.email, status: s.status,
       studentNumber: s.studentProfile?.studentNumber ?? null, program: s.studentProfile?.program?.code ?? null,
       section: s.studentProfile?.section?.name ?? null, yearLevel: s.studentProfile?.yearLevel ?? null,
-      classes: s.enrollments.map((e) => ({ enrollmentId: e.id, classId: e.class.id, label: classLabel(e.class), title: e.class.course.title })),
+      classes: s.enrollments.filter((e) => e.status === 'ENROLLED').map((e) => ({ enrollmentId: e.id, classId: e.class.id, label: classLabel(e.class), title: e.class.course.title })),
+      droppedClasses: s.enrollments.filter((e) => e.status === 'DROPPED').map((e) => ({ enrollmentId: e.id, classId: e.class.id, label: classLabel(e.class), title: e.class.course.title, droppedAt: e.droppedAt, note: e.note })),
     })),
     pageMeta(q, total),
   );

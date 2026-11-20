@@ -1,10 +1,10 @@
 // Who is in the class. Teachers manage enrolment here; students see the teacher and
 // (when the teacher allows it) their classmates' names.
 import { useQuery } from '@tanstack/react-query';
-import { Check, Clock, EyeOff, Mail, MailPlus, MessageSquare, MoreHorizontal, RotateCcw, Trash2, UserMinus, UserPlus, X } from 'lucide-react';
+import { Check, Clock, EyeOff, Mail, MailPlus, MessageSquare, MoreHorizontal, RotateCcw, Table2, Trash2, UserMinus, UserPlus, UserX, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { Alert, Avatar, Badge, Button, Card, ConfirmDialog, EmptyState, Field, IconButton, Menu, MenuItem, Modal, QueryState, SearchInput, Table, Td, Textarea, Th, Tr } from '../../components/ui.jsx';
+import { Alert, Avatar, Badge, Button, Card, ConfirmDialog, EmptyState, Field, IconButton, Menu, MenuItem, Modal, QueryState, SearchInput, Segmented, Table, Td, Textarea, Th, Tr } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDate, plural, relativeTime } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -59,14 +59,22 @@ function Classmates({ data }) {
 function Manage({ data }) {
   const { cls, base } = useClass();
   const [search, setSearch] = useState('');
+  const [rosterFilter, setRosterFilter] = useState('ALL');
   const [adding, setAdding] = useState(false);
-  const [confirm, setConfirm] = useState(null); // { kind: 'drop'|'reject', student }
+  const [confirm, setConfirm] = useState(null); // { kind: 'drop'|'remove'|'reject', student }
   const [note, setNote] = useState('');
   const invalidate = [['class', cls.id], ['dashboard'], ['classes']];
+  const readOnly = cls.status === 'ARCHIVED';
 
   const act = useAction(({ enrollmentId, action, body }) => api.post(`${base}/people/${enrollmentId}/${action}`, body), {
     invalidate,
-    success: (_, { action }) => ({ approve: 'Student approved.', reject: 'Request declined.', drop: 'Student dropped from the class.', reinstate: 'Student reinstated.' }[action]),
+    success: (_, { action }) => ({
+      approve: 'Student approved.',
+      reject: 'Request declined.',
+      drop: 'Student dropped. They remain on your class roster and gradebook.',
+      reinstate: 'Student reinstated.',
+      remove: 'Student removed from the class.',
+    }[action]),
     onSuccess: () => { setConfirm(null); setNote(''); },
   });
   const cancelInvite = useAction((id) => api.delete(`${base}/people/invitations/${id}`), { invalidate, success: 'Invitation cancelled.' });
@@ -75,15 +83,44 @@ function Manage({ data }) {
   const groups = useMemo(() => {
     const match = (s) => !term || `${s.name} ${s.email} ${s.studentNumber ?? ''}`.toLowerCase().includes(term);
     const by = (status) => data.students.filter((s) => s.status === status && match(s));
-    return { pending: by('PENDING'), enrolled: by('ENROLLED'), inactive: [...by('DROPPED'), ...by('REJECTED')] };
-  }, [data.students, term]);
+    const enrolledAll = data.students.filter((s) => s.status === 'ENROLLED');
+    const droppedAll = data.students.filter((s) => s.status === 'DROPPED');
+    const roster = data.students.filter((s) => (
+      (rosterFilter === 'ALL' ? (s.status === 'ENROLLED' || s.status === 'DROPPED') : s.status === rosterFilter) && match(s)
+    ));
+    return {
+      pending: by('PENDING'),
+      roster,
+      enrolledTotal: enrolledAll.length,
+      droppedTotal: droppedAll.length,
+      rejected: by('REJECTED'),
+    };
+  }, [data.students, term, rosterFilter]);
+
+  const removeBlockedByFinalized = confirm?.kind === 'remove' && data.gradesFinalized && ['ENROLLED', 'DROPPED'].includes(confirm.student.status);
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <SearchInput value={search} onChange={setSearch} placeholder="Search by name, e-mail or student number…" className="w-full sm:w-80" />
-        <span className="text-sm text-soft">{plural(groups.enrolled.length, 'student')} enrolled</span>
-        <Button icon={UserPlus} className="ml-auto" onClick={() => setAdding(true)} disabled={cls.status === 'ARCHIVED'}>Add students</Button>
+        {groups.droppedTotal > 0 && (
+          <Segmented
+            size="sm"
+            label="Filter class roster"
+            value={rosterFilter}
+            onChange={setRosterFilter}
+            options={[
+              { value: 'ALL', label: `All (${groups.enrolledTotal + groups.droppedTotal})` },
+              { value: 'ENROLLED', label: `Enrolled (${groups.enrolledTotal})` },
+              { value: 'DROPPED', label: `Dropped (${groups.droppedTotal})` },
+            ]}
+          />
+        )}
+        <span className="text-sm text-soft">
+          {plural(groups.enrolledTotal, 'student')} enrolled
+          {groups.droppedTotal > 0 ? ` · ${groups.droppedTotal} dropped` : ''}
+        </span>
+        <Button icon={UserPlus} className="ml-auto" onClick={() => setAdding(true)} disabled={readOnly}>Add students</Button>
       </div>
 
       {groups.pending.length > 0 && (
@@ -97,42 +134,61 @@ function Manage({ data }) {
                   <p className="truncate text-sm font-semibold text-ink">{s.name}</p>
                   <p className="truncate text-xs text-faint">{[s.studentNumber, s.program, s.email].filter(Boolean).join(' · ')} · asked {relativeTime(s.requestedAt)}</p>
                 </div>
-                <Button size="sm" icon={Check} loading={act.isPending && act.variables?.enrollmentId === s.enrollmentId && act.variables.action === 'approve'} onClick={() => act.mutate({ enrollmentId: s.enrollmentId, action: 'approve' })}>Approve</Button>
-                <Button size="sm" variant="secondary" icon={X} onClick={() => setConfirm({ kind: 'reject', student: s })}>Decline</Button>
+                <Button size="sm" icon={Check} disabled={readOnly} loading={act.isPending && act.variables?.enrollmentId === s.enrollmentId && act.variables.action === 'approve'} onClick={() => act.mutate({ enrollmentId: s.enrollmentId, action: 'approve' })}>Approve</Button>
+                <Button size="sm" variant="secondary" icon={X} disabled={readOnly} onClick={() => setConfirm({ kind: 'reject', student: s })}>Decline</Button>
               </li>
             ))}
           </ul>
         </Card>
       )}
 
-      {groups.enrolled.length === 0 ? (
-        <Card><EmptyState icon={UserPlus} title={term ? 'No student matches your search' : 'No students yet'} description={term ? null : `Share the class code ${cls.enrollmentCode ?? ''} or add students by e-mail.`} action={term ? null : <Button icon={UserPlus} onClick={() => setAdding(true)}>Add students</Button>} /></Card>
+      {groups.roster.length === 0 ? (
+        <Card><EmptyState icon={UserPlus} title={term || rosterFilter !== 'ALL' ? 'No student matches your filter' : 'No students yet'} description={term || rosterFilter !== 'ALL' ? null : `Share the class code ${cls.enrollmentCode ?? ''} or add students by e-mail.`} action={term || rosterFilter !== 'ALL' ? null : <Button icon={UserPlus} onClick={() => setAdding(true)} disabled={readOnly}>Add students</Button>} /></Card>
       ) : (
         <Table>
           <thead><tr><Th>Student</Th><Th className="hidden md:table-cell">Student no.</Th><Th className="hidden lg:table-cell">Program</Th><Th className="hidden sm:table-cell">Joined</Th><Th className="w-12"><span className="sr-only">Actions</span></Th></tr></thead>
           <tbody>
-            {groups.enrolled.map((s) => (
-              <Tr key={s.enrollmentId}>
-                <Td>
-                  <div className="flex items-center gap-3">
-                    <Avatar name={s.name} fileId={s.avatarFileId} size={34} />
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{s.lastName}, {s.firstName}{s.accountStatus !== 'ACTIVE' && <Badge tone="warn" className="ml-2">Account {s.accountStatus.toLowerCase()}</Badge>}</p>
-                      <p className="truncate text-xs text-faint">{s.email}</p>
+            {groups.roster.map((s) => {
+              const dropped = s.status === 'DROPPED';
+              return (
+                <Tr key={s.enrollmentId} className={dropped ? 'bg-warn-soft/20' : undefined}>
+                  <Td>
+                    <div className="flex items-center gap-3">
+                      <Avatar name={s.name} fileId={s.avatarFileId} size={34} />
+                      <div className="min-w-0">
+                        <p className="flex flex-wrap items-center gap-1.5 font-medium">
+                          <span className="truncate">{s.lastName}, {s.firstName}</span>
+                          {dropped && <Badge tone="warn">Dropped</Badge>}
+                          {s.accountStatus !== 'ACTIVE' && <Badge tone="warn">Account {s.accountStatus.toLowerCase()}</Badge>}
+                        </p>
+                        <p className="truncate text-xs text-faint">
+                          {s.email}
+                          {dropped ? ` · Dropped ${formatDate(s.droppedAt)}${s.note ? ` — ${s.note}` : ''}` : ''}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </Td>
-                <Td className="hidden font-mono text-[13px] text-soft md:table-cell">{s.studentNumber ?? '—'}</Td>
-                <Td className="hidden text-soft lg:table-cell">{[s.program, s.yearLevel ? `Year ${s.yearLevel}` : null].filter(Boolean).join(' · ') || '—'}</Td>
-                <Td className="hidden text-soft sm:table-cell">{formatDate(s.enrolledAt)}</Td>
-                <Td className="text-right">
-                  <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} label={`Actions for ${s.name}`} size="sm" onClick={toggle} {...props} />}>
-                    <MenuItem icon={MessageSquare} to={`/messages?to=${s.id}`}>Send a message</MenuItem>
-                    <MenuItem icon={UserMinus} tone="danger" onClick={() => setConfirm({ kind: 'drop', student: s })}>Drop from class</MenuItem>
-                  </Menu>
-                </Td>
-              </Tr>
-            ))}
+                  </Td>
+                  <Td className="hidden font-mono text-[13px] text-soft md:table-cell">{s.studentNumber ?? '—'}</Td>
+                  <Td className="hidden text-soft lg:table-cell">{[s.program, s.yearLevel ? `Year ${s.yearLevel}` : null].filter(Boolean).join(' · ') || '—'}</Td>
+                  <Td className="hidden text-soft sm:table-cell">{formatDate(s.enrolledAt)}</Td>
+                  <Td className="text-right">
+                    <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} label={`Actions for ${s.name}`} size="sm" onClick={toggle} {...props} />}>
+                      <MenuItem icon={Table2} to={`${base}/gradebook?student=${s.id}`}>View grades</MenuItem>
+                      <MenuItem icon={MessageSquare} to={`/messages?to=${s.id}`}>Send a message</MenuItem>
+                      {!readOnly && !dropped && (
+                        <MenuItem icon={UserMinus} onClick={() => setConfirm({ kind: 'drop', student: s })}>Drop from class</MenuItem>
+                      )}
+                      {!readOnly && dropped && (
+                        <MenuItem icon={RotateCcw} onClick={() => act.mutate({ enrollmentId: s.enrollmentId, action: 'reinstate' })}>Reinstate to class</MenuItem>
+                      )}
+                      {!readOnly && (
+                        <MenuItem icon={UserX} tone="danger" onClick={() => setConfirm({ kind: 'remove', student: s })}>Remove from class</MenuItem>
+                      )}
+                    </Menu>
+                  </Td>
+                </Tr>
+              );
+            })}
           </tbody>
         </Table>
       )}
@@ -146,25 +202,30 @@ function Manage({ data }) {
               <li key={i.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
                 <span className="min-w-0 flex-1 truncate text-sm text-ink">{i.email}</span>
                 {i.expired ? <Badge tone="bad">Expired</Badge> : <span className="hidden text-xs text-faint sm:block">sent {relativeTime(i.createdAt)}</span>}
-                <IconButton icon={Trash2} label={`Cancel the invitation for ${i.email}`} size="sm" variant="dangerGhost" onClick={() => cancelInvite.mutate(i.id)} />
+                <IconButton icon={Trash2} label={`Cancel the invitation for ${i.email}`} size="sm" variant="dangerGhost" disabled={readOnly} onClick={() => cancelInvite.mutate(i.id)} />
               </li>
             ))}
           </ul>
         </Card>
       )}
 
-      {groups.inactive.length > 0 && (
+      {groups.rejected.length > 0 && (
         <Card>
-          <h2 className="mb-3 text-[15px] font-semibold">No longer in the class</h2>
+          <h2 className="mb-3 text-[15px] font-semibold">Declined requests</h2>
           <ul className="divide-y divide-line">
-            {groups.inactive.map((s) => (
+            {groups.rejected.map((s) => (
               <li key={s.enrollmentId} className="flex flex-wrap items-center gap-3 py-2.5 first:pt-0 last:pb-0">
                 <Avatar name={s.name} fileId={s.avatarFileId} size={32} />
                 <div className="min-w-0 flex-1 basis-40">
                   <p className="truncate text-sm font-medium text-ink">{s.name}</p>
-                  <p className="truncate text-xs text-faint">{s.status === 'DROPPED' ? `Dropped ${formatDate(s.droppedAt)}` : 'Request declined'}{s.note ? ` — ${s.note}` : ''}</p>
+                  <p className="truncate text-xs text-faint">Request declined{s.note ? ` — ${s.note}` : ''}</p>
                 </div>
-                <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => act.mutate({ enrollmentId: s.enrollmentId, action: 'reinstate' })}>Reinstate</Button>
+                {!readOnly && (
+                  <>
+                    <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => act.mutate({ enrollmentId: s.enrollmentId, action: 'reinstate' })}>Approve anyway</Button>
+                    <IconButton icon={Trash2} label={`Remove ${s.name}'s declined request`} size="sm" variant="dangerGhost" onClick={() => setConfirm({ kind: 'remove', student: s })} />
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -176,13 +237,54 @@ function Manage({ data }) {
       <ConfirmDialog
         open={Boolean(confirm)}
         onClose={() => { setConfirm(null); setNote(''); }}
-        title={confirm?.kind === 'drop' ? `Drop ${confirm.student.name}?` : `Decline ${confirm?.student.name}’s request?`}
-        confirmLabel={confirm?.kind === 'drop' ? 'Drop student' : 'Decline request'}
+        title={
+          confirm?.kind === 'drop'
+            ? `Drop ${confirm.student.name}?`
+            : confirm?.kind === 'remove'
+              ? `Remove ${confirm.student.name} from class?`
+              : `Decline ${confirm?.student.name}’s request?`
+        }
+        confirmLabel={
+          confirm?.kind === 'drop'
+            ? 'Drop student'
+            : confirm?.kind === 'remove'
+              ? 'Remove from class'
+              : 'Decline request'
+        }
+        tone={confirm?.kind === 'drop' ? 'primary' : 'danger'}
         loading={act.isPending}
-        onConfirm={() => act.mutate({ enrollmentId: confirm.student.enrollmentId, action: confirm.kind, body: { note: note.trim() || undefined } })}
+        onConfirm={() => {
+          if (removeBlockedByFinalized) return;
+          act.mutate({ enrollmentId: confirm.student.enrollmentId, action: confirm.kind, body: { note: note.trim() || undefined } });
+        }}
       >
-        <p>{confirm?.kind === 'drop' ? 'The student loses access to this class. Their submissions, grades and attendance are kept, and you can reinstate them later.' : 'The student is told that the request was not approved.'}</p>
-        <Field label="Note" optional className="mt-3"><Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder={confirm?.kind === 'drop' ? 'e.g. Transferred to another section' : 'Reason shown to the student'} /></Field>
+        {removeBlockedByFinalized && (
+          <Alert tone="warn" className="mb-3" title="Final grades are submitted">
+            Reopen the gradebook before removing this student from the class.
+          </Alert>
+        )}
+        <p>
+          {confirm?.kind === 'drop'
+            ? 'The student loses active access to this class, but remains on your class roster and gradebook with a Dropped status so you keep their grades, submissions, and attendance. You can reinstate them later.'
+            : confirm?.kind === 'remove'
+              ? 'The student is completely removed from this class, including their roster entry, grades, submissions, and attendance records in this class. If you may need their grade later, choose Drop instead.'
+              : 'The student is told that the request was not approved.'}
+        </p>
+        <Field label="Note" optional className="mt-3">
+          <Textarea
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={300}
+            placeholder={
+              confirm?.kind === 'drop'
+                ? 'e.g. Officially dropped or transferred section'
+                : confirm?.kind === 'remove'
+                  ? 'e.g. Joined the wrong section (recorded in audit log)'
+                  : 'Reason shown to the student'
+            }
+          />
+        </Field>
       </ConfirmDialog>
     </div>
   );

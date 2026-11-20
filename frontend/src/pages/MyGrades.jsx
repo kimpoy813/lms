@@ -29,7 +29,7 @@ export default function MyGrades() {
   );
 
   const summary = useMemo(() => {
-    const totalUnits = filtered.reduce((sum, c) => sum + (Number(c.units) || 0), 0);
+    const totalUnits = Math.round(filtered.reduce((sum, c) => sum + (Number(c.units) || 0), 0) * 10000) / 10000;
     const graded = filtered.filter((c) => c.overall && typeof c.overall.percent === 'number');
     const weightSum = graded.reduce((sum, c) => sum + (Number(c.units) > 0 ? Number(c.units) : 1), 0);
     const average = weightSum > 0

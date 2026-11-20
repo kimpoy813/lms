@@ -201,7 +201,7 @@ async function teacherDashboard(user) {
   const thresholds = await riskThresholds();
   const atRisk = [];
   for (const cls of classes.slice(0, 12)) {
-    const { students } = await computeClassGrades(cls);
+    const { students } = await computeClassGrades(cls, { includeDropped: false });
     if (students.length === 0) continue;
     const ids = students.map((s) => s.student.id);
     const [attendance, missing] = await Promise.all([attendanceTotals(cls.id, ids), missingWork(cls.id, ids, now)]);

@@ -61,7 +61,7 @@ export function assessRisk({ percent, attendanceRate, missing }, thresholds) {
 /** Every enrolled student of a class with their indicators. */
 export async function classRisk(cls) {
   const thresholds = await riskThresholds();
-  const { students, periods } = await computeClassGrades(cls);
+  const { students, periods } = await computeClassGrades(cls, { includeDropped: false });
   const ids = students.map((s) => s.student.id);
   const [attendance, missing] = await Promise.all([attendanceTotals(cls.id, ids), missingWork(cls.id, ids)]);
   const rows = students.map(({ student, result }) => {

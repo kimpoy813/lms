@@ -87,12 +87,16 @@ export default function Submissions() {
                       {shown.length === 0 && <li className="px-3 py-6 text-center text-sm text-faint">No students in this group.</li>}
                       {shown.map((s) => {
                         const meta = ROSTER_STATUS[s.status] ?? ROSTER_STATUS.NOT_SUBMITTED;
+                        const dropped = s.student.enrollmentStatus === 'DROPPED';
                         return (
                           <li key={s.student.id}>
                             <button type="button" onClick={() => setParams({ student: s.student.id })} aria-current={s.student.id === studentId ? 'true' : undefined} className={cn('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left', s.student.id === studentId ? 'bg-brand-soft' : 'hover:bg-raised')}>
                               <Avatar name={s.student.name} fileId={s.student.avatarFileId} size={30} />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[13px] font-medium text-ink">{s.student.lastName}, {s.student.firstName}</span>
+                                <span className="flex items-center gap-1.5">
+                                  <span className="truncate text-[13px] font-medium text-ink">{s.student.lastName}, {s.student.firstName}</span>
+                                  {dropped && <Badge tone="warn">Dropped</Badge>}
+                                </span>
                                 <span className="flex items-center gap-1.5 text-[11px] text-faint">
                                   <span className={cn('size-1.5 rounded-full', { neutral: 'bg-line-strong', bad: 'bg-bad', info: 'bg-info', warn: 'bg-warn', ok: 'bg-ok' }[meta.tone])} aria-hidden="true" />
                                   {meta.label}{s.isLate ? ' · late' : ''}
@@ -161,7 +165,10 @@ function GradeForm({ data, invalidate, onNavigate }) {
         <div className="flex flex-wrap items-center gap-3">
           <Avatar name={student.name} fileId={student.avatarFileId} size={44} />
           <div className="min-w-0 flex-1 basis-40">
-            <p className="truncate text-lg font-semibold text-ink">{student.name}</p>
+            <p className="flex flex-wrap items-center gap-2 text-lg font-semibold text-ink">
+              <span className="truncate">{student.name}</span>
+              {student.enrollmentStatus === 'DROPPED' && <Badge tone="warn">Dropped</Badge>}
+            </p>
             <p className="text-[13px] text-faint">{student.studentNumber ?? 'No student number'} · {data.position} of {data.total}</p>
           </div>
           <Badge tone={meta.tone}>{meta.label}</Badge>
@@ -253,7 +260,7 @@ function GradeForm({ data, invalidate, onNavigate }) {
         </fieldset>
 
         <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
-          <Button variant="ghost" size="sm" icon={RotateCcw} onClick={() => setReopening(true)} disabled={readOnly}>Reopen for this student</Button>
+          <Button variant="ghost" size="sm" icon={RotateCcw} onClick={() => setReopening(true)} disabled={readOnly || student.enrollmentStatus === 'DROPPED'}>Reopen for this student</Button>
           <div className="flex flex-wrap gap-2">
             {s?.status !== 'RETURNED' && <Button variant="secondary" loading={grade.isPending && grade.variables === false} disabled={final === null || readOnly} onClick={() => grade.mutate(false)}>Save grade</Button>}
             <Button icon={s?.status === 'RETURNED' ? CheckCircle2 : Send} loading={grade.isPending && grade.variables === true} disabled={final === null || readOnly} onClick={() => grade.mutate(true)}>{s?.status === 'RETURNED' ? 'Update returned grade' : 'Save and return'}</Button>

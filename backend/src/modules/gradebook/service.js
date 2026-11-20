@@ -49,11 +49,11 @@ const isLive = (record, now) => record && !record.deletedAt && (record.status ==
 /**
  * Score entries of a class, completed with what can be derived at read time:
  * an assignment past its due date with nothing submitted, or a closed quiz with no attempt, is
- * MISSING without anybody having to mark it.
+ * MISSING without anybody having to mark it (except items due after a student dropped).
  *
  * @returns {Map<string, Map<string, object>>} studentId → (gradeItemId → entry)
  */
-export async function loadEntries(classId, periods, studentIds, db = prisma, now = new Date()) {
+export async function loadEntries(classId, periods, studentIds, db = prisma, now = new Date(), droppedAtByStudent = new Map()) {
   const items = periods.flatMap((p) => p.categories.flatMap((c) => c.items));
   const result = new Map(studentIds.map((id) => [id, new Map()]));
   if (items.length === 0 || studentIds.length === 0) return result;
@@ -77,7 +77,10 @@ export async function loadEntries(classId, periods, studentIds, db = prisma, now
   const done = new Set([...submitted.map((s) => `a:${s.assignmentId}:${s.studentId}`), ...attempted.map((a) => `q:${a.quizId}:${a.studentId}`)]);
   for (const item of [...dueAssignments, ...closedQuizzes]) {
     const key = item.assignmentId ? `a:${item.assignmentId}` : `q:${item.quizId}`;
+    const itemDeadline = item.assignment ? item.assignment.dueAt : item.quiz.availableUntil;
     for (const studentId of studentIds) {
+      const droppedAt = droppedAtByStudent.get(studentId);
+      if (droppedAt && itemDeadline && itemDeadline > droppedAt) continue;
       const mine = result.get(studentId);
       const existing = mine.get(item.id);
       if (existing && existing.status !== 'UNGRADED') continue;
@@ -121,25 +124,43 @@ const toComputePeriods = (periods) =>
 
 /**
  * Everything needed to show or export a class's grades.
+ * Dropped students remain included by default so teachers keep and can finalize their grades.
+ * Pass `includeDropped: false` for active-only views (e.g. class rankings, analytics, risk).
  * @returns {{ periods, settings, structureErrors, students: Array<{ student, entries: Map, result }> }}
  */
-export async function computeClassGrades(cls, { studentIds, db = prisma } = {}) {
+export async function computeClassGrades(cls, { studentIds, includeDropped = true, db = prisma } = {}) {
   const periods = await loadStructure(cls.id, db);
   const settings = await gradingSettings(cls, db);
   const enrollments = await db.enrollment.findMany({
-    where: { classId: cls.id, status: 'ENROLLED', ...(studentIds ? { studentId: { in: studentIds } } : {}) },
-    select: { student: { select: { id: true, firstName: true, lastName: true, email: true, studentProfile: { select: { studentNumber: true } } } } },
+    where: { classId: cls.id, status: { in: includeDropped ? ['ENROLLED', 'DROPPED'] : ['ENROLLED'] }, ...(studentIds ? { studentId: { in: studentIds } } : {}) },
+    select: {
+      status: true,
+      droppedAt: true,
+      note: true,
+      student: { select: { id: true, firstName: true, lastName: true, email: true, studentProfile: { select: { studentNumber: true } } } },
+    },
     orderBy: [{ student: { lastName: 'asc' } }, { student: { firstName: 'asc' } }],
   });
   const ids = enrollments.map((e) => e.student.id);
+  const droppedAtByStudent = new Map(enrollments.filter((e) => e.status === 'DROPPED' && e.droppedAt).map((e) => [e.student.id, e.droppedAt]));
   const [entries, overrides, attendance] = await Promise.all([
-    loadEntries(cls.id, periods, ids, db),
+    loadEntries(cls.id, periods, ids, db, new Date(), droppedAtByStudent),
     loadOverrides(cls.id, ids, db),
     loadAttendanceTotals(cls.id, periods, ids, db),
   ]);
   const computePeriods = toComputePeriods(periods);
-  const students = enrollments.map(({ student }) => ({
-    student: { id: student.id, name: fullName(student), firstName: student.firstName, lastName: student.lastName, email: student.email, studentNumber: student.studentProfile?.studentNumber ?? null },
+  const students = enrollments.map(({ status, droppedAt, note, student }) => ({
+    student: {
+      id: student.id,
+      name: fullName(student),
+      firstName: student.firstName,
+      lastName: student.lastName,
+      email: student.email,
+      studentNumber: student.studentProfile?.studentNumber ?? null,
+      enrollmentStatus: status,
+      droppedAt: droppedAt ?? null,
+      droppedNote: note ?? null,
+    },
     entries: entries.get(student.id),
     result: computeStudentGrades({
       periods: computePeriods, entries: entries.get(student.id), settings, attendance: attendance.get(student.id) ?? null, overrides: overrides.get(student.id) ?? [],

@@ -1,10 +1,11 @@
-// Administration → Enrolment: find a student, then enrol, transfer or drop.
+// Administration → Enrolment: find a student, then enrol, transfer, drop or remove.
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRightLeft, Plus, Search, UserMinus, Users } from 'lucide-react';
+import { ArrowRightLeft, Plus, RotateCcw, Search, UserMinus, Users, UserX } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { Alert, Avatar, Badge, Button, Card, EmptyState, Field, Modal, PageHeader, Pagination, QueryState, SearchInput, Select, Textarea, useDebounced } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
+import { formatDate } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import { classLabel } from '../classes/useClass.js';
 
@@ -47,16 +48,36 @@ export default function AdminEnrollments() {
                     </div>
                     <Button size="sm" variant="secondary" icon={Plus} disabled={s.status !== 'ACTIVE'} title={s.status !== 'ACTIVE' ? 'Only active accounts can be enrolled' : undefined} onClick={() => setDialog({ type: 'enrol', student: s })}>Enrol in a class</Button>
                   </div>
-                  {s.classes.length === 0 ? <p className="mt-3 text-sm text-faint">Not enrolled in any class.</p> : (
-                    <ul className="mt-3 divide-y divide-line rounded-xl border border-line">
-                      {s.classes.map((c) => (
-                        <li key={c.enrollmentId} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
-                          <Link to={`/classes/${c.classId}/people`} className="min-w-0 flex-1 basis-48 truncate"><span className="font-medium text-ink hover:text-brand">{c.label}</span> <span className="text-faint">{c.title}</span></Link>
-                          <Button size="sm" variant="ghost" icon={ArrowRightLeft} onClick={() => setDialog({ type: 'transfer', student: s, from: c })}>Transfer</Button>
-                          <Button size="sm" variant="ghost" icon={UserMinus} className="text-bad hover:text-bad" onClick={() => setDialog({ type: 'drop', student: s, from: c })}>Drop</Button>
-                        </li>
-                      ))}
-                    </ul>
+                  {s.classes.length === 0 && (s.droppedClasses?.length ?? 0) === 0 ? <p className="mt-3 text-sm text-faint">Not enrolled in any class.</p> : (
+                    <div className="mt-3 space-y-2">
+                      {s.classes.length > 0 && (
+                        <ul className="divide-y divide-line rounded-xl border border-line">
+                          {s.classes.map((c) => (
+                            <li key={c.enrollmentId} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm">
+                              <Link to={`/classes/${c.classId}/people`} className="min-w-0 flex-1 basis-48 truncate"><span className="font-medium text-ink hover:text-brand">{c.label}</span> <span className="text-faint">{c.title}</span></Link>
+                              <Button size="sm" variant="ghost" icon={ArrowRightLeft} onClick={() => setDialog({ type: 'transfer', student: s, from: c })}>Transfer</Button>
+                              <Button size="sm" variant="ghost" icon={UserMinus} onClick={() => setDialog({ type: 'drop', student: s, from: c })}>Drop</Button>
+                              <Button size="sm" variant="ghost" icon={UserX} className="text-bad hover:text-bad" onClick={() => setDialog({ type: 'remove', student: s, from: c })}>Remove</Button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {(s.droppedClasses?.length ?? 0) > 0 && (
+                        <ul className="divide-y divide-line rounded-xl border border-warn/30 bg-warn-soft/20">
+                          {s.droppedClasses.map((c) => (
+                            <li key={c.enrollmentId} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm">
+                              <div className="min-w-0 flex-1 basis-48 truncate">
+                                <Link to={`/classes/${c.classId}/gradebook?student=${s.id}`} className="font-medium text-ink hover:text-brand">{c.label}</Link>
+                                <span className="ml-1.5 text-faint">{c.title}</span>
+                                <Badge tone="warn" className="ml-2">Dropped{c.droppedAt ? ` ${formatDate(c.droppedAt)}` : ''}</Badge>
+                              </div>
+                              <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => setDialog({ type: 'reinstate', student: s, from: c })}>Reinstate</Button>
+                              <Button size="sm" variant="ghost" icon={UserX} className="text-bad hover:text-bad" onClick={() => setDialog({ type: 'remove', student: s, from: c })}>Remove</Button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </Card>
               </li>
@@ -145,30 +166,48 @@ function EnrolmentDialog({ type, student, from, classes, onClose }) {
   const [error, setError] = useState(null);
   const taken = new Set(student.classes.map((c) => c.classId));
   const choices = classes.filter((c) => !taken.has(c.id));
+  const needsClassChoice = type === 'enrol' || type === 'transfer';
   const action = useAction(() => {
     if (type === 'enrol') return api.post('/admin/enrollments', { classId, studentId: student.id });
     if (type === 'transfer') return api.post('/admin/enrollments/transfer', { studentId: student.id, fromClassId: from.classId, toClassId: classId, note: note.trim() || undefined });
+    if (type === 'reinstate') return api.post(`/classes/${from.classId}/people/${from.enrollmentId}/reinstate`);
+    if (type === 'remove') return api.post(`/classes/${from.classId}/people/${from.enrollmentId}/remove`, { note: note.trim() || undefined });
     return api.post(`/classes/${from.classId}/people/${from.enrollmentId}/drop`, { note: note.trim() || undefined });
   }, {
     invalidate: [['admin', 'students'], ['admin', 'users'], ['class'], ['dashboard']],
-    success: (r) => r?.message ?? (type === 'enrol' ? `${student.name} was enrolled.` : type === 'drop' ? `${student.name} was dropped from ${from.label}.` : 'Transferred.'),
+    success: (r) => r?.message ?? ({
+      enrol: `${student.name} was enrolled.`,
+      drop: `${student.name} was dropped from ${from?.label} (kept in gradebook).`,
+      remove: `${student.name} was removed from ${from?.label}.`,
+      reinstate: `${student.name} was reinstated in ${from?.label}.`,
+    }[type] ?? 'Transferred.'),
     onSuccess: onClose,
     onError: (err) => { setError(err.fields ? Object.values(err.fields)[0] : err.message); return true; },
   });
-  const title = { enrol: `Enrol ${student.name}`, transfer: `Transfer ${student.name}`, drop: `Drop ${student.name} from ${from?.label}?` }[type];
+  const title = {
+    enrol: `Enrol ${student.name}`,
+    transfer: `Transfer ${student.name}`,
+    drop: `Drop ${student.name} from ${from?.label}?`,
+    remove: `Remove ${student.name} from ${from?.label}?`,
+    reinstate: `Reinstate ${student.name} in ${from?.label}?`,
+  }[type];
   return (
     <Modal open onClose={onClose} size="sm" title={title}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant={type === 'drop' ? 'danger' : 'primary'} loading={action.isPending} disabled={type !== 'drop' && !classId} onClick={() => { setError(null); action.mutate(); }}>{{ enrol: 'Enrol', transfer: 'Transfer', drop: 'Drop student' }[type]}</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant={type === 'remove' ? 'danger' : 'primary'} loading={action.isPending} disabled={needsClassChoice && !classId} onClick={() => { setError(null); action.mutate(); }}>{{ enrol: 'Enrol', transfer: 'Transfer', drop: 'Drop student', remove: 'Remove from class', reinstate: 'Reinstate' }[type]}</Button></>}>
       <div className="space-y-4">
         {error && <Alert tone="bad">{error}</Alert>}
         {type === 'transfer' && <p className="text-sm text-soft">The student leaves <strong className="text-ink">{from.label}</strong> and joins the class you choose. Scores already recorded stay with the old class; they are not copied.</p>}
-        {type === 'drop' && <p className="text-sm text-soft">The student loses access to the class. Their submissions, scores and attendance are kept, and they can be reinstated from the class list.</p>}
-        {type !== 'drop' && (
+        {type === 'drop' && <p className="text-sm text-soft">The student loses active access to the class, but remains on the class roster and gradebook so their grades, submissions, and attendance stay available.</p>}
+        {type === 'remove' && <p className="text-sm text-soft">The student is completely removed from <strong className="text-ink">{from.label}</strong>, including their roster entry, grades, submissions, and attendance records in this class. If you need their grade later, choose Drop instead.</p>}
+        {type === 'reinstate' && <p className="text-sm text-soft">Restores active access for <strong className="text-ink">{student.name}</strong> in <strong className="text-ink">{from.label}</strong> with all kept grades and records.</p>}
+        {needsClassChoice && (
           <Field label={type === 'transfer' ? 'Transfer to' : 'Class'} hint={choices.length === 0 ? 'There is no other active class.' : undefined}>
             <Select value={classId} onChange={(e) => setClassId(e.target.value)}><option value="">Choose a class…</option>{choices.map((c) => <option key={c.id} value={c.id}>{classLabel(c)} — {c.teacher?.name}</option>)}</Select>
           </Field>
         )}
-        {type !== 'enrol' && <Field label="Note" optional hint="Kept with the enrolment record."><Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} /></Field>}
+        {(type === 'transfer' || type === 'drop' || type === 'remove') && (
+          <Field label="Note" optional hint={type === 'remove' ? 'Recorded in the audit log.' : 'Kept with the enrolment record.'}><Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} /></Field>
+        )}
       </div>
     </Modal>
   );

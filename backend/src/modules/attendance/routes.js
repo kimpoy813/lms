@@ -518,7 +518,7 @@ attendanceRouter.put('/sessions/:sessionId/records', validate({ params: sessionP
   if (ids.length !== records.length) throw fieldErrors({ records: 'A student appears more than once.' });
 
   const [enrolled, existingRows] = await Promise.all([
-    prisma.enrollment.findMany({ where: { classId: session.classId, studentId: { in: ids }, status: 'ENROLLED' }, select: { studentId: true } }),
+    prisma.enrollment.findMany({ where: { classId: session.classId, studentId: { in: ids }, status: { in: ['ENROLLED', 'DROPPED'] } }, select: { studentId: true } }),
     prisma.attendanceRecord.findMany({ where: { sessionId: session.id, studentId: { in: ids } } }),
   ]);
   const enrolledIds = new Set(enrolled.map((e) => e.studentId));
@@ -872,9 +872,11 @@ classAttendanceRouter.get('/export', validate({ params: classParams, query: z.ob
   // A PDF page fits up to ~22 daily columns cleanly in landscape (e.g. a monthly SF2 register);
   // longer whole-term exports carry totals in PDF while spreadsheets carry every session.
   const perSession = format !== 'pdf' || summary.sessions.length <= (month ? 22 : 10);
+  const hasDropped = summary.students.some((s) => s.enrollmentStatus === 'DROPPED');
   const columns = [
     { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.2 },
     { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.3 },
+    ...(hasDropped ? [{ header: 'Status', value: (s) => (s.enrollmentStatus === 'DROPPED' ? 'Dropped' : 'Enrolled'), width: 11, pdfWidth: 0.9 }] : []),
     ...(perSession
       ? summary.sessions.map((session) => ({
           header: month ? session.date.slice(8) : `${session.date.slice(5)} ${timeKey(session.startTime, tz)}`,
