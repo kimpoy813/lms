@@ -44,14 +44,14 @@ export default function Resources() {
               <section key={g.title}>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-faint">{g.title}</h2>
                 <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                  {g.items.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} modules={modules.data ?? []} showPlacement={Boolean(r.lesson)} />)}
+                  {g.items.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} modules={modules.data ?? []} showPlacement={Boolean(r.lesson)} />)}
                 </ul>
               </section>
             ))}
           </div>
         )}
       </QueryState>
-      {adding && <ResourceDialog classId={cls.id} modules={modules.data ?? []} onClose={() => setAdding(false)} />}
+      {adding && <ResourceDialog classId={cls.id} teacherId={cls.teacher?.id} modules={modules.data ?? []} onClose={() => setAdding(false)} />}
     </>
   );
 }

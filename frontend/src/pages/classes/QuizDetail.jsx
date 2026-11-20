@@ -1,8 +1,9 @@
 // One quiz. Teachers build it here (questions, points, random pools); students start or resume it.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarClock, CheckCircle2, ChevronLeft, Clock, Dices, Download, FileQuestion, FileUp, Library, Lock, Pencil, PlayCircle, Plus, Repeat, Settings2, ShieldAlert, Timer, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarClock, CheckCircle2, ChevronLeft, Clock, Dices, Download, FileQuestion, FileUp, Library, Lock, Pencil, PlayCircle, Plus, RefreshCw, Repeat, Settings2, Share2, ShieldAlert, Timer, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { PostToClassesModal } from '../../components/ClassTargets.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
@@ -190,11 +191,34 @@ function StudentView({ quiz }) {
   );
 }
 
+function readQuizSyncTargets(quizId) {
+  if (typeof window === 'undefined' || !window.sessionStorage) return [];
+  try {
+    const raw = window.sessionStorage.getItem(`edusphere.quizSync.${quizId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function clearQuizSyncTargets(quizId) {
+  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  try {
+    window.sessionStorage.removeItem(`edusphere.quizSync.${quizId}`);
+  } catch {
+    /* ignore */
+  }
+}
+
 // ── Teacher ──────────────────────────────────────────────────────────────────
 function Builder({ quiz }) {
   const { cls, base } = useClass();
   const client = useQueryClient();
-  const [dialog, setDialog] = useState(null); // 'settings' | 'new' | 'bank' | 'pools' | 'import' | { edit: question }
+  const [dialog, setDialog] = useState(null); // 'settings' | 'post' | 'new' | 'bank' | 'pools' | 'import' | { edit: question }
+  const [linkedCopies, setLinkedCopies] = useState(() => readQuizSyncTargets(quiz.id));
+  const [selectedSyncIds, setSelectedSyncIds] = useState(() => readQuizSyncTargets(quiz.id).map((c) => c.id));
   const key = ['class', cls.id, 'quiz', quiz.id];
   const invalidate = [['class', cls.id, 'quizzes'], key, ['class', cls.id, 'gradebook'], ['dashboard']];
   const readOnly = cls.status === 'ARCHIVED';
@@ -202,7 +226,48 @@ function Builder({ quiz }) {
   const frozen = quiz.locked || readOnly;
 
   const saveItems = useAction((items) => api.put(`/quizzes/${quiz.id}/questions`, { items }), { invalidate, onSuccess: (data) => client.setQueryData(key, data) });
-  const publish = useAction((status) => api.patch(`/quizzes/${quiz.id}`, { status }), { invalidate, success: (_, status) => (status === 'PUBLISHED' ? 'Quiz published. Students have been notified.' : 'Quiz moved back to draft.') });
+  const syncLinked = useAction(({ publishAfter = false } = {}) => api.post(`/quizzes/${quiz.id}/sync`, { targetQuizIds: selectedSyncIds, publish: publishAfter }), {
+    invalidate,
+    success: (r, { publishAfter }) => {
+      for (const item of r.synced ?? []) client.invalidateQueries({ queryKey: ['class', item.classId] });
+      if (publishAfter) return `Synced and published to ${plural((r.synced ?? []).length, 'other class', 'other classes')}.`;
+      return `Questions and settings synced to ${plural((r.synced ?? []).length, 'other class', 'other classes')}.`;
+    },
+    onSuccess: (_, { publishAfter }) => {
+      if (publishAfter) {
+        clearQuizSyncTargets(quiz.id);
+        setLinkedCopies([]);
+        setSelectedSyncIds([]);
+      }
+    },
+  });
+  const publish = useAction(
+    async (status) => {
+      const updated = await api.patch(`/quizzes/${quiz.id}`, { status });
+      if (status === 'PUBLISHED' && selectedSyncIds.length > 0) {
+        const synced = await api.post(`/quizzes/${quiz.id}/sync`, { targetQuizIds: selectedSyncIds, publish: true });
+        for (const item of synced.synced ?? []) client.invalidateQueries({ queryKey: ['class', item.classId] });
+        return { updated, syncedCount: (synced.synced ?? []).length };
+      }
+      return { updated, syncedCount: 0 };
+    },
+    {
+      invalidate,
+      success: (res, status) => {
+        if (status !== 'PUBLISHED') return 'Quiz moved back to draft.';
+        return res.syncedCount > 0
+          ? `Quiz published to ${res.syncedCount + 1} classes. Students have been notified.`
+          : 'Quiz published. Students have been notified.';
+      },
+      onSuccess: (res, status) => {
+        if (status === 'PUBLISHED' && res.syncedCount > 0) {
+          clearQuizSyncTargets(quiz.id);
+          setLinkedCopies([]);
+          setSelectedSyncIds([]);
+        }
+      },
+    },
+  );
   // The questions come in the order in which students get them, and are saved in that order.
   const items = quiz.questions.map((q) => ({ questionId: q.id, points: q.points }));
   const change = (fn) => saveItems.mutate(fn(items));
@@ -251,6 +316,7 @@ function Builder({ quiz }) {
               <p className="mt-1 text-sm text-soft">{plural(quiz.questionCount, 'question')} · {formatScore(quiz.totalPoints)} points · {quiz.timeLimitMinutes ? `${quiz.timeLimitMinutes} min` : 'no time limit'} · {windowText(quiz)}</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>
               {!readOnly && <Button variant="secondary" icon={Settings2} onClick={() => setDialog('settings')}>Settings</Button>}
               {quiz.status === 'DRAFT' && !readOnly && <Button icon={CheckCircle2} loading={publish.isPending} disabled={empty} title={empty ? 'Add at least one question first' : undefined} onClick={() => publish.mutate('PUBLISHED')}>Publish</Button>}
               {quiz.status !== 'DRAFT' && <Button icon={BarChart3} to={`${base}/quizzes/${quiz.id}/results`}>Results{quiz.attemptCount > 0 ? ` (${quiz.attemptCount})` : ''}</Button>}
@@ -258,6 +324,47 @@ function Builder({ quiz }) {
           </div>
           {quiz.instructionsHtml && <div className="mt-4 border-t border-line pt-4"><RichText html={quiz.instructionsHtml} className="text-sm" /></div>}
         </Card>
+
+        {linkedCopies.length > 0 && (
+          <Alert
+            tone="info"
+            title={`Drafts also created in ${plural(linkedCopies.length, 'other class', 'other classes')}`}
+          >
+            <p className="text-sm">When you finish adding or importing questions here, choose which classes to update{quiz.status === 'DRAFT' ? ' (clicking Publish above also syncs and publishes the checked classes)' : ''}:</p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {linkedCopies.map((copy) => {
+                const checked = selectedSyncIds.includes(copy.id);
+                return (
+                  <label key={copy.id} className={cn('inline-flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium', checked ? 'border-brand bg-surface text-ink' : 'border-line bg-surface/60 text-soft')}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setSelectedSyncIds((prev) => (e.target.checked ? [...prev, copy.id] : prev.filter((x) => x !== copy.id)))}
+                      className="size-3.5 rounded accent-[var(--brand-fill)]"
+                    />
+                    {copy.classLabel}
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" icon={RefreshCw} loading={syncLinked.isPending} disabled={selectedSyncIds.length === 0 || empty} onClick={() => syncLinked.mutate({ publishAfter: false })}>
+                Sync questions now
+              </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearQuizSyncTargets(quiz.id);
+                  setLinkedCopies([]);
+                  setSelectedSyncIds([]);
+                }}
+                className="text-xs font-medium text-soft hover:text-ink hover:underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </Alert>
+        )}
 
         {quiz.locked && <Alert tone="info" title="Students have started this quiz">The questions can no longer change, so that everyone is graded on the same test. To make a new version, duplicate the quiz from the quiz list.</Alert>}
         {quiz.status === 'DRAFT' && empty && <Alert tone="warn" title="This quiz has no questions yet">Add questions below. A quiz can be published once it has at least one.</Alert>}
@@ -399,6 +506,18 @@ function Builder({ quiz }) {
       </div>
 
       {dialog === 'settings' && <QuizDialog quiz={quiz} onClose={() => setDialog(null)} />}
+      <PostToClassesModal
+        open={dialog === 'post'}
+        onClose={() => setDialog(null)}
+        title={`Post “${quiz.title}” to other classes`}
+        excludeClassId={cls.id}
+        teacherId={cls.teacher?.id}
+        canPublish={!empty}
+        publishDisabledReason="Add at least one question before publishing immediately."
+        defaultStatus={quiz.status === 'PUBLISHED' && !empty ? 'PUBLISHED' : 'DRAFT'}
+        hint="Copies all questions, random pools, settings, dates, and matching modules or gradebook categories to each selected class."
+        onSubmit={({ targetClassIds, status }) => api.post(`/quizzes/${quiz.id}/copy`, { targetClassIds, status })}
+      />
       {dialog === 'new' && <QuestionEditor parts={partNames} onClose={() => setDialog(null)} onSave={async (question) => { client.setQueryData(key, await api.post(`/quizzes/${quiz.id}/questions`, { question })); client.invalidateQueries({ queryKey: ['class', cls.id, 'quizzes'] }); toast.success('Question added.'); }} />}
       {dialog?.edit && <QuestionEditor question={dialog.edit} parts={partNames} onClose={() => setDialog(null)} onSave={async (question) => { await api.put(`/question-banks/questions/${dialog.edit.id}`, question); await client.invalidateQueries({ queryKey: key }); toast.success('Question saved.'); }} />}
       {dialog === 'bank' && <BankPicker quiz={quiz} onClose={() => setDialog(null)} onAdd={(picked) => { change((list) => [...list, ...picked.map((q) => ({ questionId: q.id, points: q.points }))]); setDialog(null); }} />}

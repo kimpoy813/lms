@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, Download, Plus, Save, Sparkles, Trash2, Wand2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { AlsoPostToClasses } from '../../components/ClassTargets.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
@@ -162,7 +163,7 @@ function Review({ draft, onBack, configured }) {
         )}
       </div>
 
-      {dialog === 'approve' && <ApproveDialog draft={draft} classes={classes.data ?? []} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} lessons={c.lessons.length} onClose={() => setDialog(null)} onDone={(r) => { setDirty(false); client.invalidateQueries({ queryKey: ['ai'] }); client.invalidateQueries({ queryKey: ['class', r.classId] }); navigate(`/classes/${r.classId}/modules/${r.moduleId}`); }} />}
+      {dialog === 'approve' && <ApproveDialog draft={draft} classes={classes.data ?? []} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} lessons={c.lessons.length} onClose={() => setDialog(null)} onDone={(r) => { setDirty(false); client.invalidateQueries({ queryKey: ['ai'] }); client.invalidateQueries({ queryKey: ['class', r.classId] }); for (const copy of r.createdCopies ?? []) client.invalidateQueries({ queryKey: ['class', copy.classId] }); navigate(`/classes/${r.classId}/modules/${r.moduleId}`); }} />}
       {dialog?.rewrite !== undefined && <RewriteDialog draftId={draft.id} index={dialog.rewrite} lesson={c.lessons[dialog.rewrite]} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} onClose={() => setDialog(null)} onAccept={(lesson) => { setLesson(dialog.rewrite, { ...lesson, rewriteKey: Date.now() }); setDialog(null); }} />}
       <ConfirmDialog open={dialog === 'discard'} onClose={() => setDialog(null)} onConfirm={() => discard.mutate()} loading={discard.isPending} title="Discard this draft?" confirmLabel="Discard">The draft is marked as discarded and nothing is added to any class.</ConfirmDialog>
     </>
@@ -171,16 +172,31 @@ function Review({ draft, onBack, configured }) {
 
 function ApproveDialog({ draft, classes, dirty, saveDraft, lessons, onClose, onDone }) {
   const [classId, setClassId] = useState(draft.request.classId ?? '');
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [confirmed, setConfirmed] = useState(false);
+  const extraClassIds = targetClassIds.filter((id) => id && id !== classId);
   const approve = useAction(async () => {
     if (dirty) await saveDraft();
-    return api.post(`/ai/generated/${draft.id}/approve`, { classId, confirmReviewed: true });
-  }, { success: 'Module created as a draft. Publish it when you are ready.', onSuccess: onDone });
+    return api.post(`/ai/generated/${draft.id}/approve`, { classId, targetClassIds: extraClassIds, confirmReviewed: true });
+  }, {
+    success: extraClassIds.length > 0
+      ? `Draft module created in ${extraClassIds.length + 1} classes. Publish each when you are ready.`
+      : 'Module created as a draft. Publish it when you are ready.',
+    onSuccess: onDone,
+  });
   return (
-    <Modal open onClose={onClose} title="Approve this draft" size="sm" footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button icon={Check} loading={approve.isPending} disabled={!classId || !confirmed} onClick={() => approve.mutate()}>Create the module</Button></>}>
+    <Modal open onClose={onClose} title="Approve this draft" size="md" footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button icon={Check} loading={approve.isPending} disabled={!classId || !confirmed} onClick={() => approve.mutate()}>Create the module</Button></>}>
       <div className="space-y-4">
         <p className="text-sm text-soft">The {plural(lessons, 'lesson')} become a new module in the class you choose. The module is <strong className="text-ink">not published</strong>: students see it only after you publish it from the class.</p>
         <Field label="Add to class"><Select value={classId} onChange={(e) => setClassId(e.target.value)}><option value="">Choose a class…</option>{classes.map((c) => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}</Select></Field>
+        {classId && (
+          <AlsoPostToClasses
+            excludeClassId={classId}
+            value={extraClassIds}
+            onChange={setTargetClassIds}
+            hint="Also adds this draft module to the selected classes."
+          />
+        )}
         <Checkbox checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} label="I have read and checked this content" description="I take responsibility for its accuracy and suitability for my students." />
       </div>
     </Modal>

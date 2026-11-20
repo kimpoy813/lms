@@ -7,6 +7,7 @@ import { BookOpenCheck, Bot, ClipboardList, Code2, Copy, FileQuestion, Layers, S
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { AlsoPostToClasses } from '../components/ClassTargets.jsx';
 import { FileUpload } from '../components/Files.jsx';
 import RichText from '../components/RichText.jsx';
 import { toast } from '../components/toast.jsx';
@@ -292,12 +293,15 @@ function QuestionsTool({ ready, onDone }) {
 // ── Assignment ───────────────────────────────────────────────────────────────
 function AssignmentTool({ ready, onDone }) {
   const navigate = useNavigate();
+  const client = useQueryClient();
   const classes = useTeachingClasses();
   const material = useMaterial();
   const [v, setV] = useState({ moduleId: '', topic: '', details: '', points: 100, withRubric: true });
   const [draft, setDraft] = useState(null);
   const [classId, setClassId] = useState('');
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [error, setError] = useState(null);
+  const extraClassIds = targetClassIds.filter((id) => id && id !== classId);
   const generate = useAction(() => api.post('/ai/assignment', { moduleId: v.moduleId || undefined, topic: v.topic.trim() || undefined, details: v.details.trim() || undefined, points: Number(v.points) || 100, withRubric: v.withRubric }), {
     // A draft made from a module belongs to that module's class unless the teacher says otherwise.
     onSuccess: (r) => { onDone(); setDraft(r); if (r.source?.classId) setClassId(r.source.classId); },
@@ -309,10 +313,17 @@ function AssignmentTool({ ready, onDone }) {
       title: draft.title, instructionsHtml: draft.instructionsHtml, points: rubric?.totalPoints ?? draft.points, rubricId: rubric?.id ?? null, status: 'DRAFT',
       // Listed with the module it was made from, when it stays in that module's class.
       ...(draft.source?.classId === classId ? { moduleId: draft.source.moduleId } : {}),
+      targetClassIds: extraClassIds,
     });
   }, {
-    invalidate: [['rubrics'], ['class', classId]], success: 'Saved as a draft assignment. Set the dates and publish it when you are ready.',
-    onSuccess: (a) => navigate(`/classes/${classId}/assignments/${a.id}`),
+    invalidate: [['rubrics'], ['class', classId]],
+    success: extraClassIds.length > 0
+      ? `Saved as a draft assignment in ${extraClassIds.length + 1} classes.`
+      : 'Saved as a draft assignment. Set the dates and publish it when you are ready.',
+    onSuccess: (a) => {
+      for (const id of extraClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      navigate(`/classes/${classId}/assignments/${a.id}`);
+    },
   });
   return (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
@@ -349,6 +360,14 @@ function AssignmentTool({ ready, onDone }) {
               <Field label="Save as a draft assignment in" className="min-w-0 flex-1 basis-56"><Select value={classId} onChange={(e) => setClassId(e.target.value)}><option value="">Choose a class…</option>{(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}</Select></Field>
               <Button loading={create.isPending} disabled={!classId} onClick={() => create.mutate()}>Save draft</Button>
             </div>
+            {classId && (
+              <AlsoPostToClasses
+                excludeClassId={classId}
+                value={extraClassIds}
+                onChange={setTargetClassIds}
+                hint="Saves this draft assignment and rubric to the checked classes too."
+              />
+            )}
           </div>
         )}
       </Card>

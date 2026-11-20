@@ -23,6 +23,7 @@ import { audit } from '../../services/audit.js';
 import { getSetting, getTimeZone } from '../../services/settings.js';
 import { readStoredFile } from '../../services/storage.js';
 import { classLabel, requireWritableClassManager } from '../classes/access.js';
+import { resolveTargetClasses } from '../classes/distribute.js';
 import { LESSON_KINDS } from '../content/routes.js';
 import { LANGUAGES } from '../../services/codeRunner.js';
 
@@ -326,31 +327,80 @@ aiRouter.post(
   },
 );
 
-/** Review step: turn the approved draft into an ordinary (unpublished) module of a class. */
-aiRouter.post('/generated/:generatedId/approve', validate({ params: idParams('generatedId'), body: z.object({ classId: zId, confirmReviewed: z.literal(true, { error: 'Confirm that you have reviewed the content.' }) }) }), async (req, res) => {
-  const g = await loadGenerated(req);
-  if (g.reviewStatus === 'APPROVED') throw conflict('This draft was already approved.', 'ALREADY_REVIEWED');
-  const { cls } = await requireWritableClassManager(req.user, req.valid.body.classId);
-  const content = g.generatedContent;
-  const moduleRow = await prisma.$transaction(async (tx) => {
-    const last = await tx.learningModule.aggregate({ where: { classId: cls.id, deletedAt: null }, _max: { position: true } });
-    const mod = await tx.learningModule.create({
-      data: {
-        classId: cls.id, title: plainText(content.title, 200), description: content.overview || null, objectives: content.objectives ?? [], position: (last._max.position ?? -1) + 1,
-        status: 'DRAFT', source: 'AI', createdById: req.user.id,
-        lessons: { create: (content.lessons ?? []).map((l, position) => ({ title: plainText(l.title, 200), contentHtml: sanitizeRichText(l.contentHtml ?? ''), kind: LESSON_KINDS.includes(l.kind) ? l.kind : 'LESSON', estimatedMinutes: l.estimatedMinutes ?? null, position, status: 'PUBLISHED' })) },
-      },
+/** Review step: turn the approved draft into an ordinary (unpublished) module of one or more classes. */
+aiRouter.post(
+  '/generated/:generatedId/approve',
+  validate({
+    params: idParams('generatedId'),
+    body: z.object({
+      classId: zId,
+      targetClassIds: z.array(zId).max(50).default([]),
+      confirmReviewed: z.literal(true, { error: 'Confirm that you have reviewed the content.' }),
+    }),
+  }),
+  async (req, res) => {
+    const g = await loadGenerated(req);
+    if (g.reviewStatus === 'APPROVED') throw conflict('This draft was already approved.', 'ALREADY_REVIEWED');
+    const { cls } = await requireWritableClassManager(req.user, req.valid.body.classId);
+    const extraTargets = await resolveTargetClasses(req.user, cls.id, req.valid.body.targetClassIds);
+    const content = g.generatedContent;
+    const lessonRows = (content.lessons ?? []).map((l, position) => ({
+      title: plainText(l.title, 200),
+      contentHtml: sanitizeRichText(l.contentHtml ?? ''),
+      kind: LESSON_KINDS.includes(l.kind) ? l.kind : 'LESSON',
+      estimatedMinutes: l.estimatedMinutes ?? null,
+      position,
+      status: 'PUBLISHED',
+    }));
+    const activityHtml = (content.activities ?? []).length > 0
+      ? sanitizeRichText(content.activities.map((a) => `<h4>${escape(a.title)}</h4><p>${escape(a.instructions).replace(/\n+/g, '</p><p>')}</p>`).join(''))
+      : null;
+
+    const { moduleRow, copies } = await prisma.$transaction(async (tx) => {
+      const createFor = async (targetClassId) => {
+        const last = await tx.learningModule.aggregate({ where: { classId: targetClassId, deletedAt: null }, _max: { position: true } });
+        const mod = await tx.learningModule.create({
+          data: {
+            classId: targetClassId,
+            title: plainText(content.title, 200),
+            description: content.overview || null,
+            objectives: content.objectives ?? [],
+            position: (last._max.position ?? -1) + 1,
+            status: 'DRAFT',
+            source: 'AI',
+            createdById: req.user.id,
+            lessons: { create: lessonRows },
+          },
+        });
+        if (activityHtml) {
+          await tx.lesson.create({
+            data: { moduleId: mod.id, title: 'Practice activities', contentHtml: activityHtml, kind: 'ACTIVITY', position: lessonRows.length, status: 'PUBLISHED' },
+          });
+        }
+        return mod;
+      };
+      const primary = await createFor(cls.id);
+      const extra = [];
+      for (const target of extraTargets) {
+        extra.push({ mod: await createFor(target.cls.id), cls: target.cls });
+      }
+      await tx.aIGeneratedModule.update({ where: { id: g.id }, data: { reviewStatus: 'APPROVED', reviewedById: req.user.id, reviewedAt: new Date(), moduleId: primary.id } });
+      return { moduleRow: primary, copies: extra };
     });
-    if ((content.activities ?? []).length > 0) {
-      const html = content.activities.map((a) => `<h4>${escape(a.title)}</h4><p>${escape(a.instructions).replace(/\n+/g, '</p><p>')}</p>`).join('');
-      await tx.lesson.create({ data: { moduleId: mod.id, title: 'Practice activities', contentHtml: sanitizeRichText(html), kind: 'ACTIVITY', position: (content.lessons ?? []).length, status: 'PUBLISHED' } });
+
+    await audit(req, { action: 'ai.module.approve', entityType: 'LearningModule', entityId: moduleRow.id, classId: cls.id, summary: `Approved an AI-generated draft as the module "${moduleRow.title}" (unpublished)` });
+    for (const c of copies) {
+      await audit(req, { action: 'ai.module.approve', entityType: 'LearningModule', entityId: c.mod.id, classId: c.cls.id, summary: `Approved an AI-generated draft as the module "${c.mod.title}" (unpublished)` });
     }
-    await tx.aIGeneratedModule.update({ where: { id: g.id }, data: { reviewStatus: 'APPROVED', reviewedById: req.user.id, reviewedAt: new Date(), moduleId: mod.id } });
-    return mod;
-  });
-  await audit(req, { action: 'ai.module.approve', entityType: 'LearningModule', entityId: moduleRow.id, classId: cls.id, summary: `Approved an AI-generated draft as the module "${moduleRow.title}" (unpublished)` });
-  created(res, { moduleId: moduleRow.id, classId: cls.id, status: moduleRow.status, assessmentQuestions: (content.assessment ?? []).length });
-});
+    created(res, {
+      moduleId: moduleRow.id,
+      classId: cls.id,
+      status: moduleRow.status,
+      assessmentQuestions: (content.assessment ?? []).length,
+      ...(copies.length > 0 ? { createdCopies: copies.map((c) => ({ moduleId: c.mod.id, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.mod.status })) } : {}),
+    });
+  },
+);
 
 const escape = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 

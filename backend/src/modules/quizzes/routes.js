@@ -25,6 +25,7 @@ import { registerJob } from '../../services/scheduler.js';
 import { getTimeZone } from '../../services/settings.js';
 import { fileSummary, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
+import { matchingCategoryId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { quizOutcome } from './attemptScore.js';
 import { defaultBankFor, questionFingerprint, questionProblems, questionTextKey, readImportRequest, saveQuestion } from './banks.js';
@@ -260,22 +261,30 @@ async function announce(quiz, cls) {
   });
 }
 
-classQuizzesRouter.post('/', validate({ params: classParams, body }), async (req, res) => {
+const createQuizBody = body.extend({
+  targetClassIds: z.array(zId).max(50).default([]),
+});
+
+classQuizzesRouter.post('/', validate({ params: classParams, body: createQuizBody }), async (req, res) => {
   const { cls } = await requireWritableClassManager(req.user, req.valid.params.classId);
   const b = req.valid.body;
   // A new quiz has no questions yet, so it always starts as a draft.
   if (b.status !== 'DRAFT') throw new AppError(422, 'QUIZ_EMPTY', 'Add at least one question before publishing.');
   assertSchedule(b);
   await assertModule(cls.id, b.moduleId);
+  const targets = await resolveTargetClasses(req.user, cls.id, b.targetClassIds);
   const title = plainText(b.title, 200);
-  const quiz = await prisma.$transaction(async (tx) => {
+  const instructionsHtml = sanitizeRichText(b.instructionsHtml);
+  const strictMode = b.strictMode ?? b.kind !== 'PRACTICE';
+
+  const { quiz, copies } = await prisma.$transaction(async (tx) => {
     const row = await tx.quiz.create({
       data: {
-        classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml: sanitizeRichText(b.instructionsHtml), kind: b.kind, status: 'DRAFT',
+        classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml, kind: b.kind, status: 'DRAFT',
         availableFrom: b.availableFrom ?? null, availableUntil: b.availableUntil ?? null, timeLimitMinutes: b.timeLimitMinutes ?? null, maxAttempts: b.maxAttempts,
         attemptScoring: b.attemptScoring, passingPercent: b.passingPercent ?? null, shuffleQuestions: b.shuffleQuestions, shuffleChoices: b.shuffleChoices,
         // Practice is for trying things out: no strict rules unless the teacher asks for them.
-        strictMode: b.strictMode ?? b.kind !== 'PRACTICE', violationWarnings: b.violationWarnings,
+        strictMode, violationWarnings: b.violationWarnings,
         resultVisibility: b.resultVisibility, answerVisibility: b.answerVisibility, createdById: req.user.id,
       },
     });
@@ -284,9 +293,37 @@ classQuizzesRouter.post('/', validate({ params: classParams, body }), async (req
       const item = await syncLinkedItem(tx, { classId: cls.id, categoryId: b.categoryId, title, maxPoints: 1, dueAt: b.availableUntil, quizId: row.id });
       if (item?.error) throw fieldErrors({ categoryId: item.error });
     }
-    return row;
+
+    const extra = [];
+    if (targets.length > 0) {
+      const sourceMod = b.moduleId
+        ? await tx.learningModule.findUnique({ where: { id: b.moduleId }, select: { id: true, title: true } })
+        : null;
+      for (const target of targets) {
+        const targetModuleId = sourceMod ? await matchingModuleId(tx, sourceMod, target.cls.id) : null;
+        const copyRow = await tx.quiz.create({
+          data: {
+            classId: target.cls.id, moduleId: targetModuleId, title, instructionsHtml, kind: b.kind, status: 'DRAFT',
+            availableFrom: b.availableFrom ?? null, availableUntil: b.availableUntil ?? null, timeLimitMinutes: b.timeLimitMinutes ?? null, maxAttempts: b.maxAttempts,
+            attemptScoring: b.attemptScoring, passingPercent: b.passingPercent ?? null, shuffleQuestions: b.shuffleQuestions, shuffleChoices: b.shuffleChoices,
+            strictMode, violationWarnings: b.violationWarnings,
+            resultVisibility: b.resultVisibility, answerVisibility: b.answerVisibility, createdById: req.user.id,
+          },
+        });
+        if (b.categoryId) {
+          const catId = await matchingCategoryId(tx, b.categoryId, target.cls.id);
+          if (catId) {
+            await syncLinkedItem(tx, { classId: target.cls.id, categoryId: catId, title, maxPoints: 1, dueAt: b.availableUntil, quizId: copyRow.id });
+          }
+        }
+        extra.push({ row: copyRow, cls: target.cls });
+      }
+    }
+    return { quiz: row, copies: extra };
   });
-  created(res, manageView(await fullQuiz(quiz.id), new Date()));
+
+  const view = manageView(await fullQuiz(quiz.id), new Date());
+  created(res, copies.length > 0 ? { ...view, createdCopies: copies.map((c) => ({ id: c.row.id, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.row.status })) } : view);
 });
 
 async function loadQuiz(quizId) {
@@ -398,23 +435,162 @@ quizzesRouter.delete('/:quizId', validate({ params: quizParams }), async (req, r
   noContent(res);
 });
 
-quizzesRouter.post('/:quizId/copy', validate({ params: quizParams, body: z.object({ targetClassId: zId.optional() }) }), async (req, res) => {
-  const { quiz } = await loadManaged(req, { writable: false });
-  const target = await requireWritableClassManager(req.user, req.valid.body.targetClassId ?? quiz.classId);
-  const same = target.cls.id === quiz.classId;
-  const copy = await prisma.quiz.create({
-    data: {
-      classId: target.cls.id, title: same ? `${quiz.title} (copy)`.slice(0, 200) : quiz.title, instructionsHtml: quiz.instructionsHtml, kind: quiz.kind, status: 'DRAFT',
-      timeLimitMinutes: quiz.timeLimitMinutes, maxAttempts: quiz.maxAttempts, attemptScoring: quiz.attemptScoring, passingPercent: quiz.passingPercent,
-      shuffleQuestions: quiz.shuffleQuestions, shuffleChoices: quiz.shuffleChoices, strictMode: quiz.strictMode, violationWarnings: quiz.violationWarnings,
-      resultVisibility: quiz.resultVisibility === 'AFTER_CLOSE' ? 'MANUAL' : quiz.resultVisibility,
-      answerVisibility: quiz.answerVisibility, moduleId: same ? quiz.moduleId : null, createdById: req.user.id,
-      questions: { create: quiz.questions.filter((qq) => !qq.question.deletedAt).map((qq) => ({ questionId: qq.questionId, points: qq.points, position: qq.position })) },
-      pools: { create: quiz.pools.filter((p) => !p.bank.deletedAt).map((p) => ({ bankId: p.bankId, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach, position: p.position })) },
-    },
-  });
-  created(res, manageView(await fullQuiz(copy.id), new Date()));
+const copyQuizBody = z.object({
+  targetClassId: zId.optional(),
+  targetClassIds: z.array(zId).min(1).max(50).optional(),
+  status: z.enum(['DRAFT', 'PUBLISHED']).default('DRAFT'),
+  includeDates: z.boolean().optional(),
 });
+
+quizzesRouter.post('/:quizId/copy', validate({ params: quizParams, body: copyQuizBody }), async (req, res) => {
+  const { quiz } = await loadManaged(req, { writable: false });
+  const b = req.valid.body;
+  if (b.status === 'PUBLISHED') await assertPublishable(quiz);
+  const multiMode = Boolean(b.targetClassIds?.length);
+  const rawTargets = multiMode ? [...new Set(b.targetClassIds)] : [b.targetClassId ?? quiz.classId];
+  const targets = [];
+  for (const id of rawTargets) targets.push(await requireWritableClassManager(req.user, id));
+  const preserveDates = b.includeDates ?? multiMode;
+  const now = new Date();
+  const pub = b.status === 'PUBLISHED' ? { status: 'PUBLISHED', publishAt: now, publishedAt: now } : { status: 'DRAFT' };
+  const resultVisibility = preserveDates
+    ? (quiz.resultVisibility === 'AFTER_CLOSE' && !quiz.availableUntil ? 'MANUAL' : quiz.resultVisibility)
+    : (quiz.resultVisibility === 'AFTER_CLOSE' ? 'MANUAL' : quiz.resultVisibility);
+  const activeQuestions = quiz.questions.filter((qq) => !qq.question.deletedAt);
+  const activePools = quiz.pools.filter((p) => !p.bank.deletedAt);
+
+  const copied = await prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const target of targets) {
+      const same = target.cls.id === quiz.classId;
+      const targetModuleId = same
+        ? quiz.moduleId
+        : quiz.module
+          ? await matchingModuleId(tx, quiz.module, target.cls.id)
+          : null;
+      const row = await tx.quiz.create({
+        data: {
+          classId: target.cls.id,
+          title: same ? `${quiz.title} (copy)`.slice(0, 200) : quiz.title,
+          instructionsHtml: quiz.instructionsHtml,
+          kind: quiz.kind,
+          ...pub,
+          ...(preserveDates ? { availableFrom: quiz.availableFrom, availableUntil: quiz.availableUntil } : {}),
+          timeLimitMinutes: quiz.timeLimitMinutes,
+          maxAttempts: quiz.maxAttempts,
+          attemptScoring: quiz.attemptScoring,
+          passingPercent: quiz.passingPercent,
+          shuffleQuestions: quiz.shuffleQuestions,
+          shuffleChoices: quiz.shuffleChoices,
+          strictMode: quiz.strictMode,
+          violationWarnings: quiz.violationWarnings,
+          resultVisibility,
+          answerVisibility: quiz.answerVisibility,
+          moduleId: targetModuleId,
+          createdById: req.user.id,
+          questions: { create: activeQuestions.map((qq) => ({ questionId: qq.questionId, points: qq.points, position: qq.position })) },
+          pools: { create: activePools.map((p) => ({ bankId: p.bankId, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach, position: p.position })) },
+        },
+      });
+      if (!same && quiz.gradeItem?.categoryId) {
+        const catId = await matchingCategoryId(tx, quiz.gradeItem.categoryId, target.cls.id);
+        if (catId) {
+          await syncLinkedItem(tx, {
+            classId: target.cls.id,
+            categoryId: catId,
+            title: row.title,
+            maxPoints: Math.max(totalPoints(quiz), 0.01),
+            dueAt: row.availableUntil,
+            quizId: row.id,
+          });
+        }
+      }
+      out.push({ row, cls: target.cls });
+    }
+    return out;
+  });
+
+  if (b.status === 'PUBLISHED') {
+    for (const item of copied) await announce(item.row, item.cls);
+  }
+  const firstView = manageView(await fullQuiz(copied[0].row.id), new Date());
+  if (!multiMode && copied.length === 1) {
+    created(res, firstView);
+    return;
+  }
+  created(res, {
+    ...firstView,
+    createdCopies: copied.map((c) => ({ id: c.row.id, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.row.status })),
+  });
+});
+
+quizzesRouter.post(
+  '/:quizId/sync',
+  validate({ params: quizParams, body: z.object({ targetQuizIds: z.array(zId).min(1).max(50), publish: z.boolean().default(false) }) }),
+  async (req, res) => {
+    const { quiz } = await loadManaged(req, { writable: false });
+    const b = req.valid.body;
+    if (b.publish) await assertPublishable(quiz);
+    const activeQuestions = quiz.questions.filter((qq) => !qq.question.deletedAt);
+    const activePools = quiz.pools.filter((p) => !p.bank.deletedAt);
+    const uniqueIds = [...new Set(b.targetQuizIds)].filter((id) => id !== quiz.id);
+    const now = new Date();
+    const synced = [];
+    const skipped = [];
+
+    for (const targetId of uniqueIds) {
+      const target = await loadQuiz(targetId);
+      const access = await requireWritableClassManager(req.user, target.classId);
+      if (target._count.attempts > 0) {
+        skipped.push({ id: target.id, classId: target.classId, classLabel: classLabel(access.cls), reason: 'Students have already started this quiz.' });
+        continue;
+      }
+      const wasVisible = isPublished(target);
+      const resultVisibility = quiz.resultVisibility === 'AFTER_CLOSE' && !quiz.availableUntil ? 'MANUAL' : quiz.resultVisibility;
+      const updated = await prisma.$transaction(async (tx) => {
+        const pub = b.publish ? { status: 'PUBLISHED', publishAt: target.publishAt ?? now, publishedAt: target.publishedAt ?? now } : {};
+        await tx.quiz.update({
+          where: { id: target.id },
+          data: {
+            title: quiz.title,
+            instructionsHtml: quiz.instructionsHtml,
+            kind: quiz.kind,
+            availableFrom: quiz.availableFrom,
+            availableUntil: quiz.availableUntil,
+            timeLimitMinutes: quiz.timeLimitMinutes,
+            maxAttempts: quiz.maxAttempts,
+            attemptScoring: quiz.attemptScoring,
+            passingPercent: quiz.passingPercent,
+            shuffleQuestions: quiz.shuffleQuestions,
+            shuffleChoices: quiz.shuffleChoices,
+            strictMode: quiz.strictMode,
+            violationWarnings: quiz.violationWarnings,
+            resultVisibility,
+            answerVisibility: quiz.answerVisibility,
+            ...pub,
+          },
+        });
+        await tx.quizQuestion.deleteMany({ where: { quizId: target.id } });
+        if (activeQuestions.length > 0) {
+          await tx.quizQuestion.createMany({
+            data: activeQuestions.map((qq) => ({ quizId: target.id, questionId: qq.questionId, points: qq.points, position: qq.position })),
+          });
+        }
+        await tx.quizQuestionPool.deleteMany({ where: { quizId: target.id } });
+        if (activePools.length > 0) {
+          await tx.quizQuestionPool.createMany({
+            data: activePools.map((p) => ({ quizId: target.id, bankId: p.bankId, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach, position: p.position })),
+          });
+        }
+        await syncColumn(tx, target);
+        return tx.quiz.findUnique({ where: { id: target.id } });
+      });
+      if (!wasVisible && updated.status === 'PUBLISHED') await announce(updated, access.cls);
+      synced.push({ id: updated.id, classId: updated.classId, classLabel: classLabel(access.cls), status: updated.status });
+    }
+    ok(res, { synced, skipped });
+  },
+);
 
 // ── Questions of a quiz ──────────────────────────────────────────────────────
 function assertEditable(quiz) {

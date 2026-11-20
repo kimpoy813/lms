@@ -12,8 +12,9 @@ import { assertPermission, requireAuth, requireRole } from '../../middleware/aut
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
 import { enrolledStudentIds, notify } from '../../services/notifications.js';
-import { fileSummary, readStoredFile, syncAttachments } from '../../services/storage.js';
+import { cloneFilesForParent, fileSummary, readStoredFile, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
+import { cleanupStoredFiles, matchingCategoryId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { applyPenalty, latePenalty } from './penalty.js';
 import { rubricTotal, rubricView } from './rubrics.js';
@@ -228,36 +229,92 @@ async function announce(assignment, cls) {
 
 const fullAssignment = (id, db = prisma) => db.assignment.findUnique({ where: { id }, include });
 
-classAssignmentsRouter.post('/', validate({ params: classParams, body }), async (req, res) => {
+const createBody = body.extend({
+  targetClassIds: z.array(zId).max(50).default([]),
+});
+
+classAssignmentsRouter.post('/', validate({ params: classParams, body: createBody }), async (req, res) => {
   const { cls } = await requireWritableClassManager(req.user, req.valid.params.classId);
   const b = req.valid.body;
   const publication = resolvePublication(b, null);
   if (publication.error) throw fieldErrors({ publishAt: publication.error });
   assertSchedule(b);
   const rubric = await resolveLinks(req.user, cls.id, b);
+  const targets = await resolveTargetClasses(req.user, cls.id, b.targetClassIds);
   const points = rubric ? rubricTotal(rubric) : b.points;
   const title = plainText(b.title, 200);
+  const instructionsHtml = sanitizeRichText(b.instructionsHtml);
+  const createdStoredNames = [];
 
-  const assignment = await prisma.$transaction(async (tx) => {
-    const row = await tx.assignment.create({
-      data: {
-        classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml: sanitizeRichText(b.instructionsHtml), points, ...publication,
-        availableFrom: b.availableFrom ?? null, dueAt: b.dueAt ?? null, closeAt: b.closeAt ?? null, allowLate: b.allowLate,
-        latePenaltyType: b.latePenaltyType, latePenaltyValue: b.latePenaltyValue, latePenaltyMax: b.latePenaltyMax,
-        allowText: b.allowText, allowFiles: b.allowFiles, maxFiles: b.maxFiles, allowResubmission: b.allowResubmission,
-        rubricId: rubric?.id ?? null, createdById: req.user.id,
-      },
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const row = await tx.assignment.create({
+        data: {
+          classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml, points, ...publication,
+          availableFrom: b.availableFrom ?? null, dueAt: b.dueAt ?? null, closeAt: b.closeAt ?? null, allowLate: b.allowLate,
+          latePenaltyType: b.latePenaltyType, latePenaltyValue: b.latePenaltyValue, latePenaltyMax: b.latePenaltyMax,
+          allowText: b.allowText, allowFiles: b.allowFiles, maxFiles: b.maxFiles, allowResubmission: b.allowResubmission,
+          rubricId: rubric?.id ?? null, createdById: req.user.id,
+        },
+      });
+      await syncAttachments(tx, { fileIds: b.fileIds, ownerId: req.user.id, field: 'assignmentId', parentId: row.id });
+      if (b.categoryId) {
+        const item = await syncLinkedItem(tx, { classId: cls.id, categoryId: b.categoryId, title, maxPoints: points, dueAt: b.dueAt, assignmentId: row.id });
+        if (item?.error) throw fieldErrors({ categoryId: item.error });
+      }
+
+      const copies = [];
+      if (targets.length > 0) {
+        const sourceAttachments = b.fileIds.length > 0
+          ? await tx.file.findMany({ where: { assignmentId: row.id, deletedAt: null } })
+          : [];
+        const sourceMod = b.moduleId
+          ? await tx.learningModule.findUnique({ where: { id: b.moduleId }, select: { id: true, title: true } })
+          : null;
+        for (const target of targets) {
+          const targetModuleId = sourceMod ? await matchingModuleId(tx, sourceMod, target.cls.id) : null;
+          const copyRow = await tx.assignment.create({
+            data: {
+              classId: target.cls.id, moduleId: targetModuleId, title, instructionsHtml, points, ...publication,
+              availableFrom: b.availableFrom ?? null, dueAt: b.dueAt ?? null, closeAt: b.closeAt ?? null, allowLate: b.allowLate,
+              latePenaltyType: b.latePenaltyType, latePenaltyValue: b.latePenaltyValue, latePenaltyMax: b.latePenaltyMax,
+              allowText: b.allowText, allowFiles: b.allowFiles, maxFiles: b.maxFiles, allowResubmission: b.allowResubmission,
+              rubricId: rubric?.id ?? null, createdById: req.user.id,
+            },
+          });
+          if (sourceAttachments.length > 0) {
+            await cloneFilesForParent(tx, sourceAttachments, {
+              ownerId: req.user.id,
+              field: 'assignmentId',
+              parentId: copyRow.id,
+              createdStoredNames,
+            });
+          }
+          if (b.categoryId) {
+            const catId = await matchingCategoryId(tx, b.categoryId, target.cls.id);
+            if (catId) {
+              await syncLinkedItem(tx, { classId: target.cls.id, categoryId: catId, title, maxPoints: points, dueAt: b.dueAt, assignmentId: copyRow.id });
+            }
+          }
+          copies.push({ row: copyRow, cls: target.cls });
+        }
+      }
+      return { assignment: row, copies };
     });
-    await syncAttachments(tx, { fileIds: b.fileIds, ownerId: req.user.id, field: 'assignmentId', parentId: row.id });
-    if (b.categoryId) {
-      const item = await syncLinkedItem(tx, { classId: cls.id, categoryId: b.categoryId, title, maxPoints: points, dueAt: b.dueAt, assignmentId: row.id });
-      if (item?.error) throw fieldErrors({ categoryId: item.error });
-    }
-    return row;
-  });
-  if (assignment.status === 'PUBLISHED') await announce(assignment, cls);
+  } catch (err) {
+    await cleanupStoredFiles(createdStoredNames);
+    throw err;
+  }
+
+  const { assignment, copies } = result;
+  if (assignment.status === 'PUBLISHED') {
+    await announce(assignment, cls);
+    for (const c of copies) await announce(c.row, c.cls);
+  }
   const full = await fullAssignment(assignment.id);
-  created(res, { ...detailView(full), ...manageFields(full, new Date()) });
+  const view = { ...detailView(full), ...manageFields(full, new Date()) };
+  created(res, copies.length > 0 ? { ...view, createdCopies: copies.map((c) => ({ id: c.row.id, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.row.status })) } : view);
 });
 
 async function loadAssignment(assignmentId) {
@@ -380,20 +437,100 @@ assignmentsRouter.delete('/:assignmentId', validate({ params: assignmentParams }
   noContent(res);
 });
 
-assignmentsRouter.post('/:assignmentId/copy', validate({ params: assignmentParams, body: z.object({ targetClassId: zId.optional() }) }), async (req, res) => {
+const copyAssignmentBody = z.object({
+  targetClassId: zId.optional(),
+  targetClassIds: z.array(zId).min(1).max(50).optional(),
+  status: z.enum(['DRAFT', 'PUBLISHED']).default('DRAFT'),
+  includeDates: z.boolean().optional(),
+});
+
+assignmentsRouter.post('/:assignmentId/copy', validate({ params: assignmentParams, body: copyAssignmentBody }), async (req, res) => {
   const { assignment } = await loadManaged(req, { writable: false });
-  const target = await requireWritableClassManager(req.user, req.valid.body.targetClassId ?? assignment.classId);
-  const sameClass = target.cls.id === assignment.classId;
-  const copy = await prisma.assignment.create({
-    data: {
-      classId: target.cls.id, title: sameClass ? `${assignment.title} (copy)`.slice(0, 200) : assignment.title, instructionsHtml: assignment.instructionsHtml, points: assignment.points,
-      status: 'DRAFT', allowLate: assignment.allowLate, latePenaltyType: assignment.latePenaltyType, latePenaltyValue: assignment.latePenaltyValue, latePenaltyMax: assignment.latePenaltyMax,
-      allowText: assignment.allowText, allowFiles: assignment.allowFiles, maxFiles: assignment.maxFiles, allowResubmission: assignment.allowResubmission,
-      rubricId: assignment.rubricId, moduleId: sameClass ? assignment.moduleId : null, createdById: req.user.id,
-    },
+  const b = req.valid.body;
+  const multiMode = Boolean(b.targetClassIds?.length);
+  const rawTargets = multiMode ? [...new Set(b.targetClassIds)] : [b.targetClassId ?? assignment.classId];
+  const targets = [];
+  for (const id of rawTargets) targets.push(await requireWritableClassManager(req.user, id));
+  const preserveDates = b.includeDates ?? multiMode;
+  const now = new Date();
+  const pub = b.status === 'PUBLISHED' ? { status: 'PUBLISHED', publishAt: now, publishedAt: now } : { status: 'DRAFT' };
+  const createdStoredNames = [];
+
+  let copied;
+  try {
+    copied = await prisma.$transaction(async (tx) => {
+      const out = [];
+      for (const target of targets) {
+        const sameClass = target.cls.id === assignment.classId;
+        const targetModuleId = sameClass
+          ? assignment.moduleId
+          : assignment.module
+            ? await matchingModuleId(tx, assignment.module, target.cls.id)
+            : null;
+        const row = await tx.assignment.create({
+          data: {
+            classId: target.cls.id,
+            title: sameClass ? `${assignment.title} (copy)`.slice(0, 200) : assignment.title,
+            instructionsHtml: assignment.instructionsHtml,
+            points: assignment.points,
+            ...pub,
+            ...(preserveDates ? { availableFrom: assignment.availableFrom, dueAt: assignment.dueAt, closeAt: assignment.closeAt } : {}),
+            allowLate: assignment.allowLate,
+            latePenaltyType: assignment.latePenaltyType,
+            latePenaltyValue: assignment.latePenaltyValue,
+            latePenaltyMax: assignment.latePenaltyMax,
+            allowText: assignment.allowText,
+            allowFiles: assignment.allowFiles,
+            maxFiles: assignment.maxFiles,
+            allowResubmission: assignment.allowResubmission,
+            rubricId: assignment.rubricId,
+            moduleId: targetModuleId,
+            createdById: req.user.id,
+          },
+        });
+        if (assignment.attachments.length > 0) {
+          await cloneFilesForParent(tx, assignment.attachments, {
+            ownerId: req.user.id,
+            field: 'assignmentId',
+            parentId: row.id,
+            createdStoredNames,
+          });
+        }
+        if (!sameClass && assignment.gradeItem?.categoryId) {
+          const catId = await matchingCategoryId(tx, assignment.gradeItem.categoryId, target.cls.id);
+          if (catId) {
+            await syncLinkedItem(tx, {
+              classId: target.cls.id,
+              categoryId: catId,
+              title: row.title,
+              maxPoints: row.points,
+              dueAt: row.dueAt,
+              assignmentId: row.id,
+            });
+          }
+        }
+        out.push({ row, cls: target.cls });
+      }
+      return out;
+    });
+  } catch (err) {
+    await cleanupStoredFiles(createdStoredNames);
+    throw err;
+  }
+
+  if (b.status === 'PUBLISHED') {
+    for (const item of copied) await announce(item.row, item.cls);
+  }
+  const full = await fullAssignment(copied[0].row.id);
+  const view = { ...detailView(full), ...manageFields(full, new Date()) };
+  if (!multiMode && copied.length === 1) {
+    created(res, view);
+    return;
+  }
+  created(res, {
+    ...view,
+    createdCopies: copied.map((c) => ({ id: c.row.id, classId: c.cls.id, classLabel: classLabel(c.cls), status: c.row.status })),
   });
-  const full = await fullAssignment(copy.id);
-  created(res, { ...detailView(full), ...manageFields(full, new Date()) });
 });
 
 // ── Student: save and submit ─────────────────────────────────────────────────

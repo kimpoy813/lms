@@ -1,8 +1,9 @@
 // Assignments tab.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, ClipboardList, Clock, Copy, FileCheck2, MoreHorizontal, PenLine, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardList, Clock, Copy, FileCheck2, MoreHorizontal, PenLine, Pencil, Plus, Share2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
+import { PostToClassesModal } from '../../components/ClassTargets.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import { Badge, Button, Card, cn, ConfirmDialog, EmptyState, IconButton, Menu, MenuItem, QueryState, Segmented } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
@@ -91,6 +92,7 @@ function StudentRow({ a }) {
 function TeacherRow({ a, onEdit, readOnly }) {
   const { cls, base } = useClass();
   const [confirm, setConfirm] = useState(false);
+  const [posting, setPosting] = useState(false);
   const invalidate = [['class', cls.id], ['dashboard'], ['calendar']];
   const publish = useAction(() => api.patch(`/assignments/${a.id}`, { status: 'PUBLISHED' }), { invalidate, success: 'Assignment published. Students have been notified.' });
   const copy = useAction(() => api.post(`/assignments/${a.id}/copy`, {}), { invalidate, success: 'A draft copy was created.' });
@@ -119,9 +121,20 @@ function TeacherRow({ a, onEdit, readOnly }) {
         <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} size="sm" label={`Actions for ${a.title}`} onClick={toggle} {...props} />}>
           <MenuItem icon={Pencil} onClick={onEdit}>Edit</MenuItem>
           <MenuItem icon={Copy} onClick={() => copy.mutate()}>Duplicate as draft</MenuItem>
+          <MenuItem icon={Share2} onClick={() => setPosting(true)}>Post to other classes…</MenuItem>
           <MenuItem icon={Trash2} tone="danger" onClick={() => setConfirm(true)}>Delete</MenuItem>
         </Menu>
       </div>
+      <PostToClassesModal
+        open={posting}
+        onClose={() => setPosting(false)}
+        title={`Post “${a.title}” to other classes`}
+        excludeClassId={cls.id}
+        teacherId={cls.teacher?.id}
+        defaultStatus={a.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT'}
+        hint="Attached files, rubrics, dates, and matching modules or gradebook categories are copied to each selected class."
+        onSubmit={({ targetClassIds, status }) => api.post(`/assignments/${a.id}/copy`, { targetClassIds, status })}
+      />
       <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={() => remove.mutate()} loading={remove.isPending} title={`Delete “${a.title}”?`} confirmLabel="Delete assignment">
         {s.submitted > 0 ? `${s.submitted} submission${s.submitted === 1 ? '' : 's'} and their grades will no longer be visible to students. ` : ''}The assignment is removed from the class and from the gradebook.
       </ConfirmDialog>

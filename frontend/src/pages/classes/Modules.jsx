@@ -1,9 +1,10 @@
 // Lessons tab: the class's modules, each with its lessons and resources.
-import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronDown, Circle, Copy, Download, FilePlus2, FolderPlus, Lock, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronDown, Circle, Copy, Download, FilePlus2, FolderPlus, Lock, MoreHorizontal, Pencil, Plus, Share2, Sparkles, Trash2, Users, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
 import { PublishFields, StatusBadge } from '../../components/Publish.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, ProgressBar, QueryState, Select, Table, Td, Textarea, Th, Tr } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
@@ -56,7 +57,7 @@ export default function Modules() {
         )}
       </QueryState>
       {dialog?.type === 'module' && <ModuleDialog module={dialog.module} modules={query.data ?? []} onClose={() => setDialog(null)} />}
-      {dialog?.type === 'resource' && <ResourceDialog classId={cls.id} placement={{ moduleId: dialog.module.id }} modules={query.data ?? []} onClose={() => setDialog(null)} />}
+      {dialog?.type === 'resource' && <ResourceDialog classId={cls.id} teacherId={cls.teacher?.id} placement={{ moduleId: dialog.module.id }} modules={query.data ?? []} onClose={() => setDialog(null)} />}
       {dialog?.type === 'progress' && <ProgressDialog onClose={() => setDialog(null)} />}
     </>
   );
@@ -68,6 +69,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
   const navigate = useNavigate();
   const [open, setOpen] = useState(true);
   const [confirm, setConfirm] = useState(null);
+  const [posting, setPosting] = useState(false);
   const invalidate = [['class', cls.id, 'modules'], ['dashboard']];
   const remove = useAction(() => api.delete(`/modules/${m.id}`), { invalidate, success: 'Module deleted.', onSuccess: () => setConfirm(null) });
   const publish = useAction(() => api.patch(`/modules/${m.id}`, { status: 'PUBLISHED' }), { invalidate, success: 'Module published. Students have been notified.' });
@@ -118,6 +120,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
               {index > 0 && <MenuItem icon={ArrowUp} onClick={() => onMove(-1)}>Move up</MenuItem>}
               {index < modules.length - 1 && <MenuItem icon={ArrowDown} onClick={() => onMove(1)}>Move down</MenuItem>}
               <MenuItem icon={Copy} onClick={() => copy.mutate()}>Duplicate as draft</MenuItem>
+              <MenuItem icon={Share2} onClick={() => setPosting(true)}>Post to other classes…</MenuItem>
               <MenuItem icon={Trash2} tone="danger" onClick={() => setConfirm('delete')}>Delete module</MenuItem>
             </Menu>
           </div>
@@ -165,7 +168,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
             <>
               <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-faint">Resources</h3>
               <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                {m.resources.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} modules={modules} />)}
+                {m.resources.map((r) => <ResourceItem key={r.id} resource={r} canManage={canManage} classId={cls.id} teacherId={cls.teacher?.id} modules={modules} />)}
               </ul>
             </>
           )}
@@ -181,26 +184,49 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
       <ConfirmDialog open={confirm === 'delete'} onClose={() => setConfirm(null)} onConfirm={() => remove.mutate()} loading={remove.isPending} title={`Delete “${m.title}”?`} confirmLabel="Delete module">
         The module and its {plural(m.lessonCount, 'lesson')} are removed for everyone. Assignments and quizzes linked to it are kept.
       </ConfirmDialog>
+      <PostToClassesModal
+        open={posting}
+        onClose={() => setPosting(false)}
+        title={`Post “${m.title}” to other classes`}
+        excludeClassId={cls.id}
+        teacherId={cls.teacher?.id}
+        defaultStatus={m.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT'}
+        hint="Copies this module along with all of its lessons and uploaded resources."
+        onSubmit={({ targetClassIds, status }) => api.post(`/modules/${m.id}/copy`, { targetClassIds, status })}
+      />
     </Card>
   );
 }
 
 function ModuleDialog({ module: m, modules, onClose }) {
   const { cls, base } = useClass();
+  const client = useQueryClient();
   const navigate = useNavigate();
   const [values, setValues] = useState({
     title: m?.title ?? '', description: m?.description ?? '', objectives: m?.objectives ?? [],
     status: m?.status ?? 'DRAFT', publishAt: m?.publishAt ?? null, availableUntil: m?.availableUntil ?? null, prerequisiteModuleId: m?.prerequisiteModuleId ?? '',
   });
+  const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const set = (name, value) => setValues((v) => ({ ...v, [name]: value }));
   const save = useAction(() => {
-    const body = { ...values, title: values.title.trim(), description: values.description.trim() || null, objectives: values.objectives.map((o) => o.trim()).filter(Boolean), prerequisiteModuleId: values.prerequisiteModuleId || null };
+    const body = {
+      ...values,
+      title: values.title.trim(),
+      description: values.description.trim() || null,
+      objectives: values.objectives.map((o) => o.trim()).filter(Boolean),
+      prerequisiteModuleId: values.prerequisiteModuleId || null,
+      ...(m ? {} : { targetClassIds }),
+    };
     return m ? api.patch(`/modules/${m.id}`, body) : api.post(`${base}/modules`, body);
   }, {
     invalidate: [['class', cls.id, 'modules'], ['dashboard']],
-    success: m ? 'Module saved.' : 'Module created.',
-    onSuccess: (saved) => { onClose(); if (!m) navigate(`${base}/modules/${saved.id}?new=1`); },
+    success: m ? 'Module saved.' : targetClassIds.length > 0 ? `Module created in ${targetClassIds.length + 1} classes.` : 'Module created.',
+    onSuccess: (saved) => {
+      for (const id of targetClassIds) client.invalidateQueries({ queryKey: ['class', id] });
+      onClose();
+      if (!m) navigate(`${base}/modules/${saved.id}?new=1`);
+    },
     onError: (err) => { if (err.fields) { setErrors(err.fields); return true; } return false; },
   });
 
@@ -235,6 +261,15 @@ function ModuleDialog({ module: m, modules, onClose }) {
           </Field>
         </div>
         {m?.source === 'AI' && <Alert tone="info">This module started as an AI draft. Check every lesson for accuracy before publishing it.</Alert>}
+        {!m && (
+          <AlsoPostToClasses
+            excludeClassId={cls.id}
+            teacherId={cls.teacher?.id}
+            value={targetClassIds}
+            onChange={setTargetClassIds}
+            hint="Creates this module in each selected class too. You can also post lessons to those classes as you add them."
+          />
+        )}
       </div>
     </Modal>
   );

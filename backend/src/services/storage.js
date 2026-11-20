@@ -360,6 +360,42 @@ export async function syncAttachments(tx, { fileIds, ownerId, field, parentId, m
   if (toAttach.length > 0) await attachFiles(tx, { fileIds: toAttach, ownerId, field, parentId, max });
 }
 
+/**
+ * Duplicate existing uploaded files onto another parent record (e.g. posting an assignment with
+ * attachments into additional classes). Each copy receives its own File row and stored bytes so
+ * editing or deleting one class's copy never affects another class.
+ */
+export async function cloneFilesForParent(tx, sourceFiles, { ownerId, field, parentId, createdStoredNames = null }) {
+  if (!sourceFiles || sourceFiles.length === 0) return [];
+  if (!PARENT_FIELDS.includes(field)) throw new Error(`unknown attachment field ${field}`);
+  const clones = [];
+  for (const src of sourceFiles) {
+    const buffer = await readStoredFile(src);
+    await assertRoomFor(buffer.length);
+    const storedName = randomBytes(24).toString('hex');
+    if (env.storageDriver === 'database') {
+      await tx.fileBlob.create({ data: { storedName, sizeBytes: buffer.length, data: buffer } });
+    } else {
+      await backend.write(buffer, storedName, src.mimeType);
+      createdStoredNames?.push(storedName);
+    }
+    const createdFile = await tx.file.create({
+      data: {
+        ownerId,
+        originalName: src.originalName,
+        storedName,
+        mimeType: src.mimeType,
+        extension: src.extension,
+        sizeBytes: src.sizeBytes,
+        sha256: src.sha256,
+        [field]: parentId,
+      },
+    });
+    clones.push(createdFile);
+  }
+  return clones;
+}
+
 /** Delete uploads that were never attached to anything (abandoned forms). Run by the scheduler. */
 export async function purgeOrphanFiles(olderThanMs = 24 * 60 * 60 * 1000) {
   const cutoff = new Date(Date.now() - olderThanMs);
