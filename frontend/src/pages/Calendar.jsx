@@ -163,7 +163,7 @@ export default function Calendar() {
                 const holiday = items.some((i) => i.type === 'HOLIDAY');
                 return (
                   <button key={key} type="button" role="gridcell" aria-selected={key === selected} aria-label={`${formatDateKey(key)}, ${items.length} item${items.length === 1 ? '' : 's'}`} onClick={() => setSelected(key)}
-                    className={cn('flex min-h-[4.5rem] flex-col gap-1 border-b border-r border-line p-1.5 text-left transition-colors sm:min-h-[6.5rem] [&:nth-child(7n)]:border-r-0', key === selected ? 'bg-brand-soft/60 ring-2 ring-inset ring-brand' : 'hover:bg-raised', !inMonth && 'bg-raised/40', holiday && inMonth && key !== selected && 'bg-bad-soft/40')}>
+                    className={cn('flex min-h-[3.75rem] flex-col gap-1 border-b border-r border-line p-1.5 text-left transition-colors sm:min-h-[6.5rem] [&:nth-child(7n)]:border-r-0', key === selected ? 'bg-brand-soft/60 ring-2 ring-inset ring-brand' : 'hover:bg-raised', !inMonth && 'bg-raised/40', holiday && inMonth && key !== selected && 'bg-bad-soft/40')}>
                     <span className={cn('grid size-6 place-items-center rounded-full text-xs font-semibold tabular-nums', isToday ? 'bg-brand-fill text-white' : inMonth ? 'text-ink' : 'text-faint')}>{Number(key.slice(8))}</span>
                     {/* Chips on larger screens, dots on phones. */}
                     <span className="hidden min-w-0 flex-col gap-0.5 sm:flex">
@@ -489,7 +489,7 @@ function Tasks() {
       <CardHeader icon={Check} title="My to-do list" description="Private reminders. Only you can see them." />
       <form onSubmit={(e) => { e.preventDefault(); if (title.trim()) add.mutate(); }} className="mb-3 flex flex-wrap gap-2">
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Add a reminder…" aria-label="New reminder" maxLength={200} className="min-w-0 flex-1 basis-40" />
-        <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date (optional)" className="w-36" />
+        <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date (optional)" className="min-w-0 flex-1 sm:w-36 sm:flex-none" />
         <Button type="submit" icon={Plus} loading={add.isPending} disabled={!title.trim()} aria-label="Add reminder" />
       </form>
       {query.isPending ? <Spinner /> : tasks.length === 0 ? <p className="py-3 text-center text-sm text-faint">Nothing on your list.</p> : (
@@ -503,7 +503,7 @@ function Tasks() {
                   <span className={cn('block truncate text-sm', t.completedAt ? 'text-faint line-through' : 'text-ink')}>{t.title}</span>
                   {t.dueAt && !t.completedAt && <span className={cn('text-xs', overdue ? 'font-medium text-bad' : 'text-faint')}>{overdue ? 'Was due' : 'Due'} {formatDateKey(dateKeyOf(t.dueAt))}</span>}
                 </span>
-                <button type="button" onClick={() => remove.mutate(t.id)} className="rounded p-1 text-faint opacity-0 hover:text-bad focus:opacity-100 group-hover:opacity-100" aria-label={`Delete “${t.title}”`}><Trash2 className="size-4" /></button>
+                <button type="button" onClick={() => remove.mutate(t.id)} className="rounded p-1 text-faint max-sm:opacity-70 sm:opacity-0 hover:text-bad focus:opacity-100 sm:group-hover:opacity-100" aria-label={`Delete “${t.title}”`}><Trash2 className="size-4" /></button>
               </li>
             );
           })}

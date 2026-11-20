@@ -49,7 +49,7 @@ const controlBase = 'rounded-lg border border-line-strong bg-surface px-3 text-i
 // A caller's width, height or text size replaces the default instead of fighting with it.
 const has = (className, pattern) => pattern.test(className ?? '');
 const control = (className, height) =>
-  cn(controlBase, !has(className, /(^|\s)w-/) && 'w-full', height && !has(className, /(^|\s)h-/) && height, !has(className, /(^|\s)text-(xs|sm|base|lg|xl|\[)/) && 'text-sm', className);
+  cn(controlBase, !has(className, /(^|\s)w-/) && 'w-full', height && !has(className, /(^|\s)h-/) && height, !has(className, /(^|\s)text-(xs|sm|base|lg|xl|\[)/) && 'max-sm:text-base sm:text-sm', className);
 
 const FieldContext = createContext(null);
 
@@ -138,11 +138,11 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
 /** Buttons that behave like radio options (e.g. Present / Late / Absent). */
 export function Segmented({ value, onChange, options, size = 'md', className, label }) {
   return (
-    <div role="radiogroup" aria-label={label} className={cn('inline-flex rounded-lg border border-line bg-raised p-0.5', className)}>
+    <div role="radiogroup" aria-label={label} className={cn('inline-flex max-w-full overflow-x-auto rounded-lg border border-line bg-raised p-0.5 [scrollbar-width:none]', className)}>
       {options.map((o) => {
         const active = o.value === value;
         return (
-          <button key={o.value} type="button" role="radio" aria-checked={active} onClick={() => onChange(o.value)} title={o.title} className={cn('rounded-md font-medium whitespace-nowrap transition-colors', size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3.5 py-1.5 text-sm', active ? cn('bg-surface shadow-sm', o.tone ?? 'text-ink') : 'text-soft hover:text-ink')}>
+          <button key={o.value} type="button" role="radio" aria-checked={active} onClick={() => onChange(o.value)} title={o.title} className={cn('shrink-0 rounded-md font-medium whitespace-nowrap transition-colors', size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3.5 py-1.5 text-sm', active ? cn('bg-surface shadow-sm', o.tone ?? 'text-ink') : 'text-soft hover:text-ink')}>
             {o.label}
           </button>
         );
@@ -158,15 +158,15 @@ export function Card({ className, children, as: Tag = 'div', padded = true, ref,
 
 export function CardHeader({ title, description, action, icon: Icon, className }) {
   return (
-    <div className={cn('mb-4 flex items-start justify-between gap-3', className)}>
-      <div className="flex min-w-0 items-center gap-2.5">
+    <div className={cn('mb-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2.5', className)}>
+      <div className="flex min-w-0 flex-1 basis-48 items-center gap-2.5">
         {Icon && <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand"><Icon className="size-4" aria-hidden="true" /></span>}
         <div className="min-w-0">
-          <h2 className="truncate text-[15px] font-semibold text-ink">{title}</h2>
+          <h2 className="break-words text-[15px] font-semibold text-ink">{title}</h2>
           {description && <p className="mt-0.5 text-[13px] text-faint">{description}</p>}
         </div>
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{action}</div>}
     </div>
   );
 }
@@ -286,11 +286,11 @@ export function ProgressBar({ value, max = 100, tone = 'brand', className, label
 
 export function StatCard({ label, value, hint, icon: Icon, tone = 'brand', to }) {
   const body = (
-    <Card className={cn('h-full max-sm:p-4', to && 'transition-shadow hover:shadow-pop')}>
+    <Card className={cn('h-full max-sm:p-3.5', to && 'transition-shadow hover:shadow-pop')}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[13px] font-medium text-soft">{label}</p>
-          <p className="mt-1 text-[28px] font-bold leading-none tracking-tight text-ink tabular-nums">{value}</p>
+          <p className="text-xs font-medium text-soft sm:text-[13px]">{label}</p>
+          <p className="mt-1 text-2xl font-bold leading-none tracking-tight text-ink tabular-nums sm:text-[28px]">{value}</p>
           {hint && <p className="mt-1.5 text-xs text-faint">{hint}</p>}
         </div>
         {Icon && <span className={cn('grid size-9 shrink-0 place-items-center rounded-xl sm:size-10', TONES[tone])}><Icon className="size-[18px] sm:size-5" aria-hidden="true" /></span>}
@@ -349,8 +349,9 @@ export function Modal({ open, onClose, title, description, children, footer, siz
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="animate-in absolute inset-0 bg-[#0b0d17]/55 backdrop-blur-[2px]" onClick={dismissible ? onClose : undefined} aria-hidden="true" />
       <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={title ? titleId : undefined} tabIndex={-1} className={cn('animate-pop relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-surface shadow-pop outline-none sm:rounded-2xl', { sm: 'sm:max-w-md', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl', full: 'sm:max-w-6xl' }[size])}>
+        {dismissible && <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-line-strong sm:hidden" aria-hidden="true" />}
         {(title || dismissible) && (
-          <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
+          <div className="flex items-start justify-between gap-4 border-b border-line px-4 py-3.5 sm:px-5 sm:py-4">
             <div className="min-w-0">
               {title && <h2 id={titleId} className="text-lg font-semibold text-ink">{title}</h2>}
               {description && <p className="mt-0.5 text-sm text-soft">{description}</p>}
@@ -358,8 +359,8 @@ export function Modal({ open, onClose, title, description, children, footer, siz
             {dismissible && <IconButton icon={X} label="Close" size="sm" onClick={onClose} className="-mr-1.5 -mt-0.5" />}
           </div>
         )}
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3.5">{footer}</div>}
+        <div className={cn('min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5', !footer && 'max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]')}>{children}</div>
+        {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:py-3.5 sm:pb-3.5">{footer}</div>}
       </div>
     </div>,
     document.body,
@@ -368,7 +369,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
 
 /** Buttons pinned to the bottom of a long form inside a Modal (use instead of the `footer` prop when the form owns its own state). */
 export function ModalActions({ children }) {
-  return <div className="sticky -bottom-4 z-10 -mx-5 -mb-4 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-line bg-surface px-5 py-3.5">{children}</div>;
+  return <div className="sticky -bottom-4 z-10 -mx-4 -mb-4 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-line bg-surface px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:-mx-5 sm:px-5 sm:py-3.5 sm:pb-3.5">{children}</div>;
 }
 
 /** A confirmation step for destructive or irreversible actions. */
@@ -476,11 +477,31 @@ export function MenuItem({ icon: Icon, children, tone, to, ...props }) {
 // ── Navigation within a page ─────────────────────────────────────────────────
 export function Tabs({ tabs, value, onChange, className }) {
   const ref = useRef(null);
+  const [fadeRight, setFadeRight] = useState(false);
+
   useLayoutEffect(() => {
-    ref.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
-  }, [value]);
+    const el = ref.current;
+    if (!el) return undefined;
+    el.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    const updateFade = () => setFadeRight(el.scrollWidth - el.scrollLeft - el.clientWidth > 6);
+    updateFade();
+    el.addEventListener('scroll', updateFade, { passive: true });
+    window.addEventListener('resize', updateFade);
+    return () => {
+      el.removeEventListener('scroll', updateFade);
+      window.removeEventListener('resize', updateFade);
+    };
+  }, [value, tabs.length]);
+
+  const fadeMask = fadeRight ? 'linear-gradient(to right, black calc(100% - 2rem), transparent)' : undefined;
+
   return (
-    <div ref={ref} role="tablist" className={cn('flex gap-1 overflow-x-auto border-b border-line [scrollbar-width:none]', className)}>
+    <div
+      ref={ref}
+      role="tablist"
+      style={fadeMask ? { maskImage: fadeMask, WebkitMaskImage: fadeMask } : undefined}
+      className={cn('flex gap-1 overflow-x-auto border-b border-line [scrollbar-width:none]', className)}
+    >
       {tabs.map((t) => {
         const active = t.value === value;
         const classes = cn('relative -mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors', active ? 'border-brand text-brand' : 'border-transparent text-soft hover:text-ink');
@@ -496,7 +517,7 @@ export function Tabs({ tabs, value, onChange, className }) {
 export function Pagination({ meta, onPage }) {
   if (!meta || meta.totalPages <= 1) return null;
   return (
-    <nav className="mt-4 flex items-center justify-between gap-3 text-sm text-soft" aria-label="Pages">
+    <nav className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-soft" aria-label="Pages">
       <span>Page {meta.page} of {meta.totalPages} · {meta.total} in total</span>
       <div className="flex gap-2">
         <Button variant="secondary" size="sm" icon={ChevronLeft} disabled={meta.page <= 1} onClick={() => onPage(meta.page - 1)}>Previous</Button>
@@ -521,11 +542,11 @@ export const Tr = ({ children, className, ...props }) => <tr className={cn('last
 /** "Label: value" rows for detail panels. */
 export function DescriptionList({ items, className }) {
   return (
-    <dl className={cn('grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm', className)}>
+    <dl className={cn('grid grid-cols-[minmax(0,auto)_1fr] gap-x-4 gap-y-2 text-sm', className)}>
       {items.filter(Boolean).map(([term, value]) => (
         <div key={term} className="contents">
           <dt className="text-faint">{term}</dt>
-          <dd className="min-w-0 font-medium text-ink">{value ?? '—'}</dd>
+          <dd className="min-w-0 break-words font-medium text-ink">{value ?? '—'}</dd>
         </div>
       ))}
     </dl>

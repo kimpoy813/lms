@@ -101,6 +101,7 @@
     font-family: var(--font-sans);
     -webkit-text-size-adjust: 100%;
     scroll-padding-top: 5rem;
+    overflow-x: clip;
   }
   body {
     margin: 0;
@@ -108,6 +109,7 @@
     color: var(--ink);
     font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
   }
   /* Visible keyboard focus everywhere. */
   :focus-visible {
@@ -155,6 +157,39 @@
   .rich th { background: var(--raised); font-weight: 650; }
   .rich .tableWrapper { overflow-x: auto; }
 
+  /* Textbook / learning-module reading typography for module chapters and book mode. */
+  .rich-book { line-height: 1.8; font-size: 1rem; max-width: 68ch; }
+  .rich-book-sm { font-size: 0.9375rem; line-height: 1.74; }
+  .rich-book-lg { font-size: 1.09375rem; line-height: 1.84; }
+  .rich-book-serif { font-family: Georgia, Cambria, "Times New Roman", Times, serif; }
+  .rich-book-serif h1, .rich-book-serif h2, .rich-book-serif h3, .rich-book-serif h4,
+  .rich-book-serif th, .rich-book-serif pre, .rich-book-serif code { font-family: var(--font-sans); }
+  .rich-book-serif pre, .rich-book-serif code { font-family: var(--font-mono); }
+  .rich-book > * + * { margin-top: 1.05em; }
+  .rich-book h3 {
+    font-size: 1.18em;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    margin-top: 1.85em;
+    padding-bottom: 0.35em;
+    border-bottom: 1px solid var(--line);
+  }
+  .rich-book > h3:first-child { margin-top: 0; }
+  .rich-book h4 { font-size: 1.03em; font-weight: 700; color: var(--ink); margin-top: 1.45em; }
+  .rich-book blockquote {
+    border-left: 4px solid var(--brand);
+    background: var(--brand-soft);
+    padding: 0.9em 1.15em;
+    border-radius: 0 0.75rem 0.75rem 0;
+    color: var(--ink);
+  }
+  .rich-book blockquote strong { color: var(--brand); }
+  .rich-book th, .rich-book td { padding: 0.6em 0.85em; }
+  .rich-book tbody tr:nth-child(even) { background: color-mix(in srgb, var(--raised) 55%, transparent); }
+  .rich-book ul, .rich-book ol { padding-left: 1.55em; }
+  .rich-book li + li { margin-top: 0.45em; }
+
   /* The editor surface (TipTap / ProseMirror). */
   .ProseMirror { outline: none; min-height: 9rem; padding: 0.85rem 1rem; }
   .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--faint); float: left; height: 0; pointer-events: none; }
@@ -199,6 +234,8 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
 @media print {
   .no-print { display: none !important; }
   body { background: #fff; }
+  .book-chapter { break-inside: avoid-page; }
+  .book-chapter + .book-chapter { break-before: page; }
   /* A quiz with strict rules is not printed (nor saved as a PDF, which is the same thing). */
   html.quiz-guard body > * { display: none !important; }
   html.quiz-guard body::after { content: "A quiz cannot be printed while it is being answered."; display: block; padding: 2rem; font: 600 1rem/1.5 system-ui, sans-serif; color: #000; }

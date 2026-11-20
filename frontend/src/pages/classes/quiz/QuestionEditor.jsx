@@ -216,10 +216,10 @@ export default function QuestionEditor({ question, onSave, onClose, title, parts
             <legend className="mb-1.5 text-sm font-medium text-ink">Pairs <span className="text-xs font-normal text-faint">— the right-hand column is shuffled for students</span></legend>
             <ul className="space-y-2">
               {q.pairs.map((p, i) => (
-                <li key={i} className="flex items-center gap-2">
-                  <Input value={p.left} onChange={(e) => set('pairs', q.pairs.map((x, n) => (n === i ? { ...x, left: e.target.value } : x)))} placeholder="Item" aria-label={`Pair ${i + 1}, item`} maxLength={500} />
+                <li key={i} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                  <Input value={p.left} onChange={(e) => set('pairs', q.pairs.map((x, n) => (n === i ? { ...x, left: e.target.value } : x)))} placeholder="Item" aria-label={`Pair ${i + 1}, item`} maxLength={500} className="min-w-0 flex-1 basis-32" />
                   <span className="text-faint" aria-hidden="true">→</span>
-                  <Input value={p.right} onChange={(e) => set('pairs', q.pairs.map((x, n) => (n === i ? { ...x, right: e.target.value } : x)))} placeholder="Matches with" aria-label={`Pair ${i + 1}, match`} maxLength={500} />
+                  <Input value={p.right} onChange={(e) => set('pairs', q.pairs.map((x, n) => (n === i ? { ...x, right: e.target.value } : x)))} placeholder="Matches with" aria-label={`Pair ${i + 1}, match`} maxLength={500} className="min-w-0 flex-1 basis-32" />
                   <Button variant="ghost" size="sm" icon={X} aria-label={`Remove pair ${i + 1}`} disabled={q.pairs.length <= 2} onClick={() => set('pairs', q.pairs.filter((_, n) => n !== i))} />
                 </li>
               ))}

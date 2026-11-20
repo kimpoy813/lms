@@ -60,7 +60,7 @@ export default function Messages() {
   return (
     <>
       <div className={cn(activeId && 'max-lg:hidden')}><PageHeader title="Messages" actions={<Button icon={MessageSquarePlus} onClick={() => setPicking(true)}>New message</Button>} /></div>
-      <div className="grid h-[calc(100dvh-13.5rem)] min-h-[26rem] grid-cols-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-card max-lg:data-[open=true]:h-[calc(100dvh-7rem)] lg:grid-cols-[20rem_minmax(0,1fr)]" data-open={Boolean(activeId)}>
+      <div className="grid h-[calc(100dvh-16rem)] min-h-[24rem] grid-cols-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-card max-lg:data-[open=true]:h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-13.5rem)] lg:min-h-[26rem] lg:grid-cols-[20rem_minmax(0,1fr)]" data-open={Boolean(activeId)}>
         <aside className={cn('flex min-h-0 flex-col border-line lg:border-r', activeId && 'max-lg:hidden')}>
           <div className="border-b border-line p-3">
             <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" aria-hidden="true" /><Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter conversations" aria-label="Filter conversations" className="pl-9" /></div>
@@ -266,7 +266,7 @@ function Conversation({ id, onBack }) {
             <div key={m.id}>
               {newDay && <p className="py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-faint">{formatDateKey(day)}</p>}
               <div className={cn('group flex items-end gap-2', mine ? 'justify-end' : 'justify-start', grouped ? 'mb-0.5' : 'mb-2.5')}>
-                {mine && !m.deleted && <button type="button" onClick={() => remove.mutate(m.id)} className="mb-1 rounded p-1 text-faint opacity-0 hover:bg-raised hover:text-bad focus:opacity-100 group-hover:opacity-100" aria-label="Delete this message" title="Delete for everyone"><Trash2 className="size-3.5" /></button>}
+                {mine && !m.deleted && <button type="button" onClick={() => remove.mutate(m.id)} className="mb-1 rounded p-1 text-faint max-sm:opacity-60 sm:opacity-0 hover:bg-raised hover:text-bad focus:opacity-100 sm:group-hover:opacity-100" aria-label="Delete this message" title="Delete for everyone"><Trash2 className="size-3.5" /></button>}
                 <div className={cn('max-w-[80%] rounded-2xl px-3.5 py-2 text-[15px] leading-snug sm:max-w-[70%]', m.deleted ? 'border border-dashed border-line-strong bg-transparent italic text-faint' : mine ? 'rounded-br-md bg-brand-fill text-white' : 'rounded-bl-md border border-line bg-surface text-ink')}>
                   {/* Message text is shown as plain text, never interpreted as HTML. */}
                   {m.deleted ? 'This message was deleted' : m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}

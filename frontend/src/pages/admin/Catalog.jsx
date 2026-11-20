@@ -297,12 +297,12 @@ function ScaleDialog({ scale, onClose }) {
           <p className="mb-2 text-[13px] text-faint">A student gets the first grade whose minimum percentage they reach. The last row should start at 0%.</p>
           <div className="space-y-2">
             {v.entries.map((e, i) => (
-              <div key={i} className="grid grid-cols-[5.5rem_5.5rem_1fr_auto_auto] items-center gap-2">
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 rounded-xl border border-line p-2.5 sm:grid-cols-[5.5rem_5.5rem_1fr_auto_auto] sm:rounded-none sm:border-0 sm:p-0">
                 <label className="relative"><span className="sr-only">Minimum percentage of grade {i + 1}</span><Input type="number" min="0" max="100" step="any" value={e.minPercent} onChange={(ev) => setEntry(i, { minPercent: ev.target.value })} className="pr-7 text-right tabular-nums" /><span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-faint">%</span></label>
                 <Input value={e.label} onChange={(ev) => setEntry(i, { label: ev.target.value })} aria-label={`Grade ${i + 1}`} placeholder="Grade" maxLength={20} required />
-                <Input value={e.remark ?? ''} onChange={(ev) => setEntry(i, { remark: ev.target.value })} aria-label={`Remark for grade ${i + 1}`} placeholder="Remark, e.g. Very good" maxLength={60} />
+                <Input value={e.remark ?? ''} onChange={(ev) => setEntry(i, { remark: ev.target.value })} aria-label={`Remark for grade ${i + 1}`} placeholder="Remark, e.g. Very good" maxLength={60} className="max-sm:col-span-2" />
                 <Checkbox label="Passing" checked={Boolean(e.isPassing)} onChange={(ev) => setEntry(i, { isPassing: ev.target.checked })} />
-                <IconButton size="sm" icon={X} label={`Remove grade ${e.label || i + 1}`} disabled={v.entries.length <= 2} onClick={() => setV((s) => ({ ...s, entries: s.entries.filter((_, n) => n !== i) }))} />
+                <IconButton size="sm" icon={X} label={`Remove grade ${e.label || i + 1}`} disabled={v.entries.length <= 2} onClick={() => setV((s) => ({ ...s, entries: s.entries.filter((_, n) => n !== i) }))} className="max-sm:col-start-3 max-sm:row-start-1" />
               </div>
             ))}
           </div>

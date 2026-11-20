@@ -44,15 +44,15 @@ export default function ClassLayout() {
             <header className={cn('no-print relative -mx-4 -mt-6 mb-0 overflow-hidden bg-gradient-to-br px-4 pb-5 pt-6 text-white sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8', color.banner)}>
               <div className="pointer-events-none absolute -right-16 -top-24 size-72 rounded-full bg-white/10" aria-hidden="true" />
               <Link to="/classes" className="relative inline-flex items-center gap-1 text-[13px] font-medium text-white/80 hover:text-white"><ChevronLeft className="size-4" aria-hidden="true" />All classes</Link>
-              <div className="relative mt-2 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+              <div className="relative mt-2 flex flex-wrap items-end justify-between gap-x-6 gap-y-2.5">
                 <div className="min-w-0">
                   <h1 className="text-2xl font-bold tracking-tight sm:text-[1.75rem]">{classLabel(cls)}</h1>
                   <p className="mt-0.5 text-[15px] text-white/90">{cls.course.title}</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13px] text-white/90 max-sm:hidden">
-                  <span className="flex items-center gap-2"><Avatar name={cls.teacher.name} fileId={cls.teacher.avatarFileId} size={22} className="ring-1 ring-white/40" />{cls.teacher.name}</span>
-                  <span className="flex items-center gap-1.5"><CalendarDays className="size-4 opacity-80" aria-hidden="true" />{scheduleSummary(cls.schedules)}</span>
-                  {cls.room && <span className="flex items-center gap-1.5"><MapPin className="size-4 opacity-80" aria-hidden="true" />{cls.room}</span>}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/90 sm:gap-x-5 sm:gap-y-1.5 sm:text-[13px]">
+                  <span className="flex items-center gap-1.5 sm:gap-2"><Avatar name={cls.teacher.name} fileId={cls.teacher.avatarFileId} size={20} className="ring-1 ring-white/40 sm:size-[22px]" />{cls.teacher.name}</span>
+                  <span className="flex items-center gap-1.5"><CalendarDays className="size-3.5 opacity-80 sm:size-4" aria-hidden="true" />{scheduleSummary(cls.schedules)}</span>
+                  {cls.room && <span className="flex items-center gap-1.5"><MapPin className="size-3.5 opacity-80 sm:size-4" aria-hidden="true" />{cls.room}</span>}
                 </div>
               </div>
             </header>

@@ -127,7 +127,7 @@ function Summary({ onOpen }) {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="bg-raised/60 text-xs font-semibold uppercase tracking-wide text-faint">
-                    <th scope="col" className="sticky left-0 z-10 border-b border-line bg-raised px-4 py-2.5 text-left">Student</th>
+                    <th scope="col" className="sticky left-0 z-10 max-w-[9.5rem] border-b border-line bg-raised px-2.5 py-2.5 text-left sm:max-w-none sm:px-4">Student</th>
                     <th scope="col" className="border-b border-line px-3 py-2.5 text-right">Rate</th>
                     {data.sessions.map((s) => (
                       <th key={s.id} scope="col" className="border-b border-line px-1 py-1.5 text-center font-medium normal-case">
@@ -141,9 +141,9 @@ function Summary({ onOpen }) {
                 <tbody>
                   {data.students.map((st) => (
                     <tr key={st.id} className="hover:bg-raised/40">
-                      <th scope="row" className="sticky left-0 z-10 border-b border-line bg-surface px-4 py-2 text-left font-medium text-ink whitespace-nowrap">
-                        {st.lastName}, {st.firstName}
-                        {st.enrollmentStatus === 'DROPPED' && <Badge tone="warn" className="ml-1.5">Dropped</Badge>}
+                      <th scope="row" className="sticky left-0 z-10 max-w-[9.5rem] border-b border-line bg-surface px-2.5 py-2 text-left font-medium text-ink sm:max-w-none sm:whitespace-nowrap sm:px-4">
+                        <span className="block truncate sm:inline">{st.lastName}, {st.firstName}</span>
+                        {st.enrollmentStatus === 'DROPPED' && <Badge tone="warn" className="mt-0.5 sm:mt-0 sm:ml-1.5">Dropped</Badge>}
                       </th>
                       <td className={cn('border-b border-line px-3 py-2 text-right font-semibold tabular-nums', st.rate === null ? 'text-faint' : st.rate < 80 ? 'text-bad' : 'text-ink')}>{st.rate === null ? '—' : formatPercent(st.rate, 0)}</td>
                       {data.sessions.map((s) => <td key={s.id} className="border-b border-line px-1 py-1.5"><span className="flex justify-center"><StatusCell status={s.status === 'CANCELLED' ? null : st.statuses[s.id]} /></span></td>)}

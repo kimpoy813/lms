@@ -125,6 +125,7 @@ export async function listModules(user, access) {
       availableUntil: m.availableUntil,
       source: m.source,
       lessonCount: m.lessons.length,
+      totalEstimatedMinutes: m.lessons.reduce((sum, l) => sum + (Number(l.estimatedMinutes) || 0), 0),
       ...(manage
         ? { status: m.status, publishAt: m.publishAt, publishedAt: m.publishedAt, isVisible: isPublished(m, now), aiReviewStatus: m.aiGenerated?.reviewStatus ?? null }
         : {
@@ -257,6 +258,82 @@ contentRouter.get('/modules/:moduleId', validate({ params: idParams('moduleId') 
   // Unpublished modules do not exist as far as students are concerned.
   if (!view) throw notFound('Module');
   ok(res, view);
+});
+
+contentRouter.get('/modules/:moduleId/book', validate({ params: idParams('moduleId') }), async (req, res) => {
+  const mod = await loadModule(req.valid.params.moduleId);
+  const access = await loadClassAccess(req.user, mod.classId);
+  const manage = access.canManage;
+  const view = (await listModules(req.user, access)).find((m) => m.id === mod.id);
+  if (!view) throw notFound('Module');
+  if (!manage && view.locked) {
+    throw forbidden(view.lockedReason || 'This module is locked. Complete the required module first.', 'MODULE_LOCKED');
+  }
+
+  const lessonIds = view.lessons.map((l) => l.id);
+  const [fullLessons, lessonResources, bookmarks] = await Promise.all([
+    lessonIds.length
+      ? prisma.lesson.findMany({ where: { id: { in: lessonIds } } })
+      : [],
+    lessonIds.length
+      ? prisma.learningResource.findMany({
+          where: { lessonId: { in: lessonIds }, ...(manage ? {} : { isPublished: true }) },
+          include: { file: true },
+          orderBy: { position: 'asc' },
+        })
+      : [],
+    !manage && lessonIds.length
+      ? prisma.bookmark.findMany({ where: { userId: req.user.id, lessonId: { in: lessonIds } }, select: { lessonId: true } })
+      : [],
+  ]);
+
+  const fullById = new Map(fullLessons.map((l) => [l.id, l]));
+  const resourcesByLesson = new Map();
+  for (const r of lessonResources) {
+    const list = resourcesByLesson.get(r.lessonId) ?? [];
+    list.push(resourceView(r, { manage }));
+    resourcesByLesson.set(r.lessonId, list);
+  }
+  const bookmarkedSet = new Set(bookmarks.map((b) => b.lessonId));
+
+  // Mark the first unlocked lesson that has not been completed yet (or first unlocked) as viewed.
+  if (!manage) {
+    const unlocked = view.lessons.filter((l) => !l.locked);
+    const active = unlocked.find((l) => !l.completed) ?? unlocked[0];
+    if (active) {
+      const now = new Date();
+      await prisma.lessonProgress.upsert({
+        where: { lessonId_studentId: { lessonId: active.id, studentId: req.user.id } },
+        create: { lessonId: active.id, studentId: req.user.id, firstViewedAt: now, lastViewedAt: now },
+        update: { lastViewedAt: now },
+      });
+    }
+  }
+
+  const summaryById = new Map(view.lessons.map((l) => [l.id, l]));
+  const chapters = view.lessons.map((summary, idx) => {
+    const full = fullById.get(summary.id);
+    const locked = !manage && Boolean(summary.locked);
+    const prereq = summary.prerequisiteLessonId ? summaryById.get(summary.prerequisiteLessonId) : null;
+    return {
+      ...summary,
+      chapterNumber: idx + 1,
+      updatedAt: full?.updatedAt ?? null,
+      objectives: locked ? [] : (full?.objectives ?? []),
+      contentHtml: locked ? null : (full?.contentHtml ?? ''),
+      resources: locked ? [] : (resourcesByLesson.get(summary.id) ?? []),
+      lockedReason: locked
+        ? (prereq ? `Complete Chapter ${view.lessons.indexOf(prereq) + 1} (“${prereq.title}”) to unlock this chapter.` : 'Complete the previous required chapter first.')
+        : null,
+      ...(manage ? {} : { bookmarked: bookmarkedSet.has(summary.id) }),
+    };
+  });
+
+  ok(res, {
+    ...view,
+    aiStudyCoachEnabled: Boolean(access.cls.aiStudyCoachEnabled),
+    chapters,
+  });
 });
 
 contentRouter.patch('/modules/:moduleId', validate({ params: idParams('moduleId'), body: patchOf(moduleBody) }), async (req, res) => {

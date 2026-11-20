@@ -40,7 +40,7 @@ const STYLES = {
 export function Toaster() {
   const list = useSyncExternalStore((fn) => (subscribers.add(fn), () => subscribers.delete(fn)), () => items);
   return (
-    <div className="no-print pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-center gap-2 p-4 sm:items-end" aria-live="polite" aria-atomic="false">
+    <div className="no-print pointer-events-none fixed inset-x-0 z-[100] flex flex-col items-center gap-2 p-4 max-lg:bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-0 sm:items-end" aria-live="polite" aria-atomic="false">
       {list.map((t) => {
         const { icon: Icon, tone } = STYLES[t.kind];
         return (

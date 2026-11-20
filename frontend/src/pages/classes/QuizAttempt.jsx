@@ -610,7 +610,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
       </div>
 
       {/* Phone controls */}
-      <div className="fixed inset-x-0 bottom-0 z-20 flex items-center gap-2 border-t border-line bg-surface px-3 py-2.5 lg:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-20 flex items-center gap-2 border-t border-line bg-surface px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:hidden">
         <Button variant="secondary" icon={ArrowLeft} disabled={index === 0} onClick={() => go(index - 1)} aria-label="Previous question" />
         <Button variant="secondary" icon={Grid3x3} className="flex-1" onClick={() => setPalette(true)}>{index + 1} / {questions.length}</Button>
         {index < questions.length - 1 ? <Button onClick={() => go(index + 1)} aria-label="Next question">Next<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button icon={Send} onClick={() => setConfirm(true)}>Submit</Button>}
@@ -618,7 +618,7 @@ function Taking({ attempt, back, onFinished, onClosedElsewhere }) {
       {palette && (
         <div className="fixed inset-0 z-30 flex items-end lg:hidden" role="dialog" aria-modal="true" aria-label="All questions">
           <div className="absolute inset-0 bg-[#0b0d17]/55" onClick={() => setPalette(false)} aria-hidden="true" />
-          <div className="animate-pop relative max-h-[75dvh] w-full overflow-y-auto rounded-t-2xl border-t border-line bg-surface p-4">
+          <div className="animate-pop relative max-h-[75dvh] w-full overflow-y-auto rounded-t-2xl border-t border-line bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">{answeredCount} of {questions.length} answered</h2><button type="button" onClick={() => setPalette(false)} className="rounded-md p-1.5 text-faint hover:bg-raised" aria-label="Close"><X className="size-5" /></button></div>
             {Palette}
             <Button icon={Send} className="mt-4 w-full" onClick={() => { setPalette(false); setConfirm(true); }}>Submit quiz</Button>

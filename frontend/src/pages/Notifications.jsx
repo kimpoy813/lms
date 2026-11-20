@@ -41,7 +41,7 @@ export default function Notifications() {
                     {n.body && <span className="mt-0.5 block text-[13px] text-faint">{n.body}</span>}
                     <span className="mt-1 block text-xs text-faint" title={formatDateTime(n.createdAt)}>{relativeTime(n.createdAt)}</span>
                   </button>
-                  <IconButton icon={Trash2} size="sm" label="Delete this notification" className="opacity-0 focus:opacity-100 group-hover:opacity-100" onClick={() => remove.mutate(n.id)} />
+                  <IconButton icon={Trash2} size="sm" label="Delete this notification" className="max-sm:opacity-70 sm:opacity-0 focus:opacity-100 sm:group-hover:opacity-100" onClick={() => remove.mutate(n.id)} />
                 </li>
               ))}
             </ul>

@@ -129,9 +129,30 @@ describe('built-in zero-key AI engine (smarter extraction & curriculum knowledge
     });
     expect(filMod.lessons[0].title).toMatch(/Panimula/i);
     expect(filMod.lessons[filMod.lessons.length - 1].kind).toBe('SUMMARY');
+
+    const words = (html) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length;
+    for (const l of enMod.lessons) {
+      expect(words(l.contentHtml)).toBeGreaterThanOrEqual(250);
+      expect(l.contentHtml).toMatch(/<h3>/i);
+      expect(l.contentHtml).toMatch(/<blockquote>/i);
+    }
+
+    // Unseen custom topic should still produce textbook-length chapters, tables, and self-checks.
+    const customMod = await runTask('module', {
+      topic: 'Philippine Project Management & Agile Delivery',
+      subtopics: ['Stakeholder Alignment', 'Sprint Planning', 'Risk Management'],
+      contentLength: 'COMPREHENSIVE',
+      includeAssessment: true,
+    });
+    expect(customMod.lessons.length).toBeGreaterThanOrEqual(6);
+    for (const l of customMod.lessons) {
+      expect(words(l.contentHtml)).toBeGreaterThanOrEqual(300);
+    }
+    expect(customMod.lessons.some((l) => /<table>/i.test(l.contentHtml))).toBe(true);
+    expect(customMod.lessons.some((l) => /Check Your Understanding/i.test(l.contentHtml))).toBe(true);
   });
 
-  it('adapts lesson rewrites to tables, worked examples, self-checks, and concise bullet takeaways', async () => {
+  it('adapts lesson rewrites to tables, worked examples, self-checks, expanded textbook chapters, and concise bullet takeaways', async () => {
     const lesson = {
       title: 'Binary Search',
       kind: 'LESSON',
@@ -149,6 +170,12 @@ describe('built-in zero-key AI engine (smarter extraction & curriculum knowledge
 
     const bullets = await runTask('lesson-rewrite', { lesson, instruction: 'Summarize concisely in bullets' });
     expect(bullets.contentHtml).toContain('<ul>');
+
+    const expanded = await runTask('lesson-rewrite', { lesson, instruction: 'Expand into a full textbook chapter' });
+    expect(expanded.contentHtml).toContain('Introduction & Learning Context');
+    expect(expanded.contentHtml).toContain('Worked Example');
+    expect(expanded.contentHtml).toContain('Check Your Understanding');
+    expect(expanded.contentHtml.length).toBeGreaterThan(lesson.contentHtml.length * 4);
   });
 
   it('drafts tailored assignments, exact-sum rubrics, and intent-aware writing help', async () => {

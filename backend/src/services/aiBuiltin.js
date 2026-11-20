@@ -1049,25 +1049,218 @@ function generateQuestions(input = {}) {
   return { questions };
 }
 
-function buildComparisonTable(comparisons) {
+function buildComparisonTable(comparisons, { isFilipino = false } = {}) {
   if (!comparisons?.length) return '';
   const rows = comparisons
-    .slice(0, 4)
+    .slice(0, 5)
     .map((c) => `<tr><td><strong>${escHtml(c.left)}</strong></td><td><strong>${escHtml(c.right)}</strong></td><td>${escHtml(c.contrast)}</td></tr>`)
     .join('');
-  return `<h4>Key Contrasts</h4><table><thead><tr><th>Concept A</th><th>Concept B</th><th>Key Distinction</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return isFilipino
+    ? `<h4>Talahanayan ng Paghahambing</h4><table><thead><tr><th>Konsepto A</th><th>Konsepto B</th><th>Mahalagang Pagkakaiba</th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<h4>Comparison & Key Contrasts</h4><table><thead><tr><th>Concept A</th><th>Concept B</th><th>Key Distinction</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-function buildWorkedExampleHtml(example) {
+function buildWorkedExampleHtml(example, { heading = null, isFilipino = false } = {}) {
   if (!example) return '';
+  const title = heading || (isFilipino ? `Halimbawang Paglalapat: ${example.title}` : `Worked Example: ${example.title}`);
   return [
-    `<h4>Worked Example: ${escHtml(example.title)}</h4>`,
+    `<h4>${escHtml(title)}</h4>`,
+    `<p>${escHtml(
+      isFilipino
+        ? `Suriin kung paano gumagana ang konseptong ito hakbang-hakbang sa aktwal na halimbawa sa ibaba:`
+        : `Let us trace how these principles operate in practice by examining a concrete scenario step by step:`,
+    )}</p>`,
     example.code ? `<pre><code>${escHtml(example.code)}</code></pre>` : '',
-    `<p>${escHtml(example.walkthrough)}</p>`,
-    example.takeaway ? `<blockquote><p><strong>Key takeaway:</strong> ${escHtml(example.takeaway)}</p></blockquote>` : '',
+    `<p><strong>${isFilipino ? 'Hakbang-hakbang na paliwanag:' : 'Step-by-step analysis:'}</strong> ${escHtml(example.walkthrough)}</p>`,
+    example.takeaway ? `<blockquote><p><strong>${isFilipino ? 'Mahalagang Aral:' : 'Key Takeaway:'}</strong> ${escHtml(example.takeaway)}</p></blockquote>` : '',
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function paragraphChunks(sentences, perParagraph = 3) {
+  const clean = sentences.map((s) => cleanLine(s, 600)).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < clean.length; i += perParagraph) {
+    out.push(clean.slice(i, i + perParagraph).join(' '));
+  }
+  return out;
+}
+
+function rotatedSlice(list, offset, count) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const out = [];
+  const total = Math.min(count, list.length);
+  for (let k = 0; k < total; k += 1) {
+    out.push(list[(offset + k) % list.length]);
+  }
+  return out;
+}
+
+function buildGlossaryTable(definitions, { isFilipino = false } = {}) {
+  if (!definitions?.length) return '';
+  const rows = definitions
+    .map((d) => `<tr><td><strong>${escHtml(d.term)}</strong></td><td>${escHtml(d.definition)}</td></tr>`)
+    .join('');
+  return isFilipino
+    ? `<h4>Mahahalagang Terminolohiya</h4><table><thead><tr><th>Termino</th><th>Kahulugan at Papel</th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<h4>Key Vocabulary & Definitions</h4><table><thead><tr><th>Term</th><th>Definition & Role</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function buildFactNarrative(facts, focus, topic, { isFilipino = false } = {}) {
+  if (!facts?.length) return [];
+  const paras = [];
+  facts.forEach((f, idx) => {
+    const lead = idx === 0
+      ? (isFilipino
+          ? `Isa sa mga pangunahing prinsipyo ng <strong>${escHtml(focus)}</strong> ay: ${escHtml(f.statement)}`
+          : `At the core of <strong>${escHtml(focus)}</strong> is a foundational rule: ${escHtml(f.statement)}`)
+      : (isFilipino
+          ? `Bukod dito, mahalagang tandaan na ${escHtml(f.statement.charAt(0).toLowerCase() + f.statement.slice(1))}`
+          : `Building directly on that principle, ${escHtml(f.statement.charAt(0).toLowerCase() + f.statement.slice(1))}`);
+    const contrast = f.misconception
+      ? (isFilipino
+          ? ` Madalas itong ipinagkakamali sa maling akala na "${escHtml(f.misconception)}" — ngunit sa pagsusuri ng ${escHtml(topic)}, mahalagang ihiwalay ang totoong mekanismo mula sa panlabas na anyo.`
+          : ` Students sometimes hold the competing assumption that "${escHtml(f.misconception)}", which leads to subtle reasoning errors when problems scale or edge conditions appear.`)
+      : '';
+    paras.push(`<p>${lead}${contrast}</p>`);
+  });
+  return paras;
+}
+
+function buildSelfCheckBlock({ focus, topic, defs = [], facts = [], isFilipino = false, isBilingual = false, isComprehensive = false }) {
+  const heading = isFilipino ? 'Pagsusuri sa Sariling Pag-unawa' : isBilingual ? 'Check Your Understanding (Pagsusuri)' : 'Check Your Understanding';
+  const prompt1 = defs[0]
+    ? (isFilipino
+        ? `Sa sarili mong salita, ipaliwanag kung ano ang <strong>${escHtml(defs[0].term)}</strong> at paano ito naiiba sa ibang bahagi ng ${escHtml(topic)}.`
+        : `In your own words, explain <strong>${escHtml(defs[0].term)}</strong> and describe a concrete situation where it directly governs the outcome in ${escHtml(topic)}.`)
+    : (isFilipino
+        ? `Ibuod ang pangunahing ideya ng <strong>${escHtml(focus)}</strong> sa dalawa hanggang tatlong pangungusap nang hindi tumitingin sa mga tala.`
+        : `Summarize the central mechanism of <strong>${escHtml(focus)}</strong> in two to three clear sentences without referring back to your notes.`);
+  const prompt2 = facts[0]?.misconception
+    ? (isFilipino
+        ? `Bakit mali ang pahayag na: <em>"${escHtml(facts[0].misconception)}"</em>? Magbigay ng maikling patunay o halimbawa.`
+        : `Explain why the following common claim is inaccurate, and state the corrected rule: <em>"${escHtml(facts[0].misconception)}"</em>`)
+    : (isFilipino
+        ? `Anong paunang kondisyon o paghahanda ang kailangang tiyakin bago gamitin ang mga prinsipyo ng <strong>${escHtml(focus)}</strong>?`
+        : `Identify one precondition that must hold before applying <strong>${escHtml(focus)}</strong>, and describe what fails if that precondition is violated.`);
+  const prompt3 = isFilipino
+    ? `Mag-isip ng isang praktikal na sitwasyon sa kurso o trabaho kung saan mahalaga ang pag-unawa sa <strong>${escHtml(focus)}</strong>.`
+    : `Construct a brief real-world or classroom scenario involving <strong>${escHtml(focus)}</strong> and trace how you would verify your answer step by step.`;
+
+  const items = [prompt1, prompt2, ...(isComprehensive || defs.length > 0 ? [prompt3] : [])];
+  const reflection = isFilipino
+    ? 'Bago magpatuloy sa susunod na kabanata, subukang sagutin ang mga tanong sa ibaba nang nakasara ang nakaraang bahagi:'
+    : 'Pause before moving to the next chapter and test your recall with these guided prompts:';
+  return [
+    `<h3>${heading}</h3>`,
+    `<p>${reflection}</p>`,
+    `<ol>${items.map((q) => `<li>${q}</li>`).join('')}</ol>`,
+  ].join('\n');
+}
+
+function buildGenericChapterProse({
+  focus,
+  topic,
+  learners,
+  levelLabel,
+  teachingApproach,
+  instructions,
+  nextFocus,
+  prevFocus,
+  isFilipino,
+  isBilingual,
+  isComprehensive,
+}) {
+  const out = [];
+  if (isFilipino) {
+    out.push(`<h3>1. Panimula at Konteksto</h3>`);
+    out.push(`<p>Sa kabanatang ito, masusing tinatalakay ang <strong>${escHtml(focus)}</strong> bilang mahalagang haligi ng <strong>${escHtml(topic)}</strong>. Para sa ${escHtml(learners)} sa antas na ${escHtml(levelLabel)}, ang tunay na pagkatuto ay hindi nagtatapos sa pagsasaulo ng kahulugan; nangangailangan ito ng pag-unawa kung bakit umiiral ang bawat tuntunin at paano ito kumikilos sa iba’t ibang sitwasyon.</p>`);
+    if (prevFocus) {
+      out.push(`<p>Bilang pagpapatuloy mula sa nakaraang aralin tungkol sa <em>${escHtml(prevFocus)}</em>, inilalapat natin ngayon ang mga batayang ideya sa mas malinaw na balangkas ng pagsusuri at pagpapasya.</p>`);
+    }
+    if (teachingApproach || instructions) {
+      out.push(`<p>${teachingApproach ? `<strong>Paraan ng Pag-aaral (${escHtml(teachingApproach)}):</strong> ` : ''}${instructions ? escHtml(cleanLine(instructions, 320)) : `Unahin ang pag-unawa sa praktikal na suliranin bago gamitin ang mga pormal na tuntunin ng ${escHtml(focus)}.`}</p>`);
+    }
+    out.push(`<h3>2. Mga Pangunahing Konsepto at Mekanismo</h3>`);
+    out.push(`<p>Upang maging bihasa sa <strong>${escHtml(focus)}</strong>, mahalagang tingnan ang tatlong magkakaugnay na bahagi: ang mga <strong>paunang kondisyon</strong> (inputs o sitwasyong pinagmumulan), ang <strong>mismong proseso o tuntunin</strong> na nagpapabago o sumusuri sa datos, at ang <strong>inaasahang resulta o katunayan</strong> na nagpapatunay na tama ang hakbang.</p>`);
+    out.push(`<p>Kapag nauunawaan mo ang ugnayan ng tatlong ito, mas madaling matukoy kung bakit ang isang paraan ay epektibo sa normal na kalagayan ngunit nagkakamali kapag may kakaibang kaso o limitasyon. Sa halip na hulaan ang sagot, nagiging sistematiko ang iyong pagsusuri.</p>`);
+    out.push(`<h4>Paghahambing: Mababaw vs. Malalim na Paglalapat</h4>`);
+    out.push(`<table><thead><tr><th>Dimensyon</th><th>Mababaw na Pag-unawa</th><th>Sistematikong Pagkatuto sa ${escHtml(focus)}</th></tr></thead><tbody>`
+      + `<tr><td><strong>Tuon</strong></td><td>Pagmememorya ng pormula o hakbang nang walang konteksto</td><td>Pag-unawa sa dahilan, hangganan, at epekto ng bawat hakbang</td></tr>`
+      + `<tr><td><strong>Pagharap sa Error</strong></td><td>Nahihirapan kapag nagbago ang anyo ng tanong</td><td>Nasusuri ang bawat hakbang upang mahanap agad ang sanhi ng mali</td></tr>`
+      + `<tr><td><strong>Pagpapatunay</strong></td><td>Tinitingnan lamang ang huling sagot</td><td>Sinusubok ang mga espesyal na kaso at hangganan bago magdesisyon</td></tr>`
+      + `</tbody></table>`);
+    out.push(`<h3>3. Pinatnubayang Halimbawa at Hakbang-hakbang na Pagsusuri</h3>`);
+    out.push(`<p>Subukan nating ilapat ang <strong>${escHtml(focus)}</strong> gamit ang malinaw at sunod-sunod na proseso na maaari mong gamitin sa mga takdang-aralin at pagsusulit:</p>`);
+    out.push(`<ol>`
+      + `<li><strong>Tukuyin ang Layunin at Kondisyon:</strong> Isulat kung ano ang ibinigay na impormasyon, ano ang hinahanap, at anong mga pagpapalagay ang umiiral sa problema.</li>`
+      + `<li><strong>Piliin ang Angkop na Prinsipyo:</strong> Ipaliwanag kung bakit ang pamamaraan sa <em>${escHtml(focus)}</em> ang nababagay kaysa sa ibang alternatibo sa ${escHtml(topic)}.</li>`
+      + `<li><strong>Isagawa nang Malinaw ang Bawat Hakbang:</strong> Ipakita ang bawat yugto ng pagbabago o pangangatwiran nang hindi lumalaktaw, upang madaling balikan at suriin.</li>`
+      + `<li><strong>Suriin ang Resulta at Hangganan:</strong> Tiyakin kung makatuwiran ang kinalabasan at kung nananatiling tama ito sa mga panimulang o sukdulang kondisyon.</li>`
+      + `</ol>`);
+    out.push(`<blockquote><p><strong>Mahalagang Paalala:</strong> Sa pag-aaral ng ${escHtml(focus)}, ang malinaw na pagtukoy ng mga paunang kondisyon ay kadalasang nakalulutas na ng kalahati ng suliranin bago ka pa magsimula.</p></blockquote>`);
+    out.push(`<h3>4. Mga Karaniwang Pagkakamali at Paano Ito Maiiwasan</h3>`);
+    out.push(`<ul>`
+      + `<li><strong>Paglaktaw sa mga paunang kondisyon:</strong> Laging tiyakin kung natutugunan ang lahat ng kinakailangan bago ilapat ang isang tuntunin.</li>`
+      + `<li><strong>Pagkakalito sa magkakalapit na termino:</strong> Paghambingin ang kahulugan at gamit ng bawat konsepto sa iba’t ibang halimbawa.</li>`
+      + `<li><strong>Kakulangan sa beripikasyon:</strong> Huwag tumigil sa unang sagot; maglaan ng sandali upang subukan ang kabaligtaran o pinakamaliit na kaso.</li>`
+      + `</ul>`);
+    if (nextFocus) {
+      out.push(`<p><em>Paghahanda sa susunod:</em> Sa susunod na kabanata tungkol sa <strong>${escHtml(nextFocus)}</strong>, gagamitin natin ang pundasyong ito upang harapin ang mas malalalim na aplikasyon.</p>`);
+    }
+    return out;
+  }
+
+  const bilingualTag = isBilingual ? ' <em>(Panimula at Batayang Konsepto)</em>' : '';
+  out.push(`<h3>1. Introduction & Learning Context${bilingualTag}</h3>`);
+  out.push(`<p>In this chapter, we examine <strong>${escHtml(focus)}</strong> as an essential building block of <strong>${escHtml(topic)}</strong>. Designed for ${escHtml(learners)} working at the ${escHtml(levelLabel)} level, this reading goes beyond surface definitions so you can see how the core principles behave in real situations, why specific constraints exist, and how experts verify their reasoning.</p>`);
+  if (prevFocus) {
+    out.push(`<p>Earlier, we explored <em>${escHtml(prevFocus)}</em>. Now we build directly upon those ideas to examine how <strong>${escHtml(focus)}</strong> shapes analysis, design choices, and problem-solving inside ${escHtml(topic)}.</p>`);
+  } else {
+    out.push(`<p>Whenever you encounter a new concept in ${escHtml(topic)}, start by asking three anchoring questions: what problem does it solve, what assumptions must hold for it to work reliably, and how would you recognize an error if one occurred? Keeping these questions visible turns passive reading into active mastery.</p>`);
+  }
+  if (teachingApproach || instructions) {
+    out.push(`<p>${teachingApproach ? `<strong>Pedagogical Approach (${escHtml(teachingApproach)}):</strong> ` : '<strong>Study Focus:</strong> '}${instructions ? escHtml(cleanLine(instructions, 320)) : `Connect each formal concept in ${escHtml(focus)} back to concrete everyday or workplace evidence before memorizing terminology.`}</p>`);
+  }
+
+  out.push(`<h3>2. Core Concepts & Detailed Explanation</h3>`);
+  out.push(`<p>To understand <strong>${escHtml(focus)}</strong> deeply, picture it as a structured relationship between three components: the <strong>inputs or preconditions</strong> that define the starting state, the <strong>governing mechanism or rule</strong> that transforms or evaluates those inputs, and the <strong>observable outcome</strong> that can be checked independently. Many difficulties arise not because the rule itself is complicated, but because learners apply it without checking whether the preconditions hold.</p>`);
+  out.push(`<p>In practice, mastering ${escHtml(focus)} means being able to justify <em>why</em> a chosen method works rather than merely repeating steps from memory. When you understand the underlying rationale, you can adapt smoothly when constraints shift, combine ideas across chapters of ${escHtml(topic)}, and explain your reasoning clearly to peers or clients.</p>`);
+  if (isComprehensive) {
+    out.push(`<p>Notice also how ${escHtml(focus)} balances competing priorities—such as clarity versus speed, flexibility versus strict validation, or simplicity versus precision. Recognizing those trade-offs helps you select the right approach rather than forcing one technique onto every scenario.</p>`);
+  }
+
+  out.push(`<h4>Analytical Contrast: Surface Recall vs. Principled Application</h4>`);
+  out.push(`<table><thead><tr><th>Dimension</th><th>Surface Approach</th><th>Principled Mastery of ${escHtml(focus)}</th></tr></thead><tbody>`
+    + `<tr><td><strong>Starting Point</strong></td><td>Applies rules mechanically without checking context</td><td>Verifies preconditions, scope, and constraints first</td></tr>`
+    + `<tr><td><strong>Reasoning</strong></td><td>Skips intermediate steps and guesses outcomes</td><td>Traces each step explicitly and articulates why it holds</td></tr>`
+    + `<tr><td><strong>Transfer</strong></td><td>Breaks down when unfamiliar examples appear</td><td>Adapts smoothly to new scenarios and boundary cases</td></tr>`
+    + `<tr><td><strong>Verification</strong></td><td>Accepts the first answer produced</td><td>Tests edge cases and checks consistency against core rules</td></tr>`
+    + `</tbody></table>`);
+
+  out.push(`<h3>3. Guided Walkthrough & Applied Scenario</h3>`);
+  out.push(`<p>Consider how a practitioner works through a typical problem involving <strong>${escHtml(focus)}</strong> in <strong>${escHtml(topic)}</strong>. Instead of jumping directly to a final conclusion, follow this repeatable four-stage walkthrough:</p>`);
+  out.push(`<ol>`
+    + `<li><strong>Frame the Problem & State Preconditions:</strong> Explicitly list the known inputs, constraints, and goal of the task before choosing any technique.</li>`
+    + `<li><strong>Select & Justify the Governing Principle:</strong> Identify which rule or framework within <em>${escHtml(focus)}</em> fits the situation, noting why alternative options are less suitable here.</li>`
+    + `<li><strong>Trace Intermediate States Clearly:</strong> Work through each step visibly so every transformation can be audited independently without hidden leaps.</li>`
+    + `<li><strong>Verify Against Edge Cases:</strong> Ask what happens under minimal, empty, conflicting, or extreme conditions to confirm that the conclusion remains sound.</li>`
+    + `</ol>`);
+  out.push(`<blockquote><p><strong>Key Concept:</strong> Most subtle mistakes in ${escHtml(focus)} occur before the main calculation or decision even begins—specifically when unstated assumptions are treated as guaranteed facts.</p></blockquote>`);
+
+  out.push(`<h3>4. Common Misconceptions & How to Catch Them</h3>`);
+  out.push(`<p>As you study <strong>${escHtml(focus)}</strong>, watch out for three frequent stumbling blocks that trip up learners across ${escHtml(topic)}:</p>`);
+  out.push(`<ul>`
+    + `<li><strong>Confusing correlation or surface similarity with the core rule:</strong> Two examples may look alike at first glance while obeying different constraints. Always check the defining criterion.</li>`
+    + `<li><strong>Overlooking boundary conditions:</strong> Solutions that succeed on clean textbook inputs frequently fail on empty, maximal, or unexpected cases unless verified explicitly.</li>`
+    + `<li><strong>Treating steps as isolated recipes:</strong> Memorizing a sequence without knowing what each step accomplishes makes troubleshooting almost impossible when an output looks wrong.</li>`
+    + `</ul>`);
+
+  if (nextFocus) {
+    out.push(`<p><em>Bridge to the next chapter:</em> Keeping these checkpoints in mind prepares you for <strong>${escHtml(nextFocus)}</strong>, where we build directly on these ideas.</p>`);
+  }
+  return out;
 }
 
 function generateModule(input = {}) {
@@ -1076,8 +1269,11 @@ function generateModule(input = {}) {
   const subtopics = (input.subtopics ?? []).map((s) => cleanLine(s, 140)).filter(Boolean);
   const objectives = (input.objectives ?? []).map((o) => cleanLine(o, 220)).filter(Boolean);
   const outcomes = (input.outcomes ?? []).map((o) => cleanLine(o, 220)).filter(Boolean);
-  const targetLessons = input.contentLength === 'SHORT' ? 3 : input.contentLength === 'COMPREHENSIVE' ? 6 : 4;
-  const totalMinutes = Number(input.durationMinutes) || targetLessons * 25;
+  const isShort = input.contentLength === 'SHORT';
+  const isComprehensive = input.contentLength === 'COMPREHENSIVE';
+  const targetLessons = isShort ? 3 : isComprehensive ? 7 : 5;
+  const baseMinutesPerLesson = isShort ? 25 : isComprehensive ? 40 : 30;
+  const totalMinutes = Number(input.durationMinutes) || targetLessons * baseMinutesPerLesson;
   const refSections = parseLessons(input.referenceText || '');
   const refMaterial = refSections.length ? analyzeMaterial(refSections) : null;
   const packs = matchKnowledge([topic, title, ...subtopics, input.instructions ?? '', (input.referenceText ?? '').slice(0, 1000)].join('\n'));
@@ -1095,7 +1291,8 @@ function generateModule(input = {}) {
       : [
           isFilipino ? `Maipaliwanag ang mga pangunahing konsepto at terminolohiya ng ${topic}` : `Define and explain the core principles and terminology of ${topic}`,
           isFilipino ? `Mailapat ang ${topic} sa mga totoong sitwasyon at hakbang-hakbang na halimbawa` : `Apply ${topic} systematically to concrete problems and worked scenarios`,
-          isFilipino ? `Masuri ang mga karaniwang pagkakamali at mapatunayan ang tamang solusyon` : `Diagnose common misconceptions and verify solution correctness in ${topic}`,
+          isFilipino ? `Masuri ang mga karaniwang pagkakamali at mapatatag ang katumpakan ng solusyon` : `Diagnose common misconceptions and verify solution correctness in ${topic}`,
+          isFilipino ? `Mahambing ang iba’t ibang paraan at piliin ang pinakaangkop sa sitwasyon` : `Compare competing methods and justify design choices in ${topic}`,
           ...outcomes.slice(0, 2),
         ].slice(0, 6);
 
@@ -1103,125 +1300,297 @@ function generateModule(input = {}) {
     3,
     Math.min(8, Math.max(targetLessons, subtopics.length ? Math.min(subtopics.length + 2, 8) : targetLessons)),
   );
-  const perMinutes = Math.max(10, Math.round(totalMinutes / lessonCount));
+  const perMinutes = Math.max(15, Math.round(totalMinutes / lessonCount));
   const lessons = [];
   const allDefs = primaryPack?.definitions ?? [];
+  const allFacts = primaryPack?.facts ?? [];
   const allComps = primaryPack?.comparisons ?? [];
   const allPitfalls = primaryPack?.pitfalls ?? [];
 
+  // Plan chapter titles first so chapters can bridge cleanly from one to the next like a book.
+  const plannedTitles = [];
+  const plannedKinds = [];
   for (let i = 0; i < lessonCount; i += 1) {
     const isLast = i === lessonCount - 1;
     const isFirst = i === 0;
     const isSecondToLast = i === lessonCount - 2;
-    const subtopic = subtopics[i - 1] ?? (isFirst ? null : subtopics[i - 1]);
+    const subtopic = subtopics[i - 1] ?? null;
     const refSec = refSections[i];
 
-    let lessonTitle;
-    let kind = 'LESSON';
     if (isLast) {
-      lessonTitle = isFilipino ? `Buod at Pagsusuri: ${topic}` : isBilingual ? `Summary & Review (Buod): ${topic}` : `Summary & Synthesis: ${topic}`;
-      kind = 'SUMMARY';
+      plannedTitles.push(isFilipino ? `Buod at Pagsusuri: ${topic}` : isBilingual ? `Summary & Review (Buod): ${topic}` : `Summary & Synthesis: ${topic}`);
+      plannedKinds.push('SUMMARY');
     } else if (refSec) {
-      lessonTitle = refSec.title;
+      plannedTitles.push(refSec.title);
+      plannedKinds.push('LESSON');
     } else if (isFirst) {
-      lessonTitle = isFilipino ? `Panimula at Pundasyon ng ${topic}` : isBilingual ? `Foundations of ${topic} (Mga Batayang Konsepto)` : `Foundations & Key Terminology: ${topic}`;
+      plannedTitles.push(isFilipino ? `Panimula at Pundasyon ng ${topic}` : isBilingual ? `Foundations of ${topic} (Mga Batayang Konsepto)` : `Foundations & Key Terminology: ${topic}`);
+      plannedKinds.push('LESSON');
     } else if (subtopic) {
-      lessonTitle = subtopic;
+      plannedTitles.push(subtopic);
+      plannedKinds.push('LESSON');
     } else if (isSecondToLast) {
-      lessonTitle = isFilipino ? `Pinatnubayang Pagsasanay at Halimbawa: ${topic}` : `Worked Examples & Common Pitfalls: ${topic}`;
-      kind = 'ACTIVITY';
+      plannedTitles.push(isFilipino ? `Pinatnubayang Pagsasanay at Halimbawa: ${topic}` : `Worked Examples & Applied Practice: ${topic}`);
+      plannedKinds.push('ACTIVITY');
     } else {
-      const roles = ['Core Mechanics & Principles', 'Comparative Analysis & Design', 'Applied Scenarios & Verification', 'Advanced Patterns & Edge Cases'];
-      lessonTitle = `${topic}: ${roles[(i - 1) % roles.length]}`;
+      const roles = isFilipino
+        ? ['Mga Pangunahing Mekanismo at Prinsipyo', 'Paghahambing at Pagsusuri ng Disenyo', 'Mga Praktikal na Aplikasyon at Beripikasyon', 'Malalalim na Kaso at Hangganan']
+        : ['Core Mechanics & Principles', 'Comparative Analysis & Design', 'Applied Scenarios & Verification', 'Advanced Patterns & Edge Cases'];
+      plannedTitles.push(`${topic}: ${roles[(i - 1) % roles.length]}`);
+      plannedKinds.push('LESSON');
     }
+  }
 
-    const html = [`<h3>${escHtml(lessonTitle)}</h3>`];
+  for (let i = 0; i < lessonCount; i += 1) {
+    const lessonTitle = plannedTitles[i];
+    const kind = plannedKinds[i];
+    const isLast = i === lessonCount - 1;
+    const isFirst = i === 0;
+    const isSecondToLast = i === lessonCount - 2;
+    const subtopic = subtopics[i - 1] ?? null;
+    const refSec = refSections[i];
+    const prevFocus = i > 0 ? plannedTitles[i - 1] : null;
+    const nextFocus = i < lessonCount - 1 ? plannedTitles[i + 1] : null;
+
+    const html = [];
 
     if (refSec) {
       const sents = splitSentences(refSec.body);
       const secDefs = refMaterial?.definitions.filter((d) => d.lessonTitle === refSec.title) ?? [];
-      for (const s of sents.slice(0, 4)) html.push(`<p>${escHtml(s)}</p>`);
+      const secComps = refMaterial?.comparisons.filter((c) => c.lessonTitle === refSec.title) ?? [];
+      const secFacts = refMaterial?.facts.filter((f) => f.lessonTitle === refSec.title) ?? [];
+      const bodyParas = paragraphChunks(sents, 3);
+
+      html.push(`<h3>${isFilipino ? '1. Panimula at Saklaw ng Aralin' : '1. Introduction & Reading Guide'}</h3>`);
+      html.push(`<p>${escHtml(
+        isFilipino
+          ? `Batay sa sangguniang inihanda para sa ${topic}, tatalakayin ng kabanatang ito ang ${lessonTitle}. Basahin nang maingat ang bawat talata at bigyang-pansin ang mga terminolohiyang nakahanay sa talahanayan.`
+          : `Drawing directly from the course reading for ${topic}, this chapter explores ${lessonTitle} for ${learners}. As you read through the explanation below, pay close attention to definitions, cause-and-effect relationships, and contrasting terms.`,
+      )}</p>`);
+      if (prevFocus) {
+        html.push(`<p>${escHtml(isFilipino ? `Kasunod ito ng nakaraang talakayan tungkol sa ${prevFocus}.` : `This reading extends the concepts introduced in ${prevFocus}.`)}</p>`);
+      }
+
+      html.push(`<h3>${isFilipino ? '2. Detalyadong Pagtalakay' : '2. Detailed Reading & Core Ideas'}</h3>`);
+      if (bodyParas.length > 0) {
+        for (const p of bodyParas.slice(0, 8)) html.push(`<p>${escHtml(p)}</p>`);
+      } else {
+        html.push(`<p>${escHtml(refSec.body)}</p>`);
+      }
       if (secDefs.length > 0) {
-        html.push('<h4>Key Definitions</h4><ul>' + secDefs.slice(0, 5).map((d) => `<li><strong>${escHtml(d.term)}:</strong> ${escHtml(d.definition)}</li>`).join('') + '</ul>');
-      } else if (sents.length > 4) {
-        html.push('<h4>Key Points</h4><ul>' + sents.slice(4, 9).map((s) => `<li>${escHtml(s)}</li>`).join('') + '</ul>');
+        html.push(buildGlossaryTable(secDefs.slice(0, 8), { isFilipino }));
       }
-      html.push('<h4>Quick Check</h4><p>Restate the main principle above in one sentence and identify how it connects to the module objectives.</p>');
+      if (secComps.length > 0) {
+        html.push(buildComparisonTable(secComps, { isFilipino }));
+      }
+      if (secFacts.length > 0) {
+        html.push(`<blockquote><p><strong>${isFilipino ? 'Mahalagang Punto:' : 'Key Concept:'}</strong> ${escHtml(secFacts[0].sentence)}</p></blockquote>`);
+      }
+      html.push(buildSelfCheckBlock({ focus: lessonTitle, topic, defs: secDefs, facts: [], isFilipino, isBilingual, isComprehensive }));
     } else if (isLast) {
-      html.push(
-        `<p>${escHtml(
-          isFilipino
-            ? `Pinagsasama-sama ng araling ito ang mga pangunahing konsepto at paghahambing para sa ${topic}.`
-            : `This closing lesson synthesizes the essential definitions, comparisons, and checkpoints across ${topic}.`,
-        )}</p>`,
-      );
-      html.push('<h4>Module Review Checklist</h4><ul>' + defaultObjectives.map((o) => `<li>${escHtml(o)}</li>`).join('') + '</ul>');
-      if (allComps.length > 0) html.push(buildComparisonTable(allComps));
-      if (allPitfalls.length > 0) {
-        html.push('<h4>Mistakes to Avoid</h4><ul>' + allPitfalls.map((p) => `<li>${escHtml(p)}</li>`).join('') + '</ul>');
+      html.push(`<h3>${isFilipino ? '1. Pangkalahatang Pagbubuo ng Modyul' : '1. Module Synthesis & Big Picture'}</h3>`);
+      html.push(`<p>${
+        isFilipino
+          ? `Binubuo ng pangwakas na kabanatang ito ang lahat ng napag-aralan mo sa <strong>${escHtml(title)}</strong>. Mula sa mga panimulang kahulugan hanggang sa aktwal na paglalapat at pagsusuri ng error, makikita mong magkakaugnay ang bawat bahagi bilang isang kumpletong sistema ng kaalaman.`
+          : `This capstone chapter brings together every major idea you studied across <strong>${escHtml(title)}</strong>. Rather than viewing each lesson in isolation, notice how the foundational vocabulary, core mechanisms, worked examples, and error-checking strategies reinforce one another into one coherent toolkit.`
+      }</p>`);
+      html.push(`<p>${
+        isFilipino
+          ? `Bago harapin ang mga gawain o pagtataya, balikan ang mga layunin sa ibaba at tiyaking kaya mong ipaliwanag ang bawat isa nang may sariling halimbawa.`
+          : `Before attempting graded quizzes or applied assignments, use this synthesis chapter as an active study guide—testing whether you can explain each objective aloud, trace a sample scenario without notes, and spot subtle misconceptions on sight.`
+      }</p>`);
+
+      html.push(`<h3>${isFilipino ? '2. Checklist ng mga Layunin sa Pagkatuto' : '2. Mastery Checklist'}</h3>`);
+      html.push(`<p>${escHtml(isFilipino ? 'Gamitin ang listahang ito upang suriin ang iyong kahandaan:' : 'Verify your readiness against every learning objective covered in this module:')}</p>`);
+      html.push('<ol>' + defaultObjectives.map((o) => `<li><strong>${escHtml(o)}</strong> — ${escHtml(isFilipino ? 'Kaya mo na ba itong ipaliwanag at magbigay ng isang halimbawa?' : 'Can you explain this principle clearly and demonstrate it with one concrete example?')}</li>`).join('') + '</ol>');
+
+      if (allDefs.length > 0) {
+        html.push(buildGlossaryTable(allDefs, { isFilipino }));
       }
+      if (allComps.length > 0) {
+        html.push(buildComparisonTable(allComps, { isFilipino }));
+      }
+      if (allPitfalls.length > 0) {
+        html.push(`<h3>${isFilipino ? '3. Mga Bitag na Dapat Bantayan sa Pagsusulit' : '3. Common Exam & Practice Traps to Avoid'}</h3>`);
+        html.push('<ul>' + allPitfalls.map((p) => `<li><strong>${escHtml(isFilipino ? 'Babala:' : 'Watch out:')}</strong> ${escHtml(p)}</li>`).join('') + '</ul>');
+      } else {
+        html.push(`<h3>${isFilipino ? '3. Gabay sa Pagre-review' : '3. Final Review Strategy'}</h3>`);
+        html.push(`<ul>`
+          + `<li><strong>${escHtml(isFilipino ? 'Balikan ang mga paunang kondisyon:' : 'Revisit Preconditions:')}</strong> ${escHtml(isFilipino ? 'Alamin kung kailan naaangkop ang bawat prinsipyo at kailan ito nabibigo.' : `Review when each rule in ${topic} applies and what assumptions must hold.`)}</li>`
+          + `<li><strong>${escHtml(isFilipino ? 'Magsanay sa sariling halimbawa:' : 'Practice Fresh Examples:')}</strong> ${escHtml(isFilipino ? 'Baguhin ang mga panimulang datos ng mga halimbawa upang subukan ang iyong pang-unawa.' : 'Modify inputs in a worked scenario and trace every intermediate step from start to finish.')}</li>`
+          + `</ul>`);
+      }
+      html.push(`<blockquote><p><strong>${isFilipino ? 'Pangwakas na Paalala:' : 'Study Tip:'}</strong> ${escHtml(isFilipino ? 'Ang pinakamabisang paraan ng pagre-review ay ang pagpapaliwanag ng konsepto na parang nagtuturo ka sa iba.' : `Teaching a core idea from ${topic} aloud in plain language is the fastest way to expose any remaining gaps in understanding.`)}</p></blockquote>`);
     } else if (isFirst) {
+      html.push(`<h3>${isFilipino ? '1. Panimula at Kahalagahan ng Paksa' : '1. Introduction & Why This Module Matters'}</h3>`);
       const introText = isFilipino
-        ? `Sa panimulang araling ito, kikilalanin ng ${learners} ang mga pangunahing termino at layunin ng <strong>${escHtml(topic)}</strong> (${escHtml(levelLabel)}).`
+        ? `Sa panimulang kabanatang ito ng <strong>${escHtml(title)}</strong>, bubuuin ng ${escHtml(learners)} ang matibay na pundasyon para sa <strong>${escHtml(topic)}</strong> (${escHtml(levelLabel)}). Ang malinaw na pag-unawa sa mga panimulang konsepto ay nagsisilbing mapa na magpapadali sa lahat ng susunod na aralin.`
         : isBilingual
-          ? `This opening lesson introduces <strong>${escHtml(topic)}</strong> (<em>Panimulang pagtalakay</em>) for ${escHtml(learners)} at the ${escHtml(levelLabel)} level.`
-          : `This opening lesson establishes the foundational vocabulary and mental model for <strong>${escHtml(topic)}</strong> for ${escHtml(learners)} (${escHtml(levelLabel)} level).`;
+          ? `Welcome to the opening chapter of <strong>${escHtml(title)}</strong> (<em>Panimulang Kabanata</em>). Built for ${escHtml(learners)} at the ${escHtml(levelLabel)} level, this module develops both clear conceptual understanding and practical problem-solving skill in <strong>${escHtml(topic)}</strong>.`
+          : `Welcome to the opening chapter of <strong>${escHtml(title)}</strong>. Designed for ${escHtml(learners)} at the ${escHtml(levelLabel)} level, this module takes you from foundational terminology to confident, verified application in <strong>${escHtml(topic)}</strong>.`;
       html.push(`<p>${introText}</p>`);
+      html.push(`<p>${
+        isFilipino
+          ? `Sa halip na isaulo lamang ang mga depinisyon, titingnan natin kung anong problema ang nilulutas ng ${escHtml(topic)}, paano nag-uugnayan ang mga bahagi nito, at ano ang mga batayang patakaran na laging dapat tandaan.`
+          : `Rather than treating ${escHtml(topic)} as isolated vocabulary to memorize, we begin by building a clear mental model: what problems it solves, how its key pieces interact, and which core principles govern accurate results in both classroom exercises and real-world systems.`
+      }</p>`);
       if (input.teachingApproach) {
-        html.push(`<p><strong>Teaching approach (${escHtml(input.teachingApproach)}):</strong> Anchor definitions in an authentic problem prompt before introducing formal notation or terminology.</p>`);
+        html.push(`<p><strong>${isFilipino ? 'Paraan ng Pagtuturo' : 'Teaching Approach'} (${escHtml(input.teachingApproach)}):</strong> ${escHtml(isFilipino ? 'Iugnay ang bawat konsepto sa isang totoong sitwasyon bago pumasok sa mga pormal na tuntunin.' : 'Anchor every formal concept in an authentic problem context before abstracting into notation or procedure.')}</p>`);
       }
       if (input.instructions) {
-        html.push(`<p><strong>Instructor focus:</strong> ${escHtml(cleanLine(input.instructions, 320))}</p>`);
+        html.push(`<p><strong>${isFilipino ? 'Pokus ng Guro:' : 'Instructor Focus:'}</strong> ${escHtml(cleanLine(input.instructions, 320))}</p>`);
       }
+
       if (allDefs.length > 0) {
-        html.push('<h4>Core Terminology</h4><ul>' + allDefs.slice(0, 4).map((d) => `<li><strong>${escHtml(d.term)}:</strong> ${escHtml(d.definition)}</li>`).join('') + '</ul>');
-      } else {
-        html.push('<h4>Core Focus</h4><ul>');
-        html.push(`<li><strong>Scope:</strong> What problems ${escHtml(topic)} solves and what inputs or conditions it requires.</li>`);
-        html.push(`<li><strong>Key building blocks:</strong> ${subtopics.length ? escHtml(subtopics.slice(0, 3).join(', ')) : `foundational terms and principles of ${escHtml(topic)}`}.</li>`);
-        html.push('</ul>');
-      }
-    } else if (isSecondToLast) {
-      if (subtopic) {
-        const subPack = matchKnowledge(`${subtopic} ${topic}`)[0] ?? primaryPack;
-        html.push(`<p>This lesson focuses on <strong>${escHtml(subtopic)}</strong> and walks through applied problem-solving and error diagnosis in <strong>${escHtml(topic)}</strong>.</p>`);
-        if (subPack?.facts?.[0]) {
-          html.push(`<ul><li>${escHtml(subPack.facts[0].statement)}</li></ul>`);
+        html.push(`<h3>${isFilipino ? '2. Mga Batayang Terminolohiya at Konsepto' : '2. Core Vocabulary & Mental Model'}</h3>`);
+        html.push(`<p>${escHtml(isFilipino ? `Narito ang mga pangunahing terminolohiyang paulit-ulit nating gagamitin sa kabuuan ng modyul:` : `Every discipline depends on precise language. Before diving into worked scenarios, study the essential terms below and notice how each definition specifies both what the concept is and what role it plays:`)}</p>`);
+        html.push(buildGlossaryTable(allDefs, { isFilipino }));
+        if (allFacts.length > 0) {
+          html.push(...buildFactNarrative(allFacts.slice(0, isComprehensive ? 3 : 2), topic, topic, { isFilipino }));
         }
-      }
-      if (primaryPack?.workedExample) {
-        html.push(buildWorkedExampleHtml(primaryPack.workedExample));
+        if (allComps.length > 0) {
+          html.push(buildComparisonTable(allComps.slice(0, 2), { isFilipino }));
+        }
+        if (primaryPack?.sequences?.[0]) {
+          const seq = primaryPack.sequences[0];
+          html.push(`<h3>3. ${escHtml(seq.title)}</h3>`);
+          html.push(`<p>${escHtml(isFilipino ? 'Sundin ang pagkakasunod-sunod ng mga hakbang sa ibaba upang makita kung paano gumagana ang proseso:' : 'Trace the lifecycle below from start to finish to see how these foundational terms connect dynamically:')}</p>`);
+          html.push(`<ol>${seq.steps.map((s) => `<li>${escHtml(s)}</li>`).join('')}</ol>`);
+        }
+        if (allFacts[0]) {
+          html.push(`<blockquote><p><strong>${isFilipino ? 'Mahalagang Konsepto:' : 'Key Concept:'}</strong> ${escHtml(allFacts[0].statement)}</p></blockquote>`);
+        }
       } else {
-        html.push(`<h4>Guided Walkthrough: ${escHtml(subtopic || topic)}</h4>`);
-        html.push('<ol><li><strong>Identify Inputs & Rules:</strong> State the known parameters and applicable rule before calculating or coding.</li><li><strong>Execute Step by Step:</strong> Show each intermediate state cleanly rather than skipping to the answer.</li><li><strong>Verify Edge Cases:</strong> Test empty, boundary, or unexpected conditions.</li></ol>');
+        html.push(...buildGenericChapterProse({
+          focus: topic,
+          topic,
+          learners,
+          levelLabel,
+          teachingApproach: input.teachingApproach,
+          instructions: input.instructions,
+          nextFocus,
+          prevFocus: null,
+          isFilipino,
+          isBilingual,
+          isComprehensive,
+        }));
       }
+
+      if (nextFocus) {
+        html.push(`<p><em>${isFilipino ? 'Susunod na kabanata:' : 'Looking ahead:'}</em> ${escHtml(isFilipino ? `Sa susunod na bahagi, pag-aaralan natin ang ${nextFocus}.` : `In the next chapter, we will build directly on these foundations as we explore ${nextFocus}.`)}</p>`);
+      }
+      html.push(buildSelfCheckBlock({ focus: topic, topic, defs: allDefs, facts: allFacts, isFilipino, isBilingual, isComprehensive }));
+    } else if (isSecondToLast) {
+      const focus = subtopic || lessonTitle;
+      const subPack = matchKnowledge(`${focus} ${topic}`)[0] ?? primaryPack;
+      const facts = subPack?.facts?.length ? rotatedSlice(subPack.facts, i, 2) : [];
+      const defs = subPack?.definitions?.length ? rotatedSlice(subPack.definitions, i, 3) : [];
+      const seq = subPack?.sequences?.[i % Math.max(1, subPack?.sequences?.length ?? 1)] ?? null;
+
+      html.push(`<h3>${isFilipino ? '1. Mula sa Teorya Tungo sa Aplikasyon' : '1. From Theory to Applied Problem-Solving'}</h3>`);
+      html.push(`<p>${
+        isFilipino
+          ? `Matapos mapag-aralan ang mga batayang ideya ng <strong>${escHtml(topic)}</strong>, nakatuon ang kabanatang ito sa pinatnubayang pagsasanay para sa <strong>${escHtml(focus)}</strong>. Dito natin pinag-aaralan hindi lamang kung paano makuha ang tamang sagot, kundi kung paano suriin at patunayan ang bawat hakbang.`
+          : `Now that you have built a solid foundation in <strong>${escHtml(topic)}</strong>, this chapter shifts focus to applied problem-solving and diagnostic reasoning around <strong>${escHtml(focus)}</strong>. Knowing a concept in theory is only half the journey; real mastery shows when you can trace edge cases cleanly and recognize subtle bugs or misconceptions before finalizing an answer.`
+      }</p>`);
+      if (prevFocus) {
+        html.push(`<p>${escHtml(isFilipino ? `Gagamitin natin dito ang mga konseptong tinalakay sa "${prevFocus}".` : `Keep the mechanisms from "${prevFocus}" in mind as we trace concrete examples below.`)}</p>`);
+      }
+
+      if (facts.length > 0) {
+        html.push(`<h3>${isFilipino ? '2. Mga Gabay na Prinsipyo sa Paglalapat' : '2. Guiding Principles in Practice'}</h3>`);
+        html.push(...buildFactNarrative(facts, focus, topic, { isFilipino }));
+      }
+
+      html.push(`<h3>${isFilipino ? '3. Pinatnubayang Halimbawa at Hakbang-hakbang na Solusyon' : '3. Worked Examples & Step-by-Step Walkthrough'}</h3>`);
+      if (subPack?.workedExample) {
+        html.push(buildWorkedExampleHtml(subPack.workedExample, { isFilipino }));
+      } else {
+        html.push(`<p>${escHtml(isFilipino ? `Sundan ang apat na hakbang na ito sa pagsusuri ng problema sa ${focus}:` : `Walk through a structured problem in ${focus} using this four-part verification workflow:`)}</p>`);
+        html.push('<ol>'
+          + `<li><strong>${escHtml(isFilipino ? 'Tukuyin ang Inputs at Tuntunin:' : 'Identify Inputs & Governing Rules:')}</strong> ${escHtml(isFilipino ? 'Isulat ang mga ibinigay na halaga at tiyaking natutugunan ang mga paunang kondisyon.' : 'State all given parameters, constraints, and the exact rule you plan to apply before computing or writing code.')}</li>`
+          + `<li><strong>${escHtml(isFilipino ? 'Isagawa nang Sunod-sunod:' : 'Execute Step by Step:')}</strong> ${escHtml(isFilipino ? 'Ipakita ang bawat gitnang yugto sa halip na tumalon agad sa huling sagot.' : 'Record every intermediate state clearly so you can pinpoint where reasoning or values change.')}</li>`
+          + `<li><strong>${escHtml(isFilipino ? 'Suriin ang Mga Espesyal na Kaso:' : 'Stress-Test Boundary & Edge Cases:')}</strong> ${escHtml(isFilipino ? 'Subukan ang walang laman, sukdulan, o hindi inaasahang kondisyon.' : 'Test minimal, empty, maximum, or adversarial inputs to ensure the solution holds universally.')}</li>`
+          + `<li><strong>${escHtml(isFilipino ? 'Patunayan ang Katumpakan:' : 'Verify Against Module Criteria:')}</strong> ${escHtml(isFilipino ? 'Ihambing ang resulta sa mga layunin ng aralin upang matiyak ang katumpakan.' : 'Check that the final output satisfies every original requirement without unintended side effects.')}</li>`
+          + '</ol>');
+      }
+      if (seq) {
+        html.push(`<h4>${escHtml(seq.title)}</h4><ol>${seq.steps.map((s) => `<li>${escHtml(s)}</li>`).join('')}</ol>`);
+      }
+
+      html.push(`<h3>${isFilipino ? '4. Karaniwang Pagkakamali at Paano Ito Matutukoy' : '4. Common Pitfalls & Error Diagnosis'}</h3>`);
       if (allPitfalls.length > 0) {
-        html.push('<h4>Common Pitfalls & How to Catch Them</h4><ul>' + allPitfalls.map((p) => `<li>${escHtml(p)}</li>`).join('') + '</ul>');
+        html.push(`<p>${escHtml(isFilipino ? 'Narito ang mga karaniwang pagkakamaling madalas makita sa paglalapat—at kung paano ito maagapan:' : 'Watch carefully for these common errors when working independently on problems in this unit:')}</p>`);
+        html.push('<ul>' + allPitfalls.map((p) => `<li><strong>${escHtml(isFilipino ? 'Panganib:' : 'Pitfall:')}</strong> ${escHtml(p)} — ${escHtml(isFilipino ? 'Ugaliing suriin ang hakbang na ito bago tapusin ang gawain.' : 'Make it a habit to verify this condition explicitly during your trace.')}</li>`).join('') + '</ul>');
+      } else {
+        html.push('<ul>'
+          + `<li><strong>${escHtml(isFilipino ? 'Paglaktaw ng Beripikasyon:' : 'Skipping Verification:')}</strong> ${escHtml(isFilipino ? 'Huwag ihinto ang pagsusuri sa unang makuha mong sagot.' : 'Stopping at the first plausible result without checking boundary cases.')}</li>`
+          + `<li><strong>${escHtml(isFilipino ? 'Maling Pagpapalagay:' : 'Hidden Assumptions:')}</strong> ${escHtml(isFilipino ? 'Laging tiyakin ang mga paunang kondisyon bago ilapat ang solusyon.' : 'Applying a shortcut when a required precondition is missing.')}</li>`
+          + '</ul>');
       }
+      html.push(buildSelfCheckBlock({ focus, topic, defs, facts, isFilipino, isBilingual, isComprehensive }));
     } else {
       const focus = subtopic || lessonTitle;
       const focusPack = matchKnowledge(`${focus} ${topic}`)[0] ?? primaryPack;
-      const relevantFacts = focusPack?.facts?.slice(i - 1, i + 2) ?? [];
-      const relevantComps = focusPack?.comparisons?.slice(0, 2) ?? [];
-      html.push(
-        `<p>${
+      const relevantFacts = focusPack?.facts?.length ? rotatedSlice(focusPack.facts, i - 1, isComprehensive ? 3 : 2) : [];
+      const relevantDefs = focusPack?.definitions?.length ? rotatedSlice(focusPack.definitions, i - 1, 3) : [];
+      const relevantComps = focusPack?.comparisons?.length ? rotatedSlice(focusPack.comparisons, i - 1, 2) : [];
+      const seq = focusPack?.sequences?.length ? focusPack.sequences[(i - 1) % focusPack.sequences.length] : null;
+
+      if (focusPack && (relevantFacts.length > 0 || relevantDefs.length > 0)) {
+        html.push(`<h3>${isFilipino ? '1. Panimula sa Paksa' : '1. Introduction & Chapter Context'}</h3>`);
+        html.push(`<p>${
           isFilipino
-            ? `Tinatalakay dito ang <strong>${escHtml(focus)}</strong> at kung paano ito ginagamit nang wasto.`
-            : `This lesson deepens understanding of <strong>${escHtml(focus)}</strong>, examining how core rules behave under practical constraints.`
-        }</p>`,
-      );
-      if (relevantFacts.length > 0) {
-        html.push('<h4>Key Principles</h4><ul>' + relevantFacts.map((f) => `<li>${escHtml(f.statement)}</li>`).join('') + '</ul>');
+            ? `Tinatalakay sa kabanatang ito ang <strong>${escHtml(focus)}</strong> bilang isang mahalagang yugto ng pag-unawa sa <strong>${escHtml(topic)}</strong>. Para sa ${escHtml(learners)} (${escHtml(levelLabel)}), sinusuri natin kung paano gumagana ang mga tuntunin sa aktwal na mga limitasyon at paano pumili ng tamang estratehiya.`
+            : `This chapter deepens your command of <strong>${escHtml(focus)}</strong> within <strong>${escHtml(topic)}</strong>. Written for ${escHtml(learners)} at the ${escHtml(levelLabel)} level, we move from intuition to precise mechanics—examining how rules behave under real constraints and how careful choices prevent costly errors.`
+        }</p>`);
+        if (prevFocus) {
+          html.push(`<p>${escHtml(isFilipino ? `Direktang nakaugat ang araling ito sa nakaraang kabanata (${prevFocus}).` : `Building directly upon ${prevFocus}, notice how the concepts below turn foundational vocabulary into working analytical tools.`)}</p>`);
+        }
+
+        html.push(`<h3>${isFilipino ? '2. Detalyadong Paliwanag at Mga Prinsipyo' : '2. Core Mechanics & Detailed Explanation'}</h3>`);
+        if (relevantDefs.length > 0) {
+          html.push(buildGlossaryTable(relevantDefs, { isFilipino }));
+        }
+        if (relevantFacts.length > 0) {
+          html.push(...buildFactNarrative(relevantFacts, focus, topic, { isFilipino }));
+        }
+        if (relevantComps.length > 0) {
+          html.push(buildComparisonTable(relevantComps, { isFilipino }));
+        }
+
+        html.push(`<h3>${isFilipino ? '3. Hakbang-hakbang na Proseso at Halimbawa' : '3. Step-by-Step Execution & Applied Illustration'}</h3>`);
+        if (seq) {
+          html.push(`<p>${escHtml(isFilipino ? `Suriin ang maingat na daloy ng hakbang para sa ${seq.title}:` : `Follow the exact execution sequence below for ${seq.title}, noticing how each stage prepares the state for the next:`)}</p>`);
+          html.push(`<ol>${seq.steps.map((s) => `<li>${escHtml(s)}</li>`).join('')}</ol>`);
+        }
+        if (focusPack.workedExample && (i === 1 || isComprehensive)) {
+          html.push(buildWorkedExampleHtml(focusPack.workedExample, { isFilipino }));
+        } else {
+          html.push(`<p>${escHtml(isFilipino ? `Kapag nilulutas ang mga sitwasyong may kinalaman sa ${focus}, ihanda muna ang input, isagawa nang malinaw ang bawat hakbang, at tiyaking tugma ang resulta sa paunang kondisyon.` : `When applying ${focus} independently, always document the initial state, show each transformation explicitly, and check whether edge inputs alter the normal flow.`)}</p>`);
+        }
+        if (relevantFacts[0]) {
+          html.push(`<blockquote><p><strong>${isFilipino ? 'Mahalagang Konsepto:' : 'Key Concept:'}</strong> ${escHtml(relevantFacts[0].statement)}</p></blockquote>`);
+        }
+        if (nextFocus) {
+          html.push(`<p><em>${isFilipino ? 'Paghahanda sa susunod na kabanata:' : 'Connecting forward:'}</em> ${escHtml(isFilipino ? `Sa susunod na bahagi (${nextFocus}), pagtitibayin natin ang mga prinsipyo rito sa mas malalalim na halimbawa.` : `Keep these principles handy as we transition next to ${nextFocus}.`)}</p>`);
+        }
+        html.push(buildSelfCheckBlock({ focus, topic, defs: relevantDefs, facts: relevantFacts, isFilipino, isBilingual, isComprehensive }));
       } else {
-        html.push('<h4>Analytical Breakdown</h4><ul>');
-        html.push(`<li><strong>How ${escHtml(focus)} works:</strong> Trace the mechanism or rule from preconditions to verified result.</li>`);
-        html.push(`<li><strong>When to choose it:</strong> Identify trade-offs compared with alternative approaches in ${escHtml(topic)}.</li>`);
-        html.push('</ul>');
-      }
-      if (relevantComps.length > 0) html.push(buildComparisonTable(relevantComps));
-      if (focusPack?.sequences?.[0]) {
-        const seq = focusPack.sequences[0];
-        html.push(`<h4>Step-by-Step: ${escHtml(seq.title)}</h4><ol>${seq.steps.map((s) => `<li>${escHtml(s)}</li>`).join('')}</ol>`);
+        html.push(...buildGenericChapterProse({
+          focus,
+          topic,
+          learners,
+          levelLabel,
+          teachingApproach: input.teachingApproach,
+          instructions: input.instructions,
+          nextFocus,
+          prevFocus,
+          isFilipino,
+          isBilingual,
+          isComprehensive,
+        }));
+        html.push(buildSelfCheckBlock({ focus, topic, defs: [], facts: [], isFilipino, isBilingual, isComprehensive }));
       }
     }
 
@@ -1230,16 +1599,22 @@ function generateModule(input = {}) {
 
   const activities = [
     {
-      title: `Concept & Contrast Check: ${primaryPack?.title || topic}`,
+      title: isFilipino ? `Paghahambing ng Konsepto: ${primaryPack?.title || topic}` : `Concept & Contrast Check: ${primaryPack?.title || topic}`,
       instructions: allComps[0]
-        ? `In pairs, explain the difference between ${allComps[0].left} and ${allComps[0].right}, giving one scenario where choosing the wrong one causes an error.`
-        : `In pairs or small groups, define two central concepts from ${topic} in plain language and explain one precondition required for each.`,
+        ? `In pairs or small groups, explain the difference between ${allComps[0].left} and ${allComps[0].right} in plain language, and construct one concrete scenario where choosing the wrong one leads to an error.`
+        : `In pairs or small groups, define two central concepts from ${topic} without using jargon and describe one precondition required for each to hold.`,
     },
     {
-      title: `Applied Walkthrough: ${subtopics[0] || topic}`,
+      title: isFilipino ? `Pinatnubayang Paglalapat: ${subtopics[0] || topic}` : `Applied Walkthrough: ${subtopics[0] || topic}`,
       instructions: primaryPack?.workedExample
-        ? `Trace "${primaryPack.workedExample.title}" with a modified input, document every step, and check at least one boundary case.`
-        : `Solve a short practical scenario using ${subtopics[0] || topic}, explicitly checking assumptions and one edge case.`,
+        ? `Trace "${primaryPack.workedExample.title}" with a modified set of inputs, document every intermediate step, and verify at least one boundary or edge case.`
+        : `Solve a short practical scenario using ${subtopics[0] || topic}, explicitly documenting your preconditions, intermediate reasoning, and one boundary check.`,
+    },
+    {
+      title: isFilipino ? `Pagsusuri ng Mali: ${topic}` : `Misconception Audit: ${topic}`,
+      instructions: allPitfalls[0]
+        ? `Review this common pitfall: "${allPitfalls[0]}". Create a faulty example that exhibits the mistake, explain why it fails, and show the corrected solution.`
+        : `Identify one frequent misunderstanding in ${topic}, illustrate how it leads to an incorrect conclusion, and write a brief verification rule to catch it.`,
     },
   ];
 
@@ -1251,7 +1626,7 @@ function generateModule(input = {}) {
     ? generateQuestions({
         topic,
         source: sourceForQuiz,
-        count: 6,
+        count: isComprehensive ? 8 : 6,
         types: ['MULTIPLE_CHOICE', 'TRUE_FALSE', 'SHORT_ANSWER', 'IDENTIFICATION'],
         difficulty: 'MIXED',
         purpose: 'QUIZ',
@@ -1266,8 +1641,8 @@ function generateModule(input = {}) {
   return {
     title,
     overview: isFilipino
-      ? `Isang draft na modyul sa ${title} na may ${lessons.length} aralin, mga pagsasanay, at panimulang pagtataya para sa review ng guro.`
-      : `A structured draft module on ${title} comprising ${lessons.length} lessons${primaryPack ? ` (${primaryPack.domain})` : ''}, guided practice activities, and ${assessment.length} draft assessment items ready for instructor review.`,
+      ? `Isang komprehensibong modyul sa ${title} na binubuo ng ${lessons.length} malalalim na kabanata, mga pinatnubayang halimbawa, gawaing pagsasanay, at ${assessment.length} panimulang tanong sa pagtataya.`
+      : `A comprehensive, textbook-style learning module on ${title} comprising ${lessons.length} structured chapters${primaryPack ? ` (${primaryPack.domain})` : ''}, worked examples, guided practice activities, and ${assessment.length} draft assessment items ready for instructor review.`,
     objectives: defaultObjectives,
     lessons,
     activities,
@@ -1280,11 +1655,12 @@ function generateLessonRewrite(input = {}) {
   const lesson = input.lesson ?? {};
   const instruction = cleanLine(input.instruction, 400);
   const title = lesson.title || 'Lesson';
+  const moduleTopic = cleanLine(input.moduleTitle || title, 160) || title;
   const currentHtml = String(lesson.contentHtml ?? '');
   const plain = cleanLine(stripHtmlKeepBreaks(currentHtml), 16_000);
   const sentences = splitSentences(currentHtml);
   const analysis = analyzeMaterial([{ title, body: currentHtml }]);
-  const packs = matchKnowledge(`${title}\n${plain.slice(0, 1200)}`);
+  const packs = matchKnowledge(`${title}\n${moduleTopic}\n${plain.slice(0, 1200)}`);
   const lower = instruction.toLowerCase();
 
   let rewrittenHtml;
@@ -1300,6 +1676,29 @@ function generateLessonRewrite(input = {}) {
     ]
       .filter(Boolean)
       .join('\n');
+  } else if (/expand|deep|detail|textbook|book|chapter|longer|elaborat|thorough/.test(lower)) {
+    const pack = packs[0] ?? null;
+    const preservedParas = paragraphChunks(sentences, 3);
+    const out = [
+      `<h3>1. Introduction & Learning Context</h3>`,
+      preservedParas[0]
+        ? `<p>${escHtml(preservedParas[0])}</p>`
+        : `<p>This expanded chapter unpacks <strong>${escHtml(title)}</strong> in full textbook detail, connecting foundational principles with concrete walkthroughs and self-check reflection.</p>`,
+      `<h3>2. Detailed Explanation & Core Principles</h3>`,
+      ...preservedParas.slice(1, 5).map((p) => `<p>${escHtml(p)}</p>`),
+      ...(analysis.definitions.length > 0 ? [buildGlossaryTable(analysis.definitions.slice(0, 6))] : []),
+      ...(pack?.facts?.length ? buildFactNarrative(pack.facts.slice(0, 3), title, moduleTopic, {}) : []),
+      ...(pack?.comparisons?.length ? [buildComparisonTable(pack.comparisons)] : []),
+      `<h3>3. Worked Example & Step-by-Step Walkthrough</h3>`,
+      pack?.workedExample
+        ? buildWorkedExampleHtml(pack.workedExample)
+        : `<p>Apply the central concepts of <strong>${escHtml(title)}</strong> systematically using four clear steps:</p><ol><li><strong>Identify Inputs & Preconditions:</strong> Record known values and verify required conditions before proceeding.</li><li><strong>Select the Governing Rule:</strong> Match the scenario to the core principle studied in this chapter.</li><li><strong>Trace Every Step:</strong> Document each intermediate state cleanly rather than jumping ahead.</li><li><strong>Verify Boundary Cases:</strong> Double-check edge conditions and confirm consistency.</li></ol>`,
+      ...(pack?.pitfalls?.length
+        ? [`<h3>4. Common Pitfalls & Misconceptions</h3>`, `<ul>${pack.pitfalls.map((p) => `<li>${escHtml(p)}</li>`).join('')}</ul>`]
+        : []),
+      buildSelfCheckBlock({ focus: title, topic: moduleTopic, defs: analysis.definitions, facts: pack?.facts ?? [], isComprehensive: true }),
+    ];
+    rewrittenHtml = out.filter(Boolean).join('\n');
   } else if (/table|compar|contrast|matrix|pros|cons/.test(lower)) {
     const rows = analysis.definitions.length
       ? analysis.definitions.slice(0, 6).map((d) => `<tr><td><strong>${escHtml(d.term)}</strong></td><td>${escHtml(d.definition)}</td></tr>`)
