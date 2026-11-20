@@ -158,9 +158,9 @@ export function Card({ className, children, as: Tag = 'div', padded = true, ref,
 
 export function CardHeader({ title, description, action, icon: Icon, className }) {
   return (
-    <div className={cn('mb-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2.5', className)}>
-      <div className="flex min-w-0 flex-1 basis-48 items-center gap-2.5">
-        {Icon && <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand"><Icon className="size-4" aria-hidden="true" /></span>}
+    <div className={cn('mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-3', className)}>
+      <div className={cn('flex min-w-0 flex-1 basis-60 gap-2.5', description ? 'items-start' : 'items-center')}>
+        {Icon && <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand', description && 'mt-0.5')}><Icon className="size-4" aria-hidden="true" /></span>}
         <div className="min-w-0">
           <h2 className="break-words text-[15px] font-semibold text-ink">{title}</h2>
           {description && <p className="mt-0.5 text-[13px] text-faint">{description}</p>}
