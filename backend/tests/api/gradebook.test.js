@@ -329,6 +329,133 @@ describe('publishing, locking and finalising', () => {
       await admin.put('/api/admin/permissions', { role: 'TEACHER', key: 'grades.export', granted: true });
     }
   });
+
+  it('exports student grades by weights and by period across CSV, Excel, and PDF', async () => {
+    const room = await classroom(1);
+    const { teacher, cls, students } = room;
+    const setup = await teacher.put(`${gb(cls)}/structure`, {
+      periods: [
+        { name: 'Midterm', weight: 40, categories: [{ name: 'Quizzes', kind: 'QUIZ', weight: 30 }, { name: 'Exam', kind: 'EXAM', weight: 70 }] },
+        { name: 'Final', weight: 60, categories: [{ name: 'Project', kind: 'PROJECT', weight: 50 }, { name: 'Final Exam', kind: 'EXAM', weight: 50 }] },
+      ],
+    });
+    expect(setup.status).toBe(200);
+    const [mid, fin] = setup.body.data.structure.periods;
+    const mk = async (cat, title, maxPoints) => (await teacher.post(`${gb(cls)}/items`, { categoryId: cat.id, title, maxPoints })).body.data;
+    const midQuiz = await mk(mid.categories[0], 'M Quiz', 50);
+    const midExam = await mk(mid.categories[1], 'M Exam', 100);
+    const finProj = await mk(fin.categories[0], 'F Project', 100);
+    const finExam = await mk(fin.categories[1], 'F Exam', 100);
+
+    // Midterm: Quizzes 40/50 = 80% (wtd 24), Exam 90/100 = 90% (wtd 63) -> Midterm = 87% (wtd 34.8)
+    // Final: Project 90/100 = 90% (wtd 45), Exam 80/100 = 80% (wtd 40) -> Final = 85% (wtd 51)
+    // Overall = 34.8 + 51 = 85.8%
+    await teacher.put(`${gb(cls)}/entries`, {
+      entries: [
+        { itemId: midQuiz.id, studentId: students[0].user.id, status: 'GRADED', score: 40 },
+        { itemId: midExam.id, studentId: students[0].user.id, status: 'GRADED', score: 90 },
+        { itemId: finProj.id, studentId: students[0].user.id, status: 'GRADED', score: 90 },
+        { itemId: finExam.id, studentId: students[0].user.id, status: 'GRADED', score: 80 },
+      ],
+    });
+
+    const csvW = await teacher.get(`${gb(cls)}/export?format=csv&by=weights`);
+    expect(csvW.status).toBe(200);
+    const [hW, rW] = csvW.text.replace(/^\uFEFF/, '').split('\r\n');
+    expect(hW).toBe(
+      'Student No.,Name,'
+      + 'Midterm · Quizzes (30%) %,Midterm · Quizzes Wtd (30%),Midterm · Exam (70%) %,Midterm · Exam Wtd (70%),Midterm (40%) %,Midterm Wtd (40%),'
+      + 'Final · Project (50%) %,Final · Project Wtd (50%),Final · Final Exam (50%) %,Final · Final Exam Wtd (50%),Final (60%) %,Final Wtd (60%),'
+      + 'Final %,Grade,Remark',
+    );
+    expect(rW).toMatch(/,80,24,90,63,87,34\.8,90,45,80,40,85,51,85\.8,2\.00,Good$/);
+
+    // Complete export (individual items + weights)
+    const csvAll = await teacher.get(`${gb(cls)}/export?format=csv&by=all`);
+    expect(csvAll.status).toBe(200);
+    const [hAll, rAll] = csvAll.text.replace(/^\uFEFF/, '').split('\r\n');
+    expect(hAll).toContain('Midterm · M Quiz (50),Midterm · Quizzes (30%) %,Midterm · Quizzes Wtd (30%)');
+    expect(rAll).toContain(',40,80,24,');
+
+    // Single-period weighted export
+    const csvMid = await teacher.get(`${gb(cls)}/export?format=csv&by=weights&periodId=${mid.id}`);
+    expect(csvMid.status).toBe(200);
+    const [hMid, rMid] = csvMid.text.replace(/^\uFEFF/, '').split('\r\n');
+    expect(hMid).toBe('Student No.,Name,Quizzes (30%) %,Quizzes Wtd (30%),Exam (70%) %,Exam Wtd (70%),Midterm (40%) %,Grade,Remark');
+    expect(rMid).toMatch(/,80,24,90,63,87,2\.00,Good$/);
+
+    // Excel & PDF weighted exports
+    const binary = (res, cb) => { const c = []; res.on('data', (d) => c.push(d)); res.on('end', () => cb(null, Buffer.concat(c))); };
+    expect((await teacher.get(`${gb(cls)}/export?format=xlsx&by=weights`).buffer(true).parse(binary)).body.subarray(0, 2).toString()).toBe('PK');
+    expect((await teacher.get(`${gb(cls)}/export?format=pdf&by=weights`).buffer(true).parse(binary)).body.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('lets teachers edit or delete manual, assignment, and quiz columns cleanly from the gradebook', async () => {
+    const room = await classroom(1);
+    const { teacher, cls, students } = room;
+    const book0 = (await teacher.get(gb(cls))).body.data;
+    const [mid, fin] = book0.structure.periods;
+    const midAssignCat = mid.categories.find((c) => c.kind === 'ASSIGNMENT');
+    const midQuizCat = mid.categories.find((c) => c.kind === 'QUIZ');
+    const finAssignCat = fin.categories.find((c) => c.kind === 'ASSIGNMENT');
+    const finQuizCat = fin.categories.find((c) => c.kind === 'QUIZ');
+
+    // 1. Manual column: edit title, category (across periods), and points, with score-ceiling validation.
+    const manual = (await teacher.post(`${gb(cls)}/items`, { categoryId: midAssignCat.id, title: 'Recitation Typo', maxPoints: 50 })).body.data;
+    await teacher.put(`${gb(cls)}/entries`, { entries: [{ itemId: manual.id, studentId: students[0].user.id, status: 'GRADED', score: 45 }] });
+    expect((await teacher.patch(`${gb(cls)}/items/${manual.id}`, { maxPoints: 40 })).status).toBe(422);
+    const fixedManual = await teacher.patch(`${gb(cls)}/items/${manual.id}`, { title: 'Recitation 1', categoryId: finAssignCat.id, maxPoints: 100 });
+    expect(fixedManual.status).toBe(200);
+    expect(fixedManual.body.data).toMatchObject({ title: 'Recitation 1', categoryId: finAssignCat.id, maxPoints: 100 });
+
+    // 2. Linked assignment column: edit title/category/points/dueAt and verify Assignment syncs, then delete column without deleting assignment.
+    const aRes = await teacher.post(`/api/classes/${cls.id}/assignments`, {
+      title: 'Homework Typo',
+      instructionsHtml: '<p>Work</p>',
+      points: 50,
+      status: 'PUBLISHED',
+      categoryId: midAssignCat.id,
+    });
+    const assignment = aRes.body.data;
+    await students[0].put(`/api/assignments/${assignment.id}/submission`, { textContent: 'My answer', submit: true });
+    await teacher.put(`/api/assignments/${assignment.id}/submissions/${students[0].user.id}/grade`, { score: 40, return: true });
+
+    let grid = (await teacher.get(gb(cls))).body.data;
+    const aCol = grid.structure.periods[0].categories.find((c) => c.id === midAssignCat.id).items.find((i) => i.assignmentId === assignment.id);
+    // Lowering below existing graded submission/entry (40) is rejected with 422.
+    expect((await teacher.patch(`${gb(cls)}/items/${aCol.id}`, { maxPoints: 30 })).status).toBe(422);
+    const patchedAssign = await teacher.patch(`${gb(cls)}/items/${aCol.id}`, {
+      title: 'Homework 1',
+      categoryId: finAssignCat.id,
+      maxPoints: 100,
+    });
+    expect(patchedAssign.status).toBe(200);
+    const aDetail = (await teacher.get(`/api/assignments/${assignment.id}`)).body.data;
+    expect(aDetail).toMatchObject({ title: 'Homework 1', points: 100, gradeCategory: { id: finAssignCat.id } });
+
+    expect((await teacher.delete(`${gb(cls)}/items/${aCol.id}`)).status).toBe(204);
+    const aAfterDelete = (await teacher.get(`/api/assignments/${assignment.id}`)).body.data;
+    expect(aAfterDelete.gradeCategory).toBeNull();
+    const subsAfterDelete = (await teacher.get(`/api/assignments/${assignment.id}/submissions`)).body.data;
+    expect(subsAfterDelete.students.find((r) => r.student.id === students[0].user.id)).toMatchObject({ status: 'RETURNED', finalScore: 40 });
+
+    // 3. Linked quiz column: edit title/category/dueAt (refuses changing maxPoints directly), then delete column without deleting quiz.
+    const qRes = await teacher.post(`/api/classes/${cls.id}/quizzes`, {
+      title: 'Quiz Typo',
+      kind: 'QUIZ',
+      categoryId: midQuizCat.id,
+    });
+    const quiz = qRes.body.data;
+    grid = (await teacher.get(gb(cls))).body.data;
+    const qCol = grid.structure.periods[0].categories.find((c) => c.id === midQuizCat.id).items.find((i) => i.quizId === quiz.id);
+    expect((await teacher.patch(`${gb(cls)}/items/${qCol.id}`, { maxPoints: 50 })).body.error.code).toBe('QUIZ_POINTS');
+    const patchedQuiz = await teacher.patch(`${gb(cls)}/items/${qCol.id}`, { title: 'Quiz 1', categoryId: finQuizCat.id });
+    expect(patchedQuiz.status).toBe(200);
+    expect((await teacher.get(`/api/quizzes/${quiz.id}`)).body.data).toMatchObject({ title: 'Quiz 1', gradeCategory: { id: finQuizCat.id } });
+
+    expect((await teacher.delete(`${gb(cls)}/items/${qCol.id}`)).status).toBe(204);
+    expect((await teacher.get(`/api/quizzes/${quiz.id}`)).body.data.gradeCategory).toBeNull();
+  });
 });
 
 describe('grade review requests', () => {

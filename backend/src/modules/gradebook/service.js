@@ -16,7 +16,7 @@ const structureInclude = {
       items: {
         orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
         include: {
-          assignment: { select: { id: true, dueAt: true, status: true, publishAt: true, deletedAt: true } },
+          assignment: { select: { id: true, dueAt: true, status: true, publishAt: true, deletedAt: true, rubricId: true } },
           quiz: { select: { id: true, availableUntil: true, status: true, publishAt: true, deletedAt: true, resultVisibility: true, resultsPublishedAt: true } },
         },
       },

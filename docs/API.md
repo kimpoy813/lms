@@ -236,7 +236,7 @@ In the tables, `name?` marks an optional field and `= value` a default.
 | POST | `/api/classes/:classId/gradebook/finalize` | signed in |  | `confirmIncomplete?`: boolean = false<br>`gradeRankingEnabled?`: boolean<br>`gradeRankingShowScores?`: boolean |
 | POST | `/api/classes/:classId/gradebook/reopen` | signed in |  | `reason`: string |
 | GET | `/api/classes/:classId/gradebook/publishing-log` | signed in |  |  |
-| GET | `/api/classes/:classId/gradebook/export` | signed in | `format?`: "csv" \| "xlsx" \| "pdf" = "csv" |  |
+| GET | `/api/classes/:classId/gradebook/export` | signed in | `format?`: "csv" \| "xlsx" \| "pdf" = "csv"<br>`by?`: "items" \| "weights" \| "all" = "items"<br>`periodId?`: string |  |
 | POST | `/api/classes/:classId/gradebook/appeals` | student |  | `gradeItemId?`: string<br>`reason`: string |
 | GET | `/api/classes/:classId/gradebook/appeals` | signed in |  |  |
 | POST | `/api/classes/:classId/gradebook/appeals/:appealId/resolve` | signed in |  | `status`: "APPROVED" \| "REJECTED"<br>`response`: string |

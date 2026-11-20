@@ -51,7 +51,7 @@ const periodHead = (p) => ({
   id: p.id, name: p.name, weight: p.weight, position: p.position, publishedAt: p.publishedAt, lockedAt: p.lockedAt,
   categories: p.categories.map((c) => ({
     id: c.id, name: c.name, kind: c.kind, weight: c.weight,
-    items: c.items.map((i) => ({ id: i.id, title: i.title, maxPoints: i.maxPoints, source: i.source, assignmentId: i.assignmentId, quizId: i.quizId, dueAt: i.dueAt })),
+    items: c.items.map((i) => ({ id: i.id, title: i.title, maxPoints: i.maxPoints, source: i.source, assignmentId: i.assignmentId, quizId: i.quizId, dueAt: i.dueAt, hasRubric: Boolean(i.assignment?.rubricId) })),
   })),
 });
 
@@ -75,20 +75,35 @@ async function classSettingsView(cls, settings) {
 /** When grades are finalised the stored record is what counts, not a fresh computation. */
 async function overlayFinal(cls, rows) {
   if (!cls.gradesFinalizedAt) return rows;
-  const finals = await prisma.finalGrade.findMany({ where: { classId: cls.id }, select: { studentId: true, scope: true, percent: true, label: true, remark: true, isPassing: true, isOverridden: true } });
+  const finals = await prisma.finalGrade.findMany({ where: { classId: cls.id }, select: { studentId: true, scope: true, percent: true, label: true, remark: true, isPassing: true, isOverridden: true, breakdown: true } });
   const byKey = new Map(finals.map((f) => [`${f.studentId}:${f.scope}`, f]));
   const apply = (studentId, scope, cell) => {
     const f = byKey.get(`${studentId}:${scope}`);
     return f ? { ...cell, percent: f.percent, label: f.label, remark: f.remark, isPassing: f.isPassing, isOverridden: f.isOverridden } : cell;
   };
-  return rows.map((r) => ({
-    ...r,
-    periods: Object.fromEntries(Object.entries(r.periods).map(([id, cell]) => [id, apply(r.id, id, cell)])),
-    overall: apply(r.id, OVERALL_SCOPE, r.overall),
-  }));
+  return rows.map((r) => {
+    const overallFinal = byKey.get(`${r.id}:${OVERALL_SCOPE}`);
+    const weightPeriods = overallFinal?.breakdown?.periods && r.weightPeriods
+      ? Object.fromEntries(Object.entries(r.weightPeriods).map(([pid, wp]) => {
+        const snap = overallFinal.breakdown.periods.find((p) => p.id === pid);
+        if (!snap) return [pid, apply(r.id, pid, wp)];
+        const categories = Object.fromEntries(Object.entries(wp.categories).map(([cid, c]) => {
+          const snapCat = snap.categories?.find((sc) => sc.id === cid);
+          return [cid, snapCat ? { ...c, percent: snapCat.percent, earned: snapCat.earned, possible: snapCat.possible } : c];
+        }));
+        return [pid, { ...apply(r.id, pid, wp), categories }];
+      }))
+      : r.weightPeriods;
+    return {
+      ...r,
+      periods: Object.fromEntries(Object.entries(r.periods).map(([id, cell]) => [id, apply(r.id, id, cell)])),
+      ...(weightPeriods ? { weightPeriods } : {}),
+      overall: apply(r.id, OVERALL_SCOPE, r.overall),
+    };
+  });
 }
 
-async function matrix(cls) {
+async function matrix(cls, { includeWeights = false } = {}) {
   const { periods, settings, structureErrors, students } = await computeClassGrades(cls);
   const rows = await overlayFinal(cls, students.map(({ student, entries, result }) => ({
     id: student.id,
@@ -101,6 +116,14 @@ async function matrix(cls) {
     droppedNote: student.droppedNote,
     entries: Object.fromEntries([...entries.entries()].map(([itemId, e]) => [itemId, { score: e.score, status: e.status, isLate: e.isLate, feedback: e.feedback ?? null, derived: Boolean(e.derived) }])),
     periods: Object.fromEntries(result.periods.map((p) => [p.id, gradeCell(p)])),
+    ...(includeWeights
+      ? {
+          weightPeriods: Object.fromEntries(result.periods.map((p) => [p.id, {
+            ...gradeCell(p),
+            categories: Object.fromEntries(p.categories.map((c) => [c.id, { id: c.id, name: c.name, weight: c.weight, percent: c.percent, earned: c.earned, possible: c.possible }])),
+          }])),
+        }
+      : {}),
     overall: gradeCell(result.overall),
     missingCount: [...entries.values()].filter((e) => e.status === 'MISSING').length,
   })));
@@ -481,36 +504,99 @@ async function loadItem(req, cls) {
 
 classGradebookRouter.patch('/items/:itemId', validate({ params: idParams('classId', 'itemId'), body: patchOf(itemBody) }), async (req, res) => {
   const cls = await managed(req);
-  const item = await loadItem(req, cls);
-  const body = req.valid.body;
-  await assertItemOpen(prisma, item.id);
-  if (item.source !== 'MANUAL' && (body.title !== undefined || body.maxPoints !== undefined || body.dueAt !== undefined)) {
-    throw conflict(`This column follows its ${item.source === 'QUIZ' ? 'quiz' : 'assignment'}. Change the title, points or due date there.`, 'LINKED_ITEM');
-  }
-  if (body.categoryId !== undefined && body.categoryId !== item.categoryId) await loadCategory(prisma, cls.id, body.categoryId);
-  if (body.maxPoints !== undefined && body.maxPoints < item.maxPoints) {
-    const above = await prisma.gradeEntry.count({ where: { gradeItemId: item.id, score: { gt: body.maxPoints } } });
-    if (above > 0) throw fieldErrors({ maxPoints: `${above} student(s) already have a score above ${body.maxPoints}. Lower those scores first.` });
-  }
-  const updated = await prisma.gradeItem.update({
-    where: { id: item.id },
-    data: {
-      ...(body.title !== undefined ? { title: plainText(body.title, 200) } : {}),
-      ...(body.maxPoints !== undefined ? { maxPoints: body.maxPoints } : {}),
-      ...(body.dueAt !== undefined ? { dueAt: body.dueAt } : {}),
-      ...(body.categoryId !== undefined ? { categoryId: body.categoryId } : {}),
+  const item = await prisma.gradeItem.findFirst({
+    where: { id: req.valid.params.itemId, classId: cls.id },
+    include: {
+      assignment: { select: { id: true, title: true, points: true, dueAt: true, rubricId: true } },
+      quiz: { select: { id: true, title: true, availableUntil: true } },
     },
   });
-  if (body.maxPoints !== undefined && body.maxPoints !== item.maxPoints) {
-    await audit(req, { action: 'gradebook.item.update', entityType: 'GradeItem', entityId: item.id, classId: cls.id, summary: `Changed the points of "${item.title}"`, before: { maxPoints: item.maxPoints }, after: { maxPoints: body.maxPoints } });
+  if (!item) throw notFound('Grade item');
+  const body = req.valid.body;
+  const nextTitle = body.title !== undefined ? plainText(body.title, 200) : item.title;
+  const pointsChanged = body.maxPoints !== undefined && Math.abs(body.maxPoints - item.maxPoints) > 1e-6;
+  const nextMaxPoints = body.maxPoints !== undefined ? body.maxPoints : item.maxPoints;
+  const dueChanged = body.dueAt !== undefined && ((body.dueAt?.getTime() ?? null) !== (item.dueAt?.getTime() ?? null));
+  const nextDueAt = body.dueAt !== undefined ? body.dueAt : item.dueAt;
+  const categoryChanged = body.categoryId !== undefined && body.categoryId !== item.categoryId;
+
+  if (item.source === 'QUIZ' && pointsChanged) {
+    throw conflict("A quiz's total points come from its questions. Edit the questions in the quiz builder to change its points.", 'QUIZ_POINTS');
   }
+  if (item.source === 'ASSIGNMENT' && item.assignment?.rubricId && pointsChanged) {
+    throw conflict('This assignment uses a rubric, so its total points come from the rubric criteria.', 'RUBRIC_POINTS');
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await assertItemOpen(tx, item.id);
+    if (categoryChanged) await loadCategory(tx, cls.id, body.categoryId);
+    if (pointsChanged && nextMaxPoints < item.maxPoints) {
+      const above = await tx.gradeEntry.count({ where: { gradeItemId: item.id, score: { gt: nextMaxPoints } } });
+      if (above > 0) throw fieldErrors({ maxPoints: `${above} student(s) already have a score above ${nextMaxPoints}. Lower those scores first.` });
+      if (item.assignmentId) {
+        const subAbove = await tx.assignmentSubmission.count({ where: { assignmentId: item.assignmentId, rawScore: { gt: nextMaxPoints } } });
+        if (subAbove > 0) throw fieldErrors({ maxPoints: `${subAbove} submission(s) already have a score above ${nextMaxPoints}. Lower those scores first.` });
+      }
+    }
+    let nextPosition = item.position;
+    if (categoryChanged) {
+      const last = await tx.gradeItem.aggregate({ where: { categoryId: body.categoryId }, _max: { position: true } });
+      nextPosition = (last._max.position ?? -1) + 1;
+    }
+    const saved = await tx.gradeItem.update({
+      where: { id: item.id },
+      data: {
+        ...(body.title !== undefined ? { title: nextTitle } : {}),
+        ...(pointsChanged ? { maxPoints: nextMaxPoints } : {}),
+        ...(body.dueAt !== undefined ? { dueAt: nextDueAt } : {}),
+        ...(categoryChanged ? { categoryId: body.categoryId, position: nextPosition } : {}),
+      },
+    });
+    if (item.assignmentId && (body.title !== undefined || pointsChanged || body.dueAt !== undefined)) {
+      await tx.assignment.update({
+        where: { id: item.assignmentId },
+        data: {
+          ...(body.title !== undefined ? { title: nextTitle } : {}),
+          ...(pointsChanged ? { points: nextMaxPoints } : {}),
+          ...(body.dueAt !== undefined ? { dueAt: nextDueAt } : {}),
+          ...(dueChanged ? { reminderSentAt: null } : {}),
+        },
+      });
+    }
+    if (item.quizId && (body.title !== undefined || body.dueAt !== undefined)) {
+      await tx.quiz.update({
+        where: { id: item.quizId },
+        data: {
+          ...(body.title !== undefined ? { title: nextTitle } : {}),
+          ...(body.dueAt !== undefined ? { availableUntil: nextDueAt } : {}),
+        },
+      });
+    }
+    const before = {};
+    const after = {};
+    if (nextTitle !== item.title) { before.title = item.title; after.title = nextTitle; }
+    if (pointsChanged) { before.maxPoints = item.maxPoints; after.maxPoints = nextMaxPoints; }
+    if (categoryChanged) { before.categoryId = item.categoryId; after.categoryId = body.categoryId; }
+    if (dueChanged) { before.dueAt = item.dueAt; after.dueAt = nextDueAt; }
+    if (Object.keys(after).length > 0) {
+      await audit(req, {
+        action: 'gradebook.item.update',
+        entityType: 'GradeItem',
+        entityId: item.id,
+        classId: cls.id,
+        summary: `Updated gradebook column "${nextTitle}"`,
+        before,
+        after,
+      }, tx);
+    }
+    return saved;
+  });
   ok(res, { id: updated.id, title: updated.title, maxPoints: updated.maxPoints, categoryId: updated.categoryId, source: updated.source, dueAt: updated.dueAt });
 });
 
 classGradebookRouter.delete('/items/:itemId', validate({ params: idParams('classId', 'itemId') }), async (req, res) => {
   const cls = await managed(req);
   const item = await loadItem(req, cls);
-  if (item.source !== 'MANUAL') throw conflict(`This column belongs to ${item.source === 'QUIZ' ? 'a quiz' : 'an assignment'}. Remove it from the gradebook there.`, 'LINKED_ITEM');
   await prisma.$transaction(async (tx) => {
     await assertItemOpen(tx, item.id);
     const scores = await tx.gradeEntry.count({ where: { gradeItemId: item.id, status: 'GRADED' } });
@@ -518,7 +604,15 @@ classGradebookRouter.delete('/items/:itemId', validate({ params: idParams('class
     await tx.gradeEntry.deleteMany({ where: { gradeItemId: item.id } });
     await tx.gradeAppeal.updateMany({ where: { gradeItemId: item.id }, data: { gradeItemId: null } });
     await tx.gradeItem.delete({ where: { id: item.id } });
-    await audit(req, { action: 'gradebook.item.delete', entityType: 'GradeItem', entityId: item.id, classId: cls.id, summary: `Deleted grade item "${item.title}" with ${scores} recorded score(s)` }, tx);
+    const kindNote = item.source === 'MANUAL' ? 'Deleted manual grade item' : `Removed ${item.source.toLowerCase()} column from gradebook`;
+    await audit(req, {
+      action: 'gradebook.item.delete',
+      entityType: 'GradeItem',
+      entityId: item.id,
+      classId: cls.id,
+      summary: `${kindNote} "${item.title}" with ${scores} recorded score(s)`,
+      before: { title: item.title, source: item.source, maxPoints: item.maxPoints, categoryId: item.categoryId },
+    }, tx);
   });
   noContent(res);
 });
@@ -791,51 +885,143 @@ classGradebookRouter.get('/publishing-log', validate({ params: classParams }), a
 });
 
 // ── Export ───────────────────────────────────────────────────────────────────
-classGradebookRouter.get('/export', validate({ params: classParams, query: z.object({ format: exportFormat }) }), async (req, res) => {
-  const cls = await managed(req, { writable: false });
-  await assertPermission(req.user, 'grades.export');
-  const { format } = req.valid.query;
-  const data = await matrix(cls);
-  const tz = await getTimeZone();
-  const cell = (entry) => (!entry ? '' : entry.status === 'GRADED' ? entry.score : entry.status === 'MISSING' ? 'M' : entry.status === 'EXEMPT' ? 'EX' : '');
-  // A PDF page cannot hold one column per graded item, so it carries period and overall grades.
-  const detailed = format !== 'pdf';
-  const multiPeriod = data.structure.periods.length > 1;
-  const hasDropped = data.students.some((s) => s.enrollmentStatus === 'DROPPED');
-  const columns = [
-    { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.3 },
-    { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.8 },
-    ...(hasDropped ? [{ header: 'Status', value: (s) => (s.enrollmentStatus === 'DROPPED' ? 'Dropped' : 'Enrolled'), width: 11, pdfWidth: 1.0 }] : []),
-    ...data.structure.periods.flatMap((p) => [
-      ...(detailed
-        ? p.categories.flatMap((c) => c.items.map((i) => ({ header: `${multiPeriod ? `${p.name} · ` : ''}${i.title} (${i.maxPoints})`, value: (s) => cell(s.entries[i.id]), width: 16, align: 'right' })))
-        : []),
-      ...(multiPeriod ? [{ header: `${p.name} %`, value: (s) => s.periods[p.id]?.percent ?? '', width: 12, pdfWidth: 1, align: 'right' }] : []),
-    ]),
-    { header: 'Final %', value: (s) => s.overall.percent ?? '', width: 10, pdfWidth: 1, align: 'right' },
-    { header: 'Grade', value: (s) => s.overall.label ?? '', width: 8, pdfWidth: 0.8, align: 'center' },
-    { header: 'Remark', value: (s) => `${s.overall.remark ?? ''}${s.overall.isOverridden ? ' (override)' : ''}`, width: 16, pdfWidth: 1.4 },
-  ];
-  await audit(req, { action: 'grades.export', entityType: 'Class', entityId: cls.id, classId: cls.id, summary: `Exported the gradebook (${format.toUpperCase()})` });
-  await sendTable(res, format, {
-    filename: `grades-${cls.course.code}${cls.section ? `-${cls.section.name}` : ''}`,
-    title: `Grades — ${classLabel(cls)}`,
-    subtitle: `${cls.course.title} · ${cls.semester.name}, ${cls.semester.academicYear.name}`,
-    meta: [
-      `${data.stats.students} enrolled${hasDropped ? ` · ${data.stats.dropped} dropped` : ''} · ${cls.gradesFinalizedAt ? `Finalised ${dateKey(cls.gradesFinalizedAt, tz)}` : 'NOT FINAL — grades may still change'}`,
-      `Scale: ${data.class.gradingScale?.name ?? 'none'} · M = missing, EX = exempt · Generated ${dateKey(new Date(), tz)} (${tz})`,
-    ],
-    columns,
-    rows: data.students,
-    landscape: multiPeriod,
-    footer: 'Confidential student record — handle in accordance with the Data Privacy Act of 2012 (RA 10173).',
-    summary: [
-      ...data.structure.periods.map((p) => `${p.name} (${p.weight}%): ${p.categories.map((c) => `${c.name} ${c.weight}%`).join(', ')}`),
-      data.class.transmutationBase > 0 ? `Transmutation base ${data.class.transmutationBase}.` : 'No transmutation.',
-      data.class.treatMissingAsZero ? 'Missing work counts as zero.' : 'Missing work is not counted.',
-    ],
-  });
-});
+classGradebookRouter.get(
+  '/export',
+  validate({
+    params: classParams,
+    query: z.object({
+      format: exportFormat,
+      by: z.enum(['items', 'weights', 'all']).default('items'),
+      periodId: zId.optional(),
+    }),
+  }),
+  async (req, res) => {
+    const cls = await managed(req, { writable: false });
+    await assertPermission(req.user, 'grades.export');
+    const { format, by, periodId } = req.valid.query;
+    const data = await matrix(cls, { includeWeights: by !== 'items' });
+    const tz = await getTimeZone();
+    const cell = (entry) => (!entry ? '' : entry.status === 'GRADED' ? entry.score : entry.status === 'MISSING' ? 'M' : entry.status === 'EXEMPT' ? 'EX' : '');
+    const decimals = data.class.gradeRounding ?? 2;
+    const wtd = (percent, weight) => (percent === null || percent === undefined || !(weight > 0) ? '' : round((percent * weight) / 100, decimals));
+
+    let selectedPeriods = data.structure.periods;
+    let scopedPeriod = null;
+    if (periodId) {
+      scopedPeriod = data.structure.periods.find((p) => p.id === periodId) ?? null;
+      if (!scopedPeriod) throw fieldErrors({ periodId: 'Choose a grading period from this class.' });
+      selectedPeriods = [scopedPeriod];
+    }
+
+    // A PDF page cannot hold one column per graded item, so item scores appear in CSV/XLSX while PDF uses weights or period summaries.
+    const detailed = format !== 'pdf';
+    const multiPeriod = selectedPeriods.length > 1;
+    const hasDropped = data.students.some((s) => s.enrollmentStatus === 'DROPPED');
+
+    const periodColumns = (p) => {
+      const pPrefix = multiPeriod ? `${p.name} · ` : '';
+      if (by === 'items') {
+        return [
+          ...(detailed
+            ? p.categories.flatMap((c) => c.items.map((i) => ({ header: `${multiPeriod ? `${p.name} · ` : ''}${i.title} (${i.maxPoints})`, value: (s) => cell(s.entries[i.id]), width: 16, align: 'right' })))
+            : []),
+          ...(multiPeriod ? [{ header: `${p.name} %`, value: (s) => s.periods[p.id]?.percent ?? '', width: 12, pdfWidth: 1, align: 'right' }] : []),
+        ];
+      }
+      const cols = [];
+      for (const c of p.categories) {
+        if (by === 'all' && detailed) {
+          for (const i of c.items) {
+            cols.push({ header: `${pPrefix}${i.title} (${i.maxPoints})`, value: (s) => cell(s.entries[i.id]), width: 16, align: 'right' });
+          }
+        }
+        if (detailed) {
+          cols.push({ header: `${pPrefix}${c.name} (${c.weight}%) %`, value: (s) => s.weightPeriods[p.id]?.categories[c.id]?.percent ?? '', width: 16, align: 'right' });
+          if (c.weight > 0) {
+            cols.push({ header: `${pPrefix}${c.name} Wtd (${c.weight}%)`, value: (s) => wtd(s.weightPeriods[p.id]?.categories[c.id]?.percent, c.weight), width: 17, align: 'right' });
+          }
+        } else {
+          cols.push({
+            header: `${pPrefix}${c.name} (${c.weight}%)`,
+            value: (s) => {
+              const cat = s.weightPeriods[p.id]?.categories[c.id];
+              if (cat?.percent === null || cat?.percent === undefined) return '';
+              return c.weight > 0 ? `${cat.percent}% (${wtd(cat.percent, c.weight)})` : `${cat.percent}%`;
+            },
+            width: 16,
+            pdfWidth: 1.3,
+            align: 'right',
+          });
+        }
+      }
+      if (multiPeriod) {
+        if (detailed) {
+          cols.push({ header: `${p.name} (${p.weight}%) %`, value: (s) => s.periods[p.id]?.percent ?? '', width: 15, align: 'right' });
+          if (p.weight > 0) {
+            cols.push({ header: `${p.name} Wtd (${p.weight}%)`, value: (s) => wtd(s.periods[p.id]?.percent, p.weight), width: 16, align: 'right' });
+          }
+        } else {
+          cols.push({
+            header: `${p.name} (${p.weight}%)`,
+            value: (s) => {
+              const pg = s.periods[p.id];
+              if (pg?.percent === null || pg?.percent === undefined) return '';
+              return p.weight > 0 ? `${pg.percent}% (${wtd(pg.percent, p.weight)})` : `${pg.percent}%`;
+            },
+            width: 16,
+            pdfWidth: 1.25,
+            align: 'right',
+          });
+        }
+      }
+      return cols;
+    };
+
+    const finalCell = (s) => (scopedPeriod ? s.periods[scopedPeriod.id] : s.overall);
+    const columns = [
+      { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.3 },
+      { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.6 },
+      ...(hasDropped ? [{ header: 'Status', value: (s) => (s.enrollmentStatus === 'DROPPED' ? 'Dropped' : 'Enrolled'), width: 11, pdfWidth: 1.0 }] : []),
+      ...selectedPeriods.flatMap(periodColumns),
+      { header: scopedPeriod ? `${scopedPeriod.name} (${scopedPeriod.weight}%) %` : 'Final %', value: (s) => finalCell(s)?.percent ?? '', width: 12, pdfWidth: 1, align: 'right' },
+      { header: 'Grade', value: (s) => finalCell(s)?.label ?? '', width: 8, pdfWidth: 0.8, align: 'center' },
+      { header: 'Remark', value: (s) => `${finalCell(s)?.remark ?? ''}${finalCell(s)?.isOverridden ? ' (override)' : ''}`, width: 16, pdfWidth: 1.3 },
+    ];
+
+    const modeTitle = by === 'weights' ? 'Grades by Weights' : by === 'all' ? 'Complete Grades & Weights' : 'Grades';
+    const modeSlug = by === 'weights' ? 'grades-by-weights' : by === 'all' ? 'grades-complete' : 'grades';
+    const periodSlug = scopedPeriod ? `-${scopedPeriod.name}` : '';
+    const periodSuffixTitle = scopedPeriod ? ` · ${scopedPeriod.name} (${scopedPeriod.weight}%)` : '';
+
+    await audit(req, {
+      action: 'grades.export',
+      entityType: 'Class',
+      entityId: cls.id,
+      classId: cls.id,
+      summary: `Exported the gradebook (${format.toUpperCase()}, ${by}${scopedPeriod ? `, ${scopedPeriod.name}` : ''})`,
+      after: { format, by, ...(scopedPeriod ? { periodId: scopedPeriod.id, periodName: scopedPeriod.name } : {}) },
+    });
+
+    await sendTable(res, format, {
+      filename: `${modeSlug}-${cls.course.code}${cls.section ? `-${cls.section.name}` : ''}${periodSlug}`,
+      title: `${modeTitle} — ${classLabel(cls)}${periodSuffixTitle}`,
+      subtitle: `${cls.course.title} · ${cls.semester.name}, ${cls.semester.academicYear.name}`,
+      meta: [
+        `${data.stats.students} enrolled${hasDropped ? ` · ${data.stats.dropped} dropped` : ''} · ${cls.gradesFinalizedAt ? `Finalised ${dateKey(cls.gradesFinalizedAt, tz)}` : 'NOT FINAL — grades may still change'}`,
+        `Scale: ${data.class.gradingScale?.name ?? 'none'}${by === 'weights' ? ' · Category/Period columns show % and weighted contribution (Wtd)' : ' · M = missing, EX = exempt'} · Generated ${dateKey(new Date(), tz)} (${tz})`,
+      ],
+      columns,
+      rows: data.students,
+      landscape: multiPeriod || by !== 'items',
+      footer: 'Confidential student record — handle in accordance with the Data Privacy Act of 2012 (RA 10173).',
+      summary: [
+        ...selectedPeriods.map((p) => `${p.name} (${p.weight}%): ${p.categories.map((c) => `${c.name} ${c.weight}%`).join(', ')}`),
+        data.class.transmutationBase > 0 ? `Transmutation base ${data.class.transmutationBase}.` : 'No transmutation.',
+        data.class.treatMissingAsZero ? 'Missing work counts as zero.' : 'Missing work is not counted.',
+      ],
+    });
+  },
+);
 
 // ── Grade appeals ────────────────────────────────────────────────────────────
 const appealView = (a) => ({

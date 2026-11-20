@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, QueryState, Segmented, Select, StatCard, Switch, Tabs, Textarea } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, Input, Menu, MenuItem, Modal, QueryState, Segmented, Select, StatCard, Switch, Tabs, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, fromLocalInput, plural, relativeTime, toLocalInput } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -133,14 +133,7 @@ function Grid({ data, initialStudentId, onClearInitialStudent }) {
     invalidate: [...invalidate, ['class']], onSuccess: () => setDialog(null),
     success: (_, { action }) => ({ publish: `${period.name} grades are now visible to students.`, unpublish: `${period.name} grades are hidden from students.`, lock: `${period.name} is locked.`, unlock: `${period.name} is unlocked.` }[action]),
   });
-  const removeItem = useAction((itemId) => api.delete(`${base}/gradebook/items/${itemId}`), { invalidate, success: 'Column deleted.', onSuccess: () => setDialog(null) });
-  const exportAs = async (format) => {
-    try {
-      await api.download(`${base}/gradebook/export`, { format }, `gradebook.${format}`);
-    } catch (err) {
-      toast.error(err.message);
-    }
-  };
+  const removeItem = useAction((itemId) => api.delete(`${base}/gradebook/items/${itemId}`), { invalidate, success: 'Column deleted from gradebook.', onSuccess: () => setDialog(null) });
 
   // Do not lose unsaved scores to an accidental tab close.
   const dirtyCount = Object.keys(dirty).length;
@@ -217,11 +210,7 @@ function Grid({ data, initialStudentId, onClearInitialStudent }) {
               </Menu>
             )}
             {can('grades.export') && (
-              <Menu trigger={({ toggle, props }) => <IconButton icon={Download} variant="secondary" size="sm" label="Export the gradebook" onClick={toggle} {...props} />}>
-                <MenuItem onClick={() => exportAs('xlsx')}>Excel (.xlsx)</MenuItem>
-                <MenuItem onClick={() => exportAs('csv')}>CSV</MenuItem>
-                <MenuItem onClick={() => exportAs('pdf')}>PDF</MenuItem>
-              </Menu>
+              <Button size="sm" variant="secondary" icon={Download} onClick={() => setDialog('export')}>Export</Button>
             )}
           </div>
         </div>
@@ -257,11 +246,31 @@ function Grid({ data, initialStudentId, onClearInitialStudent }) {
         </div>
       )}
 
-      {dialog?.item !== undefined && <ItemDialog item={dialog.item} period={period} structure={structure} invalidate={invalidate} onClose={() => setDialog(null)} />}
+      {dialog?.item !== undefined && (
+        <ItemDialog
+          item={dialog.item}
+          period={period}
+          structure={structure}
+          invalidate={invalidate}
+          onDelete={(target) => setDialog({ remove: target })}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {studentId && <StudentDialog studentId={studentId} structure={structure} invalidate={invalidate} readOnly={readOnly} onClose={() => { setStudentId(null); onClearInitialStudent?.(); }} />}
       <ConfirmDialog open={Boolean(dialog?.remove)} onClose={() => setDialog(null)} onConfirm={() => removeItem.mutate(dialog.remove.id)} loading={removeItem.isPending} title={`Delete the column “${dialog?.remove?.title}”?`} confirmLabel="Delete column">
-        All scores in this column are deleted and grades are recomputed.
+        {dialog?.remove?.source === 'ASSIGNMENT'
+          ? 'This removes the column and its recorded scores from the gradebook and recomputes grades. The assignment itself and student submissions are kept as ungraded.'
+          : dialog?.remove?.source === 'QUIZ'
+            ? 'This removes the column and its recorded scores from the gradebook and recomputes grades. The quiz itself and student attempts are kept as ungraded.'
+            : 'All scores in this column are deleted and grades are recomputed.'}
       </ConfirmDialog>
+      {dialog === 'export' && (
+        <ExportDialog
+          structure={structure}
+          activePeriodId={period.id}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'publish' && (
         <PublishDialog
           periodName={period.name}
@@ -323,8 +332,8 @@ function GridTable({ period, items, students, dirty, locked, onCell, onStudent, 
                       : <Link to={item.source === 'QUIZ' ? `${base}/quizzes/${item.quizId}/results` : `${base}/assignments/${item.assignmentId}/submissions`} className="line-clamp-2 text-xs font-semibold leading-tight text-ink hover:text-brand hover:underline" title={`${item.title} — open to grade`}>{item.title}</Link>}
                     <span className="block text-[11px] font-normal text-faint">out of {formatScore(item.maxPoints)}</span>
                   </span>
-                  {item.source === 'MANUAL' && !locked && (
-                    <Menu trigger={({ toggle, props }) => <button type="button" onClick={toggle} {...props} className="rounded p-0.5 text-faint opacity-60 hover:bg-raised hover:text-ink group-hover:opacity-100" aria-label={`Column options for ${item.title}`}><MoreHorizontal className="size-3.5" /></button>}>
+                  {!locked && (
+                    <Menu trigger={({ toggle, props }) => <button type="button" onClick={toggle} {...props} className="rounded p-0.5 text-faint opacity-70 hover:bg-raised hover:text-ink group-hover:opacity-100" aria-label={`Column options for ${item.title}`}><MoreHorizontal className="size-3.5" /></button>}>
                       <MenuItem icon={Pencil} onClick={() => onEditItem(item)}>Edit column</MenuItem>
                       <MenuItem icon={Trash2} tone="danger" onClick={() => onDeleteItem(item)}>Delete column</MenuItem>
                     </Menu>
@@ -439,18 +448,64 @@ function Cell({ item, entry, draft, locked, name, dataCell, onChange, onMove }) 
   );
 }
 
-function ItemDialog({ item, period, structure, invalidate, onClose }) {
+function ItemDialog({ item, period, structure, invalidate, onDelete, onClose }) {
   const { base } = useClass();
-  const [v, setV] = useState({ categoryId: item?.category?.id ?? period.categories[0]?.id ?? '', title: item?.title ?? '', maxPoints: item?.maxPoints ?? 100, dueAt: item?.dueAt ?? null });
+  const isAssignment = item?.source === 'ASSIGNMENT';
+  const isQuiz = item?.source === 'QUIZ';
+  const pointsLocked = Boolean(isQuiz || (isAssignment && item?.hasRubric));
+  const [v, setV] = useState({
+    categoryId: item?.category?.id ?? period.categories.find((c) => c.kind !== 'ATTENDANCE')?.id ?? '',
+    title: item?.title ?? '',
+    maxPoints: item?.maxPoints ?? 100,
+    dueAt: item?.dueAt ?? null,
+  });
   const [errors, setErrors] = useState({});
   const save = useAction(() => {
-    const body = { categoryId: v.categoryId, title: v.title.trim(), maxPoints: Number(v.maxPoints), dueAt: v.dueAt };
+    const body = {
+      categoryId: v.categoryId,
+      title: v.title.trim(),
+      ...(!pointsLocked ? { maxPoints: Number(v.maxPoints) } : {}),
+      dueAt: v.dueAt,
+    };
     return item ? api.patch(`${base}/gradebook/items/${item.id}`, body) : api.post(`${base}/gradebook/items`, body);
   }, { invalidate, success: item ? 'Column saved.' : 'Column added.', onSuccess: onClose, onError: (err) => { if (err.fields) { setErrors(err.fields); return true; } return false; } });
+  const sourceLink = isQuiz ? `${base}/quizzes/${item.quizId}` : isAssignment ? `${base}/assignments/${item.assignmentId}` : null;
   return (
-    <Modal open onClose={onClose} title={item ? 'Edit column' : 'Add a column'} size="sm" description="For work scored outside EduSphere — recitation, a paper quiz, a project defence."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={save.isPending} disabled={!v.title.trim() || !v.categoryId} onClick={() => save.mutate()}>{item ? 'Save' : 'Add column'}</Button></>}>
+    <Modal
+      open
+      onClose={onClose}
+      title={item ? 'Edit column' : 'Add a column'}
+      size="sm"
+      description={
+        isAssignment
+          ? 'Linked to an assignment in this class.'
+          : isQuiz
+            ? 'Linked to a quiz in this class.'
+            : 'For work scored outside EduSphere — recitation, a paper quiz, a project defence.'
+      }
+      footer={(
+        <div className="flex w-full flex-wrap items-center gap-2">
+          {item && onDelete && (
+            <Button variant="ghost" className="mr-auto text-bad hover:bg-bad-soft" icon={Trash2} onClick={() => onDelete(item)}>Delete column</Button>
+          )}
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button loading={save.isPending} disabled={!v.title.trim() || !v.categoryId || (!pointsLocked && !(Number(v.maxPoints) > 0))} onClick={() => save.mutate()}>{item ? 'Save' : 'Add column'}</Button>
+        </div>
+      )}
+    >
       <div className="space-y-4">
+        {(isAssignment || isQuiz) && (
+          <Alert
+            tone="info"
+            action={sourceLink ? <Button size="sm" variant="secondary" to={sourceLink} onClick={onClose}>{isQuiz ? 'Open quiz' : 'Open assignment'}</Button> : null}
+          >
+            {isQuiz
+              ? 'Title, category, and due date update the quiz too. Total points come from the quiz questions.'
+              : item?.hasRubric
+                ? 'Title, category, and due date update the assignment too. Total points come from its rubric.'
+                : 'Changes to title, points, or due date also update the linked assignment.'}
+          </Alert>
+        )}
         <Field label="Title" error={errors.title}><Input value={v.title} onChange={(e) => setV({ ...v, title: e.target.value })} placeholder="e.g. Recitation 2" maxLength={200} /></Field>
         <Field label="Category" error={errors.categoryId}>
           <Select value={v.categoryId} onChange={(e) => setV({ ...v, categoryId: e.target.value })}>
@@ -458,8 +513,135 @@ function ItemDialog({ item, period, structure, invalidate, onClose }) {
           </Select>
         </Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Points" error={errors.maxPoints}><Input type="number" min="1" max="10000" step="any" value={v.maxPoints} onChange={(e) => setV({ ...v, maxPoints: e.target.value })} /></Field>
-          <Field label="Date" optional error={errors.dueAt}><Input type="datetime-local" value={toLocalInput(v.dueAt)} onChange={(e) => setV({ ...v, dueAt: fromLocalInput(e.target.value) })} /></Field>
+          <Field
+            label="Points"
+            error={errors.maxPoints}
+            hint={isQuiz ? 'Matches quiz total points' : item?.hasRubric ? 'Matches rubric total' : undefined}
+          >
+            <Input
+              type="number"
+              min="1"
+              max="10000"
+              step="any"
+              disabled={pointsLocked}
+              value={v.maxPoints}
+              onChange={(e) => setV({ ...v, maxPoints: e.target.value })}
+            />
+          </Field>
+          <Field label={isQuiz ? 'Close / due date' : 'Date'} optional error={errors.dueAt}><Input type="datetime-local" value={toLocalInput(v.dueAt)} onChange={(e) => setV({ ...v, dueAt: fromLocalInput(e.target.value) })} /></Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ExportDialog({ structure, activePeriodId, onClose }) {
+  const { base } = useClass();
+  const [by, setBy] = useState('weights');
+  const [format, setFormat] = useState('xlsx');
+  const [periodId, setPeriodId] = useState('');
+  const [downloading, setDownloading] = useState(false);
+
+  const selectedPeriods = periodId ? structure.periods.filter((p) => p.id === periodId) : structure.periods;
+  const activePeriod = structure.periods.find((p) => p.id === activePeriodId);
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const slug = by === 'weights' ? 'gradebook-by-weights' : by === 'all' ? 'gradebook-complete' : 'gradebook';
+      await api.download(
+        `${base}/gradebook/export`,
+        { format, by, ...(periodId ? { periodId } : {}) },
+        `${slug}.${format}`,
+      );
+      onClose();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={downloading ? undefined : onClose}
+      title="Export student grades"
+      description="Choose whether to export category & period weighted breakdowns, individual column scores, or both."
+      size="sm"
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={downloading}>Cancel</Button>
+          <Button icon={Download} loading={downloading} onClick={download}>Download {format.toUpperCase()}</Button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <Field label="Export mode">
+          <div className="space-y-2">
+            {[
+              { value: 'weights', title: 'By weights', desc: 'Each category % and its weighted contribution, period % and weighted contribution, plus final grade.' },
+              { value: 'items', title: 'By individual scores', desc: 'Raw score of every quiz, assignment, and manual column, plus period and final grades.' },
+              { value: 'all', title: 'Complete (scores + weights)', desc: 'Individual item scores grouped under each weighted category alongside weighted totals (Excel & CSV).' },
+            ].map((opt) => (
+              <label
+                key={opt.value}
+                className={cn(
+                  'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition-colors',
+                  by === opt.value ? 'border-brand bg-brand-soft/60' : 'border-line bg-surface hover:border-line-strong',
+                )}
+              >
+                <input
+                  type="radio"
+                  name="export-by"
+                  checked={by === opt.value}
+                  onChange={() => setBy(opt.value)}
+                  className="mt-0.5 size-4 accent-[var(--brand-fill)]"
+                />
+                <span>
+                  <span className="block font-medium text-ink">{opt.title}</span>
+                  <span className="block text-xs text-faint">{opt.desc}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </Field>
+
+        {structure.periods.length > 1 && (
+          <Field label="Grading period">
+            <Select value={periodId} onChange={(e) => setPeriodId(e.target.value)}>
+              <option value="">All periods (full gradebook)</option>
+              {structure.periods.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.weight}%){activePeriod && p.id === activePeriod.id ? ' — current tab' : ''}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
+        <Field label="File format" hint={format === 'pdf' && by !== 'items' ? 'PDF displays weighted category and period summaries neatly on a single page.' : undefined}>
+          <Segmented
+            label="File format"
+            value={format}
+            onChange={setFormat}
+            options={[
+              { value: 'xlsx', label: 'Excel (.xlsx)' },
+              { value: 'csv', label: 'CSV' },
+              { value: 'pdf', label: 'PDF' },
+            ]}
+          />
+        </Field>
+
+        <div className="rounded-xl bg-raised px-3 py-2.5 text-xs text-soft">
+          <p className="font-semibold text-ink">Included weights:</p>
+          <ul className="mt-1 space-y-0.5">
+            {selectedPeriods.map((p) => (
+              <li key={p.id}>
+                <strong className="text-ink">{p.name} ({p.weight}%)</strong>: {p.categories.map((c) => `${c.name} ${c.weight}%`).join(', ')}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </Modal>
