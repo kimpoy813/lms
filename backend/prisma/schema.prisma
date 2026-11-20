@@ -657,6 +657,8 @@ model Class {
   enrollmentRequiresApproval Boolean     @default(false)
   classmatesVisible          Boolean     @default(true)
   aiStudyCoachEnabled        Boolean     @default(false)
+  gradeRankingEnabled        Boolean     @default(false)
+  gradeRankingShowScores     Boolean     @default(true)
   status                     ClassStatus @default(ACTIVE)
   archivedAt                 DateTime?   @db.Timestamptz(3)
   // Grading configuration
@@ -732,6 +734,7 @@ model Enrollment {
   decidedById String?
   droppedAt   DateTime?        @db.Timestamptz(3)
   note        String?
+  rankingCode String?
   createdAt   DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
 
@@ -740,6 +743,7 @@ model Enrollment {
   decidedBy User? @relation("EnrollmentDecider", fields: [decidedById], references: [id], onDelete: SetNull)
 
   @@unique([classId, studentId])
+  @@unique([classId, rankingCode])
   @@index([studentId, status])
   @@index([classId, status])
 }

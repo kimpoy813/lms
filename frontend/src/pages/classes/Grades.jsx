@@ -6,13 +6,19 @@ import { Alert, Button, Card, Field, Modal, QueryState, Textarea } from '../../c
 import { api } from '../../lib/api.js';
 import { formatDateTime } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
+import { StudentRankingCard } from './gradebook/ClassRanking.jsx';
 import StudentGrades from './gradebook/StudentGrades.jsx';
 import { useClass } from './useClass.js';
 
 export default function Grades() {
   const { cls, canManage, base } = useClass();
   const [appeal, setAppeal] = useState(null); // { item } or { item: null } for the overall grade
-  const query = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'mine'], queryFn: () => api.get(`${base}/gradebook/mine`), enabled: !canManage });
+  const [rankingScope, setRankingScope] = useState('');
+  const query = useQuery({
+    queryKey: ['class', cls.id, 'gradebook', 'mine', rankingScope || 'default'],
+    queryFn: () => api.get(`${base}/gradebook/mine`, rankingScope ? { rankingScope } : undefined),
+    enabled: !canManage,
+  });
   const appeals = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'appeals'], queryFn: () => api.get(`${base}/gradebook/appeals`), enabled: !canManage });
   if (canManage) return <Card className="text-center text-sm text-soft">Open the Gradebook tab to see and enter grades.</Card>;
 
@@ -22,6 +28,13 @@ export default function Grades() {
         <div className="space-y-5">
           {data.finalized && <Alert tone="ok" title="Final grades have been submitted">Submitted {formatDateTime(data.finalizedAt)}.</Alert>}
           <StudentGrades data={data} onAppeal={cls.status === 'ARCHIVED' ? undefined : (item) => setAppeal({ item })} />
+          {data.ranking && (
+            <StudentRankingCard
+              ranking={data.ranking}
+              onScopeChange={setRankingScope}
+              readOnly={cls.status === 'ARCHIVED'}
+            />
+          )}
           {(appeals.data ?? []).length > 0 && (
             <Card>
               <h3 className="mb-3 text-[15px] font-semibold">My questions about grades</h3>

@@ -20,6 +20,8 @@ export default function ClassSettings() {
     schedules: cls.schedules.map(({ dayOfWeek, startTime, endTime, room }) => ({ dayOfWeek, startTime, endTime, room })),
     enrollmentCodeEnabled: cls.enrollmentCodeEnabled, enrollmentRequiresApproval: cls.enrollmentRequiresApproval, classmatesVisible: cls.classmatesVisible,
     aiStudyCoachEnabled: Boolean(cls.aiStudyCoachEnabled),
+    gradeRankingEnabled: Boolean(cls.gradeRankingEnabled),
+    gradeRankingShowScores: cls.gradeRankingShowScores !== false,
     syllabusHtml: cls.syllabusHtml ?? '', learningOutcomes: cls.learningOutcomes ?? [],
   }));
   const [errors, setErrors] = useState({});
@@ -77,6 +79,10 @@ export default function ClassSettings() {
             <Switch checked={values.enrollmentRequiresApproval} onChange={(on) => set('enrollmentRequiresApproval', on)} label="Approve students before they join" description="Students who enter the code wait in People until you approve them." />
             <Switch checked={values.classmatesVisible} onChange={(on) => set('classmatesVisible', on)} label="Students can see who their classmates are" description="Only names are shown. Grades, attendance and contact details are never shared between students." />
             <Switch checked={values.aiStudyCoachEnabled} onChange={(on) => set('aiStudyCoachEnabled', on)} label="Enable AI Study Coach for students" description="Students can open summaries, flashcards, and ungraded quick checks built strictly from published lessons (zero external cost)." />
+            <Switch checked={values.gradeRankingEnabled} onChange={(on) => set('gradeRankingEnabled', on)} label="Share anonymous class ranking on grade release" description="Students can view standings for released grading periods using private per-class secret codes." />
+            {values.gradeRankingEnabled && (
+              <Switch checked={values.gradeRankingShowScores} onChange={(on) => set('gradeRankingShowScores', on)} label="Show grades alongside ranking codes" description="Off: classmates see only rank order and secret codes without each other's percentages." />
+            )}
           </div>
         </Card>
 
