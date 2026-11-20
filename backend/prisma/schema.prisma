@@ -250,6 +250,7 @@ enum AnnouncementAudience {
 enum CalendarScope {
   INSTITUTION
   CLASS
+  CLASSES
   PERSONAL
 }
 
@@ -259,6 +260,7 @@ enum CalendarEventType {
   CLASS_ACTIVITY
   EXAM
   CONSULTATION
+  TEACHER_LEAVE
   OTHER
 }
 
@@ -698,6 +700,7 @@ model Class {
   announcements       Announcement[]
   discussionThreads   DiscussionThread[]
   calendarEvents      CalendarEvent[]
+  calendarEventLinks  CalendarEventClass[]
   notifications       Notification[]
   programmingProblems ProgrammingProblem[]
   aiRequests          AIGenerationRequest[]
@@ -1927,12 +1930,25 @@ model CalendarEvent {
   createdAt   DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
 
-  class Class? @relation(fields: [classId], references: [id], onDelete: Cascade)
-  owner User   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  class           Class?               @relation(fields: [classId], references: [id], onDelete: Cascade)
+  owner           User                 @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  affectedClasses CalendarEventClass[]
 
   @@index([scope, startAt])
   @@index([classId, startAt])
   @@index([ownerId, startAt])
+}
+
+model CalendarEventClass {
+  eventId   String
+  classId   String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  class Class         @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, classId])
+  @@index([classId])
 }
 
 model ConsultationSlot {

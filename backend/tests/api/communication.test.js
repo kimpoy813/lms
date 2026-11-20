@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { actor, anonymous, classroom, createUser, enroll, loginAs, minutesFromNow, prepare, prisma } from '../helpers/index.js';
+import { actor, anonymous, classroom, createClass, createUser, enroll, loginAs, minutesFromNow, prepare, prisma } from '../helpers/index.js';
+import { addDays, atTime, dateKey, weekdayOf } from '../../src/lib/time.js';
 import { setRolePermission } from '../../src/services/permissions.js';
+import { getTimeZone } from '../../src/services/settings.js';
 
 beforeAll(async () => {
   await prepare();
@@ -201,6 +203,137 @@ describe('calendar', () => {
     expect((await students[0].delete(`/api/calendar/events/${classEvent.body.data.id}`)).status).toBe(403);
     expect((await students[0].patch(`/api/calendar/events/${personal.body.data.id}`, { title: 'Study group (moved)' })).body.data.title).toBe('Study group (moved)');
     expect((await students[0].get(`/api/calendar?from=${encodeURIComponent(iso(0))}&to=${encodeURIComponent(iso(60 * 24 * 90))}`)).status).toBe(422);
+  });
+
+  it('detects overlapping future classes for teacher leave/events, notifies affected students without leaks, and updates/cancels cleanly', async () => {
+    const tz = await getTimeZone();
+    const futureDay = addDays(dateKey(new Date(), tz), 14);
+    const futureDow = weekdayOf(futureDay);
+
+    const teacher = await actor('TEACHER');
+    const otherTeacher = await actor('TEACHER');
+    const sBoth = await actor('STUDENT');
+    const sOnly1 = await actor('STUDENT');
+    const sOnly3 = await actor('STUDENT');
+
+    const cls1 = await createClass(teacher.user, { schedules: { create: [{ dayOfWeek: futureDow, startTime: '09:00', endTime: '10:30', room: 'R101' }] } });
+    const cls2 = await createClass(teacher.user, { schedules: { create: [{ dayOfWeek: futureDow, startTime: '10:00', endTime: '11:30', room: 'R102' }] } });
+    const cls3 = await createClass(teacher.user, { schedules: { create: [{ dayOfWeek: futureDow, startTime: '11:30', endTime: '13:00', room: 'R103' }] } });
+    const otherCls = await createClass(otherTeacher.user, { schedules: { create: [{ dayOfWeek: futureDow, startTime: '09:30', endTime: '11:00' }] } });
+
+    await enroll(cls1, sBoth.user);
+    await enroll(cls2, sBoth.user);
+    await enroll(cls1, sOnly1.user);
+    await enroll(cls3, sOnly3.user);
+
+    const startAt = atTime(futureDay, '09:30', tz).toISOString();
+    const endAt = atTime(futureDay, '11:30', tz).toISOString();
+
+    // Students cannot inspect teacher schedule collisions.
+    expect((await sBoth.get(`/api/calendar/overlapping-classes?startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}`)).status).toBe(403);
+
+    // Overlap preview hits cls1 & cls2 (deduplicating sBoth so student count = 2), excludes exact-boundary cls3 and other teachers' classes.
+    const preview = await teacher.get(`/api/calendar/overlapping-classes?startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.overlapping.map((c) => c.classId).sort()).toEqual([cls1.id, cls2.id].sort());
+    expect(preview.body.data.otherClasses.map((c) => c.classId)).toEqual([cls3.id]);
+    expect(preview.body.data.totalAffectedStudents).toBe(2);
+
+    // Validation & access guards on CLASSES events.
+    expect((await sBoth.post('/api/calendar/events', { scope: 'CLASSES', type: 'TEACHER_LEAVE', title: 'Nope', startAt, endAt })).status).toBe(403);
+    expect((await teacher.post('/api/calendar/events', { scope: 'CLASSES', type: 'TEACHER_LEAVE', title: 'Late', startAt: atTime(futureDay, '20:00', tz).toISOString(), endAt: atTime(futureDay, '21:00', tz).toISOString() })).status).toBe(422);
+    expect((await teacher.post('/api/calendar/events', { scope: 'CLASSES', classIds: [otherCls.id], type: 'TEACHER_LEAVE', title: 'Hijack', startAt, endAt })).status).toBe(404);
+
+    // Create future multi-class event omitting classIds so the backend auto-matches all overlapping classes.
+    const createdRes = await teacher.post('/api/calendar/events', {
+      scope: 'CLASSES',
+      type: 'TEACHER_LEAVE',
+      title: 'Attending regional seminar',
+      description: 'Async worksheet is uploaded in Modules.',
+      startAt,
+      endAt,
+    });
+    expect(createdRes.status).toBe(201);
+    const ev = createdRes.body.data;
+    expect(ev.scope).toBe('CLASSES');
+    expect(ev.affectedClassIds.sort()).toEqual([cls1.id, cls2.id].sort());
+    expect(ev.notifiedStudents).toBe(2);
+
+    // sBoth gets 1 consolidated notification covering BOTH of their hit classes; sOnly1 sees only cls1; sOnly3 gets 0.
+    const notifsBoth = (await sBoth.get('/api/notifications')).body.data.filter((n) => n.type === 'calendar.event');
+    expect(notifsBoth).toHaveLength(1);
+    expect(notifsBoth[0].title).toContain('Attending regional seminar');
+    expect(notifsBoth[0].body).toContain(cls1.course.code);
+    expect(notifsBoth[0].body).toContain(cls2.course.code);
+    expect(notifsBoth[0].link).toBe(`/calendar?date=${futureDay}`);
+
+    const notifsOnly1 = (await sOnly1.get('/api/notifications')).body.data.filter((n) => n.type === 'calendar.event');
+    expect(notifsOnly1).toHaveLength(1);
+    expect(notifsOnly1[0].body).toContain(cls1.course.code);
+    expect(notifsOnly1[0].body).not.toContain(cls2.course.code);
+
+    const notifsOnly3 = (await sOnly3.get('/api/notifications')).body.data.filter((n) => n.type === 'calendar.event');
+    expect(notifsOnly3).toHaveLength(0);
+
+    // Calendar feed visibility & strict class scoping per student + .ics export.
+    const range = `from=${encodeURIComponent(atTime(futureDay, '00:00', tz).toISOString())}&to=${encodeURIComponent(atTime(futureDay, '23:59', tz).toISOString())}`;
+    const calBoth = (await sBoth.get(`/api/calendar?${range}`)).body.data.filter((i) => i.eventId === ev.id);
+    expect(calBoth).toHaveLength(1);
+    expect(calBoth[0].affectedClassIds.sort()).toEqual([cls1.id, cls2.id].sort());
+
+    const calOnly1 = (await sOnly1.get(`/api/calendar?${range}`)).body.data.filter((i) => i.eventId === ev.id);
+    expect(calOnly1).toHaveLength(1);
+    expect(calOnly1[0].affectedClassIds).toEqual([cls1.id]);
+
+    expect((await sOnly3.get(`/api/calendar?${range}`)).body.data.filter((i) => i.eventId === ev.id)).toHaveLength(0);
+    const ics = await sOnly1.get(`/api/calendar/export.ics?${range}`);
+    expect(ics.text).toContain('Attending regional seminar');
+
+    // Extend the event window and re-match schedules -> cls3 becomes hit too & receives update notification.
+    const extendedEnd = atTime(futureDay, '12:30', tz).toISOString();
+    const patched = await teacher.patch(`/api/calendar/events/${ev.id}`, {
+      endAt: extendedEnd,
+      title: 'Attending regional seminar (extended)',
+      matchSchedule: true,
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body.data.affectedClassIds.sort()).toEqual([cls1.id, cls2.id, cls3.id].sort());
+    expect((await sOnly3.get('/api/notifications')).body.data.filter((n) => n.type === 'calendar.event')).toHaveLength(1);
+    expect((await sOnly3.get(`/api/calendar?${range}`)).body.data.filter((i) => i.eventId === ev.id)).toHaveLength(1);
+
+    // Deleting a future notice removes it from calendars and notifies all affected students of cancellation.
+    expect((await teacher.delete(`/api/calendar/events/${ev.id}`)).status).toBe(204);
+    expect((await sBoth.get(`/api/calendar?${range}`)).body.data.filter((i) => i.eventId === ev.id)).toHaveLength(0);
+    const cancelled3 = (await sOnly3.get('/api/notifications')).body.data.filter((n) => n.type === 'calendar.event');
+    expect(cancelled3.some((n) => n.title.includes('Cancelled on the calendar'))).toBe(true);
+  });
+
+  it('annotates today’s dashboard meetings when a teacher leave event hits today', async () => {
+    const tz = await getTimeZone();
+    const todayKey = dateKey(new Date(), tz);
+    const todayDow = weekdayOf(todayKey);
+    const { teacher, students } = await classroom(1, {
+      schedules: { create: [{ dayOfWeek: todayDow, startTime: '00:01', endTime: '23:58', room: 'Main 1' }] },
+    });
+
+    const leave = await teacher.post('/api/calendar/events', {
+      scope: 'CLASSES',
+      type: 'TEACHER_LEAVE',
+      title: 'Sick leave today',
+      startAt: atTime(todayKey, '00:00', tz).toISOString(),
+      endAt: atTime(todayKey, '23:59', tz).toISOString(),
+      allDay: true,
+    });
+    expect(leave.status).toBe(201);
+
+    const dash = await students[0].get('/api/dashboard');
+    expect(dash.status).toBe(200);
+    expect(dash.body.data.today).toHaveLength(1);
+    expect(dash.body.data.today[0].notice).toMatchObject({
+      eventId: leave.body.data.id,
+      type: 'TEACHER_LEAVE',
+      title: 'Sick leave today',
+    });
   });
 });
 

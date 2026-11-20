@@ -66,10 +66,19 @@ function ItemRow({ to, icon: Icon, title, meta, right, tone = 'brand' }) {
   );
 }
 
-function TodaySchedule({ items, emptyText }) {
+function TodaySchedule({ items, emptyText, canReportLeave }) {
   return (
     <Card>
-      <CardHeader icon={CalendarClock} title="Today’s classes" action={<Link to="/calendar" className="text-[13px] font-medium text-brand hover:underline">Calendar</Link>} />
+      <CardHeader
+        icon={CalendarClock}
+        title="Today’s classes"
+        action={(
+          <div className="flex items-center gap-3">
+            {canReportLeave && <Link to="/calendar?leave=1" className="text-[13px] font-medium text-soft hover:text-ink hover:underline">Report leave</Link>}
+            <Link to="/calendar" className="text-[13px] font-medium text-brand hover:underline">Calendar</Link>
+          </div>
+        )}
+      />
       {items.length === 0 ? <EmptyState compact icon={CalendarClock} title="No classes today" description={emptyText} /> : (
         <ol className="space-y-2">
           {items.map((m) => (
@@ -79,6 +88,11 @@ function TodaySchedule({ items, emptyText }) {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-ink">{m.label}</span>
                   <span className="block truncate text-xs text-faint">{m.title}</span>
+                  {m.notice && (
+                    <span className="mt-1 inline-flex max-w-full items-center gap-1 rounded bg-warn-soft px-1.5 py-0.5 text-[11px] font-medium text-warn">
+                      <span className="truncate">{m.notice.type === 'HOLIDAY' ? 'Holiday' : 'Teacher unavailable'}: {m.notice.title}</span>
+                    </span>
+                  )}
                 </span>
                 <span className="shrink-0 text-right">
                   <span className="block text-sm font-semibold tabular-nums text-ink">{formatClock(m.startTime)}</span>
@@ -311,7 +325,7 @@ function TeacherDashboard({ data }) {
         </div>
 
         <div className="min-w-0 space-y-5">
-          <TodaySchedule items={data.today} emptyText="No meetings are scheduled for today." />
+          <TodaySchedule items={data.today} emptyText="No meetings are scheduled for today." canReportLeave />
 
           <Card>
             <CardHeader icon={Inbox} title="Requests" />
