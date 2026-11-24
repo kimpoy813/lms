@@ -378,6 +378,34 @@ describe('AI-assisted authoring', () => {
     expect(await prisma.auditLog.count({ where: { action: 'ai.module.approve', entityId: mod.id } })).toBe(1);
   });
 
+  it('imports a module from an external AI response and makes retries idempotent', async () => {
+    // The external-paste flow must work without configuring or calling a server-side AI provider.
+    setAiTransport(null);
+    const teacher = await actor('TEACHER');
+    const clientRequestId = rid();
+    const body = { clientRequestId, topic: 'Information security', pastedResponse: JSON.stringify(moduleAnswer) };
+
+    const imported = await teacher.post('/api/ai/modules/import', body);
+    expect(imported.status).toBe(201);
+    expect(imported.body.data).toMatchObject({
+      topic: 'Information security',
+      status: 'COMPLETED',
+      model: 'external-ai',
+      generated: {
+        reviewStatus: 'DRAFT',
+        model: 'external-ai',
+        content: { title: moduleAnswer.title },
+      },
+    });
+    expect(imported.body.data.generated.content.lessons[0].contentHtml).not.toMatch(/script|onerror/);
+
+    const retried = await teacher.post('/api/ai/modules/import', body);
+    expect(retried.status).toBe(200);
+    expect(retried.body.data.id).toBe(imported.body.data.id);
+    expect(retried.body.data.generated.id).toBe(imported.body.data.generated.id);
+    expect(await prisma.aIGenerationRequest.count({ where: { teacherId: teacher.user.id, clientRequestId } })).toBe(1);
+  });
+
   it('exports the draft as PDF and Word', async () => {
     setAiTransport(fakeAi(moduleAnswer));
     const teacher = await actor('TEACHER');
