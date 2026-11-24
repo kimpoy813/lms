@@ -1,7 +1,7 @@
 // One module: chapter-by-chapter reading or full-module "book view".
 // Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -15,6 +15,7 @@ import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
 import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
+import AssignmentDraftDialog from './AssignmentDraftDialog.jsx';
 import { LESSON_KINDS } from './Modules.jsx';
 import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
@@ -715,6 +716,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
   const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState(() => canManage && params.get('edit') === '1');
   const [dialog, setDialog] = useState(null);
+  const [assignmentNotice, setAssignmentNotice] = useState(null);
   const [savedOffline, setSavedOffline] = useState(() => isLessonSavedOffline(user?.id, lessonId));
   const [savingOffline, setSavingOffline] = useState(false);
   const query = useQuery({ queryKey: ['class', cls.id, 'lesson', lessonId], queryFn: () => api.get(`/lessons/${lessonId}`) });
@@ -773,6 +775,16 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
     <QueryState query={effectiveQuery}>
       {(lesson) => editing ? <LessonEditor mod={mod} lesson={lesson} onDone={closeEditor} /> : (
         <article>
+          {assignmentNotice && (
+            <Alert
+              tone="ok"
+              className="mb-4"
+              title="Draft assignment created"
+              action={<Button size="sm" variant="secondary" to={`/classes/${assignmentNotice.classId}/assignments/${assignmentNotice.id}`}>Review draft</Button>}
+            >
+              “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable starter rubric' : ''}. Students will not see it until you publish it.
+            </Alert>
+          )}
           {readingOffline && (
             <Alert tone="info" className="mb-4">
               <WifiOff className="mr-1.5 inline size-4" aria-hidden="true" />
@@ -808,6 +820,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                     {!canManage && <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={lesson.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate(!lesson.bookmarked)}>{lesson.bookmarked ? 'Saved' : 'Save'}</Button>}
                     <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} aria-label="Print this lesson" />
                     {canManage && <Button variant="secondary" size="sm" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>}
+                    {canManage && !readOnly && <Button variant="secondary" size="sm" icon={ClipboardList} onClick={() => { setAssignmentNotice(null); setDialog('assignment'); }}>Create assignment draft</Button>}
                     {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
                     {canManage && !readOnly && <Button variant="dangerGhost" size="sm" icon={Trash2} onClick={() => setDialog('delete')} aria-label="Delete this lesson" />}
                   </div>
@@ -866,6 +879,23 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
             hint={`Copies this lesson and its attachments into “${mod.title}” in each selected class (creating the module if needed).`}
             onSubmit={({ targetClassIds, status }) => api.post(`/lessons/${lesson.id}/copy`, { targetClassIds, status })}
           />
+          {dialog === 'assignment' && (
+            <AssignmentDraftDialog
+              source={{ title: lesson.title, instructionsHtml: lesson.contentHtml ?? '' }}
+              sourceNumber={chapterIndex + 1}
+              moduleTitle={mod.title}
+              classes={[cls]}
+              defaultClassId={cls.id}
+              moduleId={mod.id}
+              moduleClassId={cls.id}
+              sourceLabel="lesson"
+              onClose={() => setDialog(null)}
+              onCreated={(assignment, classId, withRubric) => {
+                setDialog(null);
+                setAssignmentNotice({ ...assignment, classId, withRubric });
+              }}
+            />
+          )}
           <ConfirmDialog open={dialog === 'delete'} onClose={() => setDialog(null)} onConfirm={() => remove.mutate()} loading={remove.isPending} title={`Delete “${lesson.title}”?`} confirmLabel="Delete lesson">
             The lesson is removed for everyone, together with students’ completion marks for it.
           </ConfirmDialog>
