@@ -273,6 +273,106 @@ aiRouter.post('/modules/generate', aiLimiter, validate({ body: generateBody }), 
   }
 });
 
+function parsePastedJson(text) {
+  const raw = String(text ?? '').trim();
+  const attempts = [raw];
+  const fenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  if (fenced !== raw) attempts.push(fenced);
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start !== -1 && end > start) attempts.push(raw.slice(start, end + 1));
+  for (const candidate of attempts) {
+    try {
+      const data = JSON.parse(candidate);
+      if (data && typeof data === 'object' && !Array.isArray(data)) return data;
+    } catch {
+      // try next
+    }
+  }
+  throw new AppError(422, 'VALIDATION_ERROR', 'The pasted response could not be read as a module draft. Paste the full JSON response from the AI.', {
+    fields: { pastedResponse: 'Paste the full JSON response from the AI, including the opening { and closing }.' },
+  });
+}
+
+const externalPromptBody = generateBody.omit({ clientRequestId: true });
+
+/** Build a copy-ready prompt for any external AI (ChatGPT, Claude, Gemini, etc.). No AI call is made. */
+aiRouter.post('/modules/prompt', aiLimiter, validate({ body: externalPromptBody }), async (req, res) => {
+  await assertPermission(req.user, 'ai.use');
+  const b = req.valid.body;
+  const cls = b.classId ? (await requireWritableClassManager(req.user, b.classId)).cls : null;
+  const references = await loadReferences(req.user, b.referenceFileIds);
+  const prompt = [
+    'You are helping a college teacher draft a learning module. Follow the instructions carefully.',
+    '',
+    '## Role',
+    SYSTEM,
+    '',
+    '## Task',
+    modulePrompt(b, cls, references.text),
+    '',
+    '## Important',
+    'Return ONLY the JSON object. Do not include markdown fences, explanations, or any text before or after the JSON.',
+  ].join('\n');
+  ok(res, { prompt, referenceFileNames: references.files.map((r) => r.file.originalName) });
+});
+
+const importBody = generateBody.extend({
+  pastedResponse: z.string().trim().min(20).max(200_000),
+});
+
+/** Turn a pasted external-AI response into a normal module draft for review. */
+aiRouter.post('/modules/import', aiLimiter, validate({ body: importBody }), async (req, res) => {
+  await assertPermission(req.user, 'ai.use');
+  const b = req.valid.body;
+  const existing = await prisma.aIGenerationRequest.findUnique({ where: { teacherId: req.user.id, clientRequestId: b.clientRequestId }, include: requestInclude });
+  if (existing) {
+    if (existing.generationStatus === 'RUNNING' || existing.generationStatus === 'PENDING') throw conflict('This module is still being generated. Please wait.', 'AI_IN_PROGRESS');
+    return ok(res, requestView(existing));
+  }
+  const cls = b.classId ? (await requireWritableClassManager(req.user, b.classId)).cls : null;
+  const references = await loadReferences(req.user, b.referenceFileIds);
+
+  let request;
+  try {
+    request = await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `ai:${req.user.id}`);
+      return tx.aIGenerationRequest.create({
+        data: {
+          teacherId: req.user.id, classId: cls?.id ?? null, requestType: 'MODULE', clientRequestId: b.clientRequestId, topic: plainText(b.topic, 300), title: b.title ? plainText(b.title, 200) : null,
+          subtopics: b.subtopics, objectives: b.objectives, outcomes: b.outcomes, yearLevel: b.yearLevel ?? null, difficulty: b.difficulty, durationMinutes: b.durationMinutes ?? null,
+          language: b.language, contentLength: b.contentLength, teachingApproach: b.teachingApproach ?? null, instructions: b.instructions ?? null,
+          parameters: { includeAssessment: b.includeAssessment, source: 'external-paste' }, generationStatus: 'RUNNING', startedAt: new Date(),
+          references: { create: references.files.map((r) => ({ fileId: r.file.id, extractedChars: r.chars })) },
+        },
+      });
+    });
+  } catch (err) {
+    if (err.code === 'P2002') throw conflict('This module is still being generated. Please wait.', 'AI_IN_PROGRESS');
+    throw err;
+  }
+
+  try {
+    const data = parsePastedJson(b.pastedResponse);
+    const parsed = moduleShape.safeParse(data);
+    if (!parsed.success) throw new AppError(422, 'VALIDATION_ERROR', 'The pasted response did not match the expected module format. Make sure you copied the full AI response.', {
+      fields: { pastedResponse: 'The pasted response is missing required module fields (title and at least one lesson). Ask the AI to return the complete JSON object.' },
+    });
+    const { kept, rejected } = cleanQuestions(parsed.data.assessment);
+    const content = { ...parsed.data, assessment: kept, notes: rejected > 0 ? [`${rejected} generated question(s) were dropped because they were incomplete.`] : [] };
+    const done = await prisma.aIGenerationRequest.update({
+      where: { id: request.id },
+      data: { generationStatus: 'COMPLETED', completedAt: new Date(), modelIdentifier: 'external-ai', generatedModule: { create: { generatedContent: content, modelIdentifier: 'external-ai' } } },
+      include: requestInclude,
+    });
+    await audit(req, { action: 'ai.module.import', entityType: 'AIGenerationRequest', entityId: request.id, classId: cls?.id, summary: `Imported an external AI draft module on \"${request.topic}\"` });
+    return created(res, requestView(done));
+  } catch (err) {
+    await prisma.aIGenerationRequest.update({ where: { id: request.id }, data: { generationStatus: 'FAILED', completedAt: new Date(), errorMessage: String(err.message ?? err).slice(0, 500) } }).catch(() => {});
+    throw err;
+  }
+});
+
 aiRouter.get('/requests', async (req, res) => {
   const rows = await prisma.aIGenerationRequest.findMany({ where: { teacherId: req.user.id, requestType: 'MODULE' }, include: requestInclude, orderBy: { createdAt: 'desc' }, take: 50 });
   ok(res, rows.map((r) => ({ ...requestView(r), generated: r.generatedModule ? { id: r.generatedModule.id, reviewStatus: r.generatedModule.reviewStatus, moduleId: r.generatedModule.moduleId, title: r.generatedModule.generatedContent?.title ?? null } : null })));
