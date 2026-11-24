@@ -13,7 +13,7 @@ import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import QuestionDrafts from './QuestionDrafts.jsx';
-import ActivityAssignmentDialog from './ActivityAssignmentDialog.jsx';
+import AssignmentDraftDialog from '../classes/AssignmentDraftDialog.jsx';
 import { LESSON_KINDS } from '../classes/Modules.jsx';
 import { classLabel } from '../classes/useClass.js';
 
@@ -208,9 +208,9 @@ function Review({ draft, onBack, configured }) {
       {dialog === 'approve' && <ApproveDialog draft={draft} classes={classes.data ?? []} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} lessons={c.lessons.length} onClose={() => setDialog(null)} onDone={(r) => { setDirty(false); client.invalidateQueries({ queryKey: ['ai'] }); client.invalidateQueries({ queryKey: ['class', r.classId] }); for (const copy of r.createdCopies ?? []) client.invalidateQueries({ queryKey: ['class', copy.classId] }); navigate(`/classes/${r.classId}/modules/${r.moduleId}`); }} />}
       {dialog?.rewrite !== undefined && <RewriteDialog draftId={draft.id} index={dialog.rewrite} lesson={c.lessons[dialog.rewrite]} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} onClose={() => setDialog(null)} onAccept={(lesson) => { setLesson(dialog.rewrite, { ...lesson, rewriteKey: Date.now() }); setDialog(null); }} />}
       {assignmentActivityIndex !== null && c.activities[assignmentActivityIndex] && (
-        <ActivityAssignmentDialog
-          activity={c.activities[assignmentActivityIndex]}
-          activityNumber={assignmentActivityIndex + 1}
+        <AssignmentDraftDialog
+          source={c.activities[assignmentActivityIndex]}
+          sourceNumber={assignmentActivityIndex + 1}
           moduleTitle={c.title}
           classes={classes.data ?? []}
           defaultClassId={assignmentClassId}

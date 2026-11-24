@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activityInstructionsHtml, starterActivityRubric } from './activityAssignment.js';
+import { activityInstructionsHtml, starterActivityRubric } from './assignmentDraft.js';
 
 describe('AI activity to assignment helpers', () => {
   it('escapes activity text before putting it in assignment HTML', () => {
