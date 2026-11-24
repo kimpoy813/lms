@@ -4,12 +4,15 @@ import { zipSync } from 'fflate';
 import { z } from 'zod';
 import { Prisma, lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js';
+import { canFinishAfterResponse, runInBackground } from '../../lib/background.js';
 import { safeFilename, sendBuffer } from '../../lib/exporter.js';
 import { created, fullName, idParams, noContent, ok, patchOf, round, zDateTime, zHtml, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { escapeHtml, excerpt, plainText, sanitizeRichText } from '../../lib/sanitize.js';
 import { formatDateTimeInZone } from '../../lib/time.js';
+import { logger } from '../../lib/logger.js';
 import { isPublished, publishedWhere, resolvePublication } from '../../lib/visibility.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
+import { aiLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
 import { enrolledStudentIds, notify } from '../../services/notifications.js';
@@ -17,6 +20,7 @@ import { getTimeZone } from '../../services/settings.js';
 import { cloneFilesForParent, fileSummary, readStoredFile, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
 import { cleanupStoredFiles, matchingCategoryId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
+import { generateAiRubricSuggestion } from '../../services/aiRubricGrading.js';
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { applyPenalty, latePenalty } from './penalty.js';
 import { rubricTotal, rubricView } from './rubrics.js';
@@ -119,6 +123,16 @@ function submissionView(s, { forStudent }) {
     rubricScores: released ? s.rubricScores : null,
     gradedAt: released ? s.gradedAt : null,
     returnedAt: s.returnedAt,
+    ...(forStudent ? {} : {
+      aiGrading: s.aiGradingStatus ? {
+        status: s.aiGradingStatus,
+        suggestions: s.aiGradingStatus === 'COMPLETED' ? s.aiRubricSuggestions : null,
+        error: s.aiGradingError,
+        model: s.aiGradingModel,
+        startedAt: s.aiGradingStartedAt,
+        completedAt: s.aiGradingCompletedAt,
+      } : null,
+    }),
     updatedAt: s.updatedAt,
   };
 }
@@ -564,6 +578,7 @@ assignmentsRouter.put('/:assignmentId/submission', requireRole('STUDENT'), valid
   assertClassWritable(cls);
   const b = req.valid.body;
   const text = assignment.allowText && b.textContent ? sanitizeRichText(b.textContent) : null;
+  const hasTypedRubricAnswer = Boolean(assignment.rubric?.criteria?.length && excerpt(text ?? '', 5));
   const fileIds = assignment.allowFiles ? b.fileIds : [];
   if (!assignment.allowFiles && b.fileIds.length > 0) throw fieldErrors({ fileIds: 'This assignment does not accept file uploads.' });
   if (fileIds.length > assignment.maxFiles) throw fieldErrors({ fileIds: `You can upload at most ${assignment.maxFiles} file(s) for this assignment.` });
@@ -593,6 +608,12 @@ assignmentsRouter.put('/:assignmentId/submission', requireRole('STUDENT'), valid
       ? {
           textContent: text, status: 'SUBMITTED', submittedAt: now, attemptNumber: (existing?.attemptNumber ?? 0) + 1,
           isLate: penalty.isLate, penaltyPercent: penalty.penaltyPercent,
+          // A resubmission is a new attempt: neither the previous official grade nor AI draft applies.
+          rawScore: null, finalScore: null, feedback: null, rubricScores: Prisma.DbNull,
+          gradedById: null, gradedAt: null, returnedAt: null,
+          aiGradingStatus: hasTypedRubricAnswer ? 'PENDING' : null,
+          aiRubricSuggestions: Prisma.DbNull, aiGradingError: null, aiGradingModel: null,
+          aiGradingStartedAt: null, aiGradingCompletedAt: null,
           // An extension granted by the teacher is used up by this submission.
           reopenedUntil: null,
         }
@@ -600,9 +621,26 @@ assignmentsRouter.put('/:assignmentId/submission', requireRole('STUDENT'), valid
     const row = existing
       ? await tx.assignmentSubmission.update({ where: { id: existing.id }, data })
       : await tx.assignmentSubmission.create({ data: { assignmentId: assignment.id, studentId: req.user.id, ...data } });
+    if (b.submit && existing?.rawScore != null && assignment.gradeItem) {
+      await recordGrade(tx, {
+        gradeItemId: assignment.gradeItem.id, studentId: req.user.id, score: null, status: 'UNGRADED',
+        isLate: penalty.isLate, feedback: null, source: 'AUTO_SYNC',
+      });
+    }
     await syncAttachments(tx, { fileIds, ownerId: req.user.id, field: 'submissionId', parentId: row.id, max: assignment.maxFiles });
     return tx.assignmentSubmission.findUnique({ where: { id: row.id }, include: { files: { where: { deletedAt: null } } } });
   });
+  if (saved.aiGradingStatus === 'PENDING') {
+    const generate = () => generateAiRubricSuggestion(saved.id, saved.attemptNumber);
+    if (canFinishAfterResponse()) runInBackground(generate, 'automatic AI rubric grading');
+    else {
+      try {
+        await generate();
+      } catch (err) {
+        logger.error({ err, submissionId: saved.id }, 'automatic AI rubric grading failed before the response could finish');
+      }
+    }
+  }
   const now = new Date();
   ok(res, { submission: submissionView(saved, { forStudent: true }), myStatus: studentStatus(assignment, saved, now), window: submissionWindow(assignment, saved, now) });
 });
@@ -651,6 +689,7 @@ async function roster(assignment) {
       fileCount: s?._count.files ?? 0,
       rawScore: s?.rawScore ?? null,
       finalScore: s?.finalScore ?? null,
+      aiGradingStatus: s?.aiGradingStatus ?? null,
       penaltyPercent: s?.penaltyPercent ?? 0,
       returnedAt: s?.returnedAt ?? null,
       reopenedUntil: s?.reopenedUntil ?? null,
@@ -682,6 +721,37 @@ assignmentsRouter.get('/:assignmentId/submissions/:studentId', validate({ params
     position: index + 1,
     total: students.length,
   });
+});
+
+/** Retry a failed automatic suggestion; it remains private until the teacher saves a grade. */
+assignmentsRouter.post('/:assignmentId/submissions/:studentId/ai-grading/retry', aiLimiter, validate({ params: idParams('assignmentId', 'studentId') }), async (req, res) => {
+  const { assignment } = await loadManaged(req);
+  const { studentId } = req.valid.params;
+  const existing = await prisma.assignmentSubmission.findUnique({ where: { assignmentId_studentId: { assignmentId: assignment.id, studentId } } });
+  if (!existing || existing.status === 'DRAFT') throw notFound('Submission');
+  if (!assignment.rubric?.criteria?.length || !excerpt(existing.textContent ?? '', 5)) {
+    throw conflict('AI rubric suggestions require a typed answer and an attached rubric.', 'AI_GRADING_UNAVAILABLE');
+  }
+  if (existing.aiGradingStatus !== 'FAILED') throw conflict('Only a failed AI suggestion can be retried.', 'AI_GRADING_NOT_FAILED');
+  const reset = await prisma.assignmentSubmission.updateMany({
+    where: { id: existing.id, attemptNumber: existing.attemptNumber, aiGradingStatus: 'FAILED' },
+    data: {
+      aiGradingStatus: 'PENDING', aiRubricSuggestions: Prisma.DbNull, aiGradingError: null,
+      aiGradingModel: null, aiGradingStartedAt: null, aiGradingCompletedAt: null,
+    },
+  });
+  if (reset.count !== 1) throw conflict('The AI suggestion changed. Reload this submission and try again.', 'AI_GRADING_CHANGED');
+  const pending = await prisma.assignmentSubmission.findUnique({ where: { id: existing.id }, include: { files: { where: { deletedAt: null } } } });
+  const generate = () => generateAiRubricSuggestion(pending.id, pending.attemptNumber);
+  if (canFinishAfterResponse()) runInBackground(generate, 'retried AI rubric grading');
+  else {
+    try {
+      await generate();
+    } catch (err) {
+      logger.error({ err, submissionId: pending.id }, 'retried AI rubric grading failed before the response could finish');
+    }
+  }
+  ok(res, submissionView(pending, { forStudent: false }));
 });
 
 const gradeBody = z.object({

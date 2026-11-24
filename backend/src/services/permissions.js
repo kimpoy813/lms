@@ -20,7 +20,7 @@ export const PERMISSION_CATALOG = [
   { key: 'attendance.export', category: 'Records', description: 'Export attendance records', roles: ['TEACHER'], defaults: ['TEACHER'] },
   { key: 'submissions.download', category: 'Records', description: 'Download all submissions of an assignment as one archive', roles: ['TEACHER'], defaults: ['TEACHER'] },
   { key: 'records.download', category: 'Records', description: 'Download their own grade report', roles: ['STUDENT'], defaults: ['STUDENT'] },
-  { key: 'ai.use', category: 'AI', description: 'Use AI-assisted module and assessment authoring', roles: ['TEACHER'], defaults: ['TEACHER'] },
+  { key: 'ai.use', category: 'AI', description: 'Use AI-assisted authoring and private rubric-grading suggestions', roles: ['TEACHER'], defaults: ['TEACHER'] },
 ];
 
 const CATALOG_KEYS = new Set(PERMISSION_CATALOG.map((p) => p.key));

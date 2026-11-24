@@ -782,7 +782,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
               title="Draft assignment created"
               action={<Button size="sm" variant="secondary" to={`/classes/${assignmentNotice.classId}/assignments/${assignmentNotice.id}`}>Review draft</Button>}
             >
-              “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable starter rubric' : ''}. Students will not see it until you publish it.
+              “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with a grading rubric' : ''}. Students will not see it until you publish it.
             </Alert>
           )}
           {readingOffline && (

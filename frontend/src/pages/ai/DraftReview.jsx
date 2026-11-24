@@ -81,7 +81,7 @@ function Review({ draft, onBack, configured }) {
           title="Draft assignment created"
           action={<Button size="sm" variant="secondary" to={`/classes/${assignmentNotice.classId}/assignments/${assignmentNotice.id}`}>Review draft</Button>}
         >
-          “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable starter rubric' : ''}. Students will not see it until you publish it.
+          “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable rubric' : ''}. It is not linked to the gradebook by default, and students will not see it until you publish it.
         </Alert>
       )}
 
@@ -144,7 +144,7 @@ function Review({ draft, onBack, configured }) {
           <Card>
             <CardHeader
               title="Practice activities"
-              description="These appear in the module as one “Practice activities” lesson. Create an unpublished assignment draft from any activity when you want students to submit and be graded on it."
+              description="These appear together as a “Practice activities” lesson. Create a separate unpublished assignment draft from any activity when students should submit it. It is not linked to the gradebook by default, though you can still score it with a rubric or manually."
               action={!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.activities.length >= 10} onClick={() => change({ activities: [...c.activities, { title: '', instructions: '' }] })}>Add</Button>}
             />
             <ul className="space-y-3">
