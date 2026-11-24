@@ -60,7 +60,7 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
       for (const id of targetClassIds) client.invalidateQueries({ queryKey: ['class', id] });
       if (!quiz && saved?.createdCopies?.length > 0 && typeof window !== 'undefined' && window.sessionStorage) {
         try {
-          window.sessionStorage.setItem(`edusphere.quizSync.${saved.id}`, JSON.stringify(saved.createdCopies));
+          window.sessionStorage.setItem(`discenda.quizSync.${saved.id}`, JSON.stringify(saved.createdCopies));
         } catch {
           /* ignore storage quota failures */
         }

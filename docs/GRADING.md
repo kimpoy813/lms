@@ -1,6 +1,6 @@
 # Grading
 
-Every class has its own gradebook. The teacher decides its structure; EduSphere does the
+Every class has its own gradebook. The teacher decides its structure; Discenda does the
 arithmetic, shows each student how their grade was computed, and keeps a history of every change.
 
 ## Structure

@@ -1,4 +1,4 @@
-// The whole EduSphere API as one Vercel Function.
+// The whole Discenda API as one Vercel Function.
 //
 // vercel.json sends /api/*, /healthz and /readyz here; Vercel's CDN serves everything else (the
 // built web app). Nothing in this file is used when the API runs as an ordinary server

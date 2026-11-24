@@ -1,4 +1,4 @@
-// EduSphere — PostgreSQL schema (Prisma ORM)
+// Discenda — PostgreSQL schema (Prisma ORM)
 //
 // Conventions
 //   • Every timestamp is `timestamptz(3)` so comparisons with now() are timezone-safe.

@@ -1,4 +1,4 @@
-# EduSphere
+# Discenda
 
 A learning management system for colleges and universities: classes, lessons, assignments,
 quizzes, QR + GPS attendance, a weighted gradebook, messaging and administration — for
@@ -31,7 +31,7 @@ Open <http://localhost:5173> and sign in with a demo account (below).
 To use your own PostgreSQL (14 or newer), set `DATABASE_URL` in `backend/.env` first.
 
 Recent npm versions do not run the install scripts of dependencies unless you approve them.
-EduSphere does not need them: `npm run dev` and `npm test` prepare what those scripts would
+Discenda does not need them: `npm run dev` and `npm test` prepare what those scripts would
 have (checked with npm 10 and npm 12 on Linux).
 
 ### Demo accounts
@@ -40,11 +40,11 @@ The password of every demo account is `Demo-Pass-2026`.
 
 | Role | E-mail | Notes |
 |---|---|---|
-| Administrator | `admin@edusphere.demo` | |
-| Teacher | `teacher@edusphere.demo` | teaches IT 101 and CS 201 |
-| Teacher | `teacher2@edusphere.demo` | teaches GE 105 |
-| Student | `student@edusphere.demo` | also `student2` … `student10@edusphere.demo` |
-| Teacher (pending) | `pending.teacher@edusphere.demo` | waits for an administrator's approval |
+| Administrator | `admin@discenda.demo` | |
+| Teacher | `teacher@discenda.demo` | teaches IT 101 and CS 201 |
+| Teacher | `teacher2@discenda.demo` | teaches GE 105 |
+| Student | `student@discenda.demo` | also `student2` … `student10@discenda.demo` |
+| Teacher (pending) | `pending.teacher@discenda.demo` | waits for an administrator's approval |
 
 Demo accounts cannot sign in when `NODE_ENV=production`. For a real installation, set
 `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` and run `npm run db:seed` once: it creates the first
@@ -66,13 +66,13 @@ administrator, who must change the password at first sign-in.
 | Grades | Grading periods and weighted categories, grading scales, transmutation, overrides with reasons, history, appeals, publishing, exports. See [docs/GRADING.md](docs/GRADING.md) |
 | Communication | Announcements, direct messages, class discussions, notifications (in-app, real time; e-mail optional), calendar, consultation booking |
 | Insight | Dashboards per role, class analytics, at-risk indicators |
-| Coding exercises | Problems with visible and hidden tests in Python, Java, C, C++ and JavaScript. Python that a student is only trying out runs in the student's own browser, as often as they like. What counts is run and checked outside EduSphere: in throw-away machines on Vercel, or by a judge server you run (optional) |
+| Coding exercises | Problems with visible and hidden tests in Python, Java, C, C++ and JavaScript. Python that a student is only trying out runs in the student's own browser, as often as they like. What counts is run and checked outside Discenda: in throw-away machines on Vercel, or by a judge server you run (optional) |
 | AI-assisted authoring | Drafts of modules, quizzes, examinations, rubrics and assignments, from a topic, a document or a module the teacher chooses. A teacher reviews every draft before anything reaches a class (optional) |
 | Administration | A set-up guide for a new school, users (import from CSV), enrolment, settings, per-role permissions, audit log |
 
 ## Optional services
 
-EduSphere runs without any of these. Nothing is simulated when a service is missing — the
+Discenda runs without any of these. Nothing is simulated when a service is missing — the
 feature says that it is not set up.
 
 | Service | Configure | Without it |
@@ -82,7 +82,7 @@ feature says that it is not set up.
 | E-mail | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | No e-mail is sent, and the site says so instead of promising one: “Forgot password” tells people to ask the school, administrators issue temporary passwords, addresses are not verified, and the settings that need e-mail cannot be switched on. In development, messages are kept in a mailbox readable at `GET /api/dev/mailbox` from the same computer |
 | Map tiles | `MAP_TILE_URL` (defaults to OpenStreetMap) | The classroom picker shows a plain grid; coordinates can be typed or taken from the device |
 
-Student code is never executed on EduSphere's server. Python that a student is trying out runs in
+Student code is never executed on Discenda's server. Python that a student is trying out runs in
 that student's own browser, shut into a sandbox that can reach neither the site nor the network
 ([how](docs/SECURITY.md#python-in-the-browser)); an administrator can switch that off under
 **Settings → Programming**.
@@ -159,7 +159,7 @@ own licences, which that project lists.
 
 ## Known limits
 
-Read this before relying on EduSphere for real classes.
+Read this before relying on Discenda for real classes.
 
 - **Checked only against local stand-ins.** AI authoring and the Piston judge were developed and
   tested against fake services, never against a real AI provider or a real Piston instance.

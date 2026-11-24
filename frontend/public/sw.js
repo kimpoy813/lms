@@ -1,11 +1,11 @@
-// EduSphere service worker: makes the app installable and provides an offline shell.
+// Discenda service worker: makes the app installable and provides an offline shell.
 //
 // What it caches: the application shell (HTML, hashed JS/CSS, fonts, icons, screenshots).
 // What it never caches: anything under /api, /socket.io, /healthz, /readyz, or /.well-known —
 // grades, attendance, and messages are private and must always come from the server.
 // What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
 // page has to come from the server with its own security headers, and is not the app's page.
-const VERSION = 'edusphere-v4';
+const VERSION = 'discenda-v4';
 const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png'];
 const SHELL_SET = new Set(SHELL);
 
@@ -133,11 +133,11 @@ function parsePushPayload(event) {
     return '';
   };
 
-  const title = pick(raw.title, raw.heading, raw.subject) || 'EduSphere';
+  const title = pick(raw.title, raw.heading, raw.subject) || 'Discenda';
   const bodyText = pick(raw.body, raw.message, raw.summary, raw.description, raw.text);
-  const body = bodyText || (title === 'EduSphere' ? 'You have a new notification. Open EduSphere to view details.' : 'Open EduSphere to view details.');
+  const body = bodyText || (title === 'Discenda' ? 'You have a new notification. Open Discenda to view details.' : 'Open Discenda to view details.');
   const link = pick(raw.link, raw.url) || '/notifications';
-  const tag = pick(raw.tag) || `edusphere-${Date.now()}`;
+  const tag = pick(raw.tag) || `discenda-${Date.now()}`;
   const timestamp = typeof raw.timestamp === 'number' && Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now();
 
   return {
@@ -158,8 +158,8 @@ self.addEventListener('push', (event) => {
   const { title, options } = parsePushPayload(event);
   event.waitUntil(
     self.registration.showNotification(title, options).catch(() =>
-      self.registration.showNotification('EduSphere', {
-        body: 'You have a new notification. Open EduSphere to view details.',
+      self.registration.showNotification('Discenda', {
+        body: 'You have a new notification. Open Discenda to view details.',
         icon: '/icons/icon-192.png',
         data: { url: '/notifications' },
       }),

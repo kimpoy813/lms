@@ -75,7 +75,7 @@ elif what == "snoop":
         try:
             (open(target).read() if os.path.isfile(target) else os.listdir(target)); found.append("READ " + target)
         except Exception: pass
-    for target in ["/judge/build/main.py", "/judge/build/x", "/tmp/judge-job/report.json", "/etc/edusphere-judge-image"]:
+    for target in ["/judge/build/main.py", "/judge/build/x", "/tmp/judge-job/report.json", "/etc/discenda-judge-image"]:
         try:
             open(target, "w").write("x"); found.append("WROTE " + target)
         except Exception: pass

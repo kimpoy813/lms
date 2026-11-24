@@ -106,7 +106,7 @@ export default function Profile() {
         <Card>
           <CardHeader title="Notifications" />
           <Switch checked={user.emailNotifications} onChange={(on) => save.mutate({ emailNotifications: on }, { onSuccess: () => toast.success(on ? 'E-mail notifications are on.' : 'E-mail notifications are off.') })} label="Also send important notifications by e-mail" disabled={!runtime.email && !user.emailNotifications}
-            description={runtime.email ? 'Announcements, returned grades and attendance requests. You always receive them inside EduSphere.' : 'Not available: this site does not send e-mail. You receive every notification inside EduSphere.'} />
+            description={runtime.email ? 'Announcements, returned grades and attendance requests. You always receive them inside Discenda.' : 'Not available: this site does not send e-mail. You receive every notification inside Discenda.'} />
           <PushNotificationsCard />
         </Card>
 
@@ -115,7 +115,7 @@ export default function Profile() {
 
         <Card>
           <CardHeader icon={ShieldCheck} title="Your data" />
-          <p className="text-sm leading-relaxed text-soft">EduSphere keeps the records your school needs: your classes, submissions, grades and attendance. Attendance location checks store only the distance to the classroom, never your coordinates. To correct or export your records, or to ask about deletion, contact your school’s registrar or data protection officer. See the <Link to="/privacy" className="font-medium text-brand hover:underline">privacy notice</Link>.</p>
+          <p className="text-sm leading-relaxed text-soft">Discenda keeps the records your school needs: your classes, submissions, grades and attendance. Attendance location checks store only the distance to the classroom, never your coordinates. To correct or export your records, or to ask about deletion, contact your school’s registrar or data protection officer. See the <Link to="/privacy" className="font-medium text-brand hover:underline">privacy notice</Link>.</p>
         </Card>
       </div>
     </div>

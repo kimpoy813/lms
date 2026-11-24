@@ -122,7 +122,7 @@ export async function notifyAnnouncement(announcement) {
   await notify(userIds, {
     type: 'announcement.new',
     title: `${announcement.priority === 'URGENT' ? 'Urgent: ' : ''}${announcement.title}`,
-    body: excerpt(announcement.contentHtml, 220) || 'Open EduSphere to read the full announcement.',
+    body: excerpt(announcement.contentHtml, 220) || 'Open Discenda to read the full announcement.',
     link: announcement.classId ? `/classes/${announcement.classId}/announcements?open=${announcement.id}` : `/announcements?open=${announcement.id}`,
     classId: announcement.classId,
   }, { excludeUserId: announcement.authorId });

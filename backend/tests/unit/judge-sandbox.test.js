@@ -52,7 +52,7 @@ describe('checking a program', () => {
     const fork = fake.calls.find((c) => c[0] === 'fork')[1];
     expect(fork).toMatchObject({ sourceSandbox: NAME, region: REGION, networkPolicy: 'deny-all', persistent: false, resources: { vcpus: 1 }, ...CREDS });
     // Marked, so that a machine that was never removed can be found on the account later.
-    expect(fork.tags).toEqual({ edusphere: 'judge-run' });
+    expect(fork.tags).toEqual({ discenda: 'judge-run' });
     expect(fork.timeout).toBeGreaterThanOrEqual(60_000);
     expect(fork.signal).toBeInstanceOf(AbortSignal);
     // One upload and one command as root; the answer is there while the machine is still being stopped.
@@ -84,7 +84,7 @@ describe('checking a program', () => {
   });
 
   it('reads the report from the file when it did not come through with the output', async () => {
-    const fake = account({ output: 'cut off in the middle of EDUSPHERE-JUDGE-REP' });
+    const fake = account({ output: 'cut off in the middle of DISCENDA-JUDGE-REP' });
     fake.state.reportFile = JSON.stringify(okReport({ tests: ['2', '5'] }));
     const { judge } = judgeFor(fake);
     expect((await judge.runBatch(program)).runs.map((r) => r.stdout)).toEqual(['4\n', '10\n']);
@@ -233,12 +233,12 @@ describe('when Vercel says no', () => {
 
 describe('the prepared image', () => {
   it('is named after its recipe and region, and the recipe ends by writing the tag', () => {
-    expect(NAME).toBe(`edusphere-judge-${IMAGE_TAG}-sin1`);
+    expect(NAME).toBe(`discenda-judge-${IMAGE_TAG}-sin1`);
     expect(IMAGE_TAG).toMatch(/^[0-9a-f]{10}$/);
     const script = imageScript();
     expect(script).toMatch(/set -euo pipefail/);
     expect(script).toMatch(/apt-get install .*python3 nodejs gcc g\+\+ libc6-dev default-jdk-headless/);
-    expect(script.trim().split('\n').slice(-2)).toEqual([`printf '%s\\n' '${IMAGE_TAG}' > /etc/edusphere-judge-image`, 'sync']);
+    expect(script.trim().split('\n').slice(-2)).toEqual([`printf '%s\\n' '${IMAGE_TAG}' > /etc/discenda-judge-image`, 'sync']);
   });
 
   it('is prepared when it is missing, and the student is told to come back', async () => {
@@ -251,11 +251,11 @@ describe('the prepared image', () => {
     expect(created).toMatchObject({ name: NAME, image: BASE_IMAGE, region: REGION, persistent: true, ...CREDS });
     // Kept until it is deleted: Vercel's default removes a snapshot that was not used for 30 days, and a break between terms is longer.
     expect(created).toMatchObject({ snapshotExpiration: 0, keepLastSnapshots: { count: 1 } });
-    expect(created.tags).toEqual({ edusphere: 'judge-image' });
+    expect(created.tags).toEqual({ discenda: 'judge-image' });
     expect(created.networkPolicy).toBeUndefined(); // the installation needs the package mirrors
-    expect(fake.calls.filter((c) => c[0] === 'writeFiles')[0][2]).toEqual(['/var/tmp/edusphere-judge-image.sh']);
-    expect(fake.calls.find((c) => c[0] === 'runCommand')).toEqual(['runCommand', NAME, 'bash /var/tmp/edusphere-judge-image.sh', { sudo: true, detached: true, timeoutMs: undefined }]);
-    expect(fake.bases.get(NAME).files['/var/tmp/edusphere-judge-image.sh']).toBe(imageScript());
+    expect(fake.calls.filter((c) => c[0] === 'writeFiles')[0][2]).toEqual(['/var/tmp/discenda-judge-image.sh']);
+    expect(fake.calls.find((c) => c[0] === 'runCommand')).toEqual(['runCommand', NAME, 'bash /var/tmp/discenda-judge-image.sh', { sudo: true, detached: true, timeoutMs: undefined }]);
+    expect(fake.bases.get(NAME).files['/var/tmp/discenda-judge-image.sh']).toBe(imageScript());
 
     // While that goes on, requests are turned away at once instead of each starting a machine.
     const before = fake.calls.length;
@@ -416,12 +416,12 @@ describe('the prepared image', () => {
 
   it('removes the images of other recipes, and only those', async () => {
     const fake = account();
-    const old = `edusphere-judge-0000000000-${REGION}`;
+    const old = `discenda-judge-0000000000-${REGION}`;
     fake.bases.set(old, new fake.Machine(old, true, 'stopped'));
     fake.bases.set('somebody-elses-sandbox', new fake.Machine('somebody-elses-sandbox', true, 'stopped'));
     const { judge } = judgeFor(fake);
     expect(await judge.removeOtherImages()).toEqual([old]);
-    expect(fake.calls.find((c) => c[0] === 'list')[1]).toMatchObject({ namePrefix: 'edusphere-judge-', sortBy: 'name' });
+    expect(fake.calls.find((c) => c[0] === 'list')[1]).toMatchObject({ namePrefix: 'discenda-judge-', sortBy: 'name' });
     expect([...fake.bases.keys()].sort()).toEqual([NAME, 'somebody-elses-sandbox'].sort());
     const kept = { images: [{ name: NAME, status: 'stopped', current: true }, { name: 'somebody-elses-sandbox', status: 'stopped', current: false }], snapshots: 1, snapshotBytes: 1_103_000_000 };
     // The snapshot of the image in use is kept until the image is deleted …
@@ -471,11 +471,11 @@ describe('the prepared image', () => {
     first.status = 'stopped';
     second.status = 'failed';
     expect(await judge.removeLeftoverMachines()).toEqual({ removed: 2, running: 1 });
-    expect(fake.calls.filter((c) => c[0] === 'list').pop()[1]).toMatchObject({ tags: { edusphere: 'judge-run' }, ...CREDS });
+    expect(fake.calls.filter((c) => c[0] === 'list').pop()[1]).toMatchObject({ tags: { discenda: 'judge-run' }, ...CREDS });
     expect([first.deleted, second.deleted, third.deleted]).toEqual([true, true, false]);
     // The image carries another mark and stays — and would stay with the wrong mark too.
     expect([...fake.bases.keys()]).toEqual([NAME]);
-    fake.bases.get(NAME).tags = { edusphere: 'judge-run' };
+    fake.bases.get(NAME).tags = { discenda: 'judge-run' };
     expect(await judge.removeLeftoverMachines()).toEqual({ removed: 0, running: 1 });
     expect([...fake.bases.keys()]).toEqual([NAME]);
     // Not more than asked for in one go.

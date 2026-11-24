@@ -152,7 +152,7 @@ export function ResourceDialog({ classId, teacherId, resource, placement = {}, m
           </Field>
         )}
         {currentType !== 'FILE' && (
-          <Field label={currentType === 'EMBED' ? 'YouTube or Vimeo link' : 'Web address'} required error={errors.url} hint={currentType === 'EMBED' ? 'The video plays inside EduSphere without tracking cookies.' : null}>
+          <Field label={currentType === 'EMBED' ? 'YouTube or Vimeo link' : 'Web address'} required error={errors.url} hint={currentType === 'EMBED' ? 'The video plays inside Discenda without tracking cookies.' : null}>
             <Input value={values.url} onChange={(e) => set('url', e.target.value)} placeholder={currentType === 'EMBED' ? 'https://www.youtube.com/watch?v=…' : 'https://…'} inputMode="url" autoCapitalize="none" />
           </Field>
         )}

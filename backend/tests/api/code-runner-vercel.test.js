@@ -18,7 +18,7 @@ vi.hoisted(() => {
   process.env.VERCEL_ENV = 'production';
   process.env.VERCEL_REGION = 'sin1';
   process.env.VERCEL_PROJECT_ID = 'prj_site';
-  process.env.VERCEL_PROJECT_PRODUCTION_URL = 'edusphere.example';
+  process.env.VERCEL_PROJECT_PRODUCTION_URL = 'discenda.example';
   process.env.CODE_RUNNER_PROVIDER = 'vercel-sandbox';
   process.env.CRON_SECRET = 'secret-of-the-operator';
   // Lets the scheduled call run the jobs; in the test-suite nothing runs them by itself.
@@ -261,7 +261,7 @@ describe('machines that were never removed', () => {
     expect(cron.body.data.ran).toContain('codeRunner.leftovers');
     expect(fake.machines.map((machine) => machine.deleted)).toEqual([true, true, false]);
     const list = fake.calls.filter((call) => call[0] === 'list').pop()[1];
-    expect(list).toMatchObject({ tags: { edusphere: 'judge-run' }, token, teamId: 'team_site', projectId: 'prj_site' });
+    expect(list).toMatchObject({ tags: { discenda: 'judge-run' }, token, teamId: 'team_site', projectId: 'prj_site' });
     // The image is not a leftover.
     expect([...fake.bases.keys()]).toEqual([NAME]);
   });

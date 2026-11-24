@@ -24,9 +24,9 @@ export { resolveIdentity };
 /** The Vercel image the prepared machine starts from, and what is added to it. */
 export const BASE_IMAGE = 'vercel/sandbox/ubuntu';
 export const IMAGE_PACKAGES = ['python3', 'nodejs', 'gcc', 'g++', 'libc6-dev', 'default-jdk-headless'];
-const IMAGE_LOG = '/var/log/edusphere-judge-image.log';
+const IMAGE_LOG = '/var/log/discenda-judge-image.log';
 const IMAGE_FAILED_FILE = `${IMAGE_MARKER_FILE}.failed`;
-const IMAGE_SCRIPT_PATH = '/var/tmp/edusphere-judge-image.sh';
+const IMAGE_SCRIPT_PATH = '/var/tmp/discenda-judge-image.sh';
 
 const recipe = (tag) => `#!/bin/bash
 # Prepares a machine for checking students' programs in Python, JavaScript, C, C++ and Java.
@@ -57,10 +57,10 @@ const IMAGE_RETENTION = Object.freeze({ snapshotExpiration: 0, keepLastSnapshots
 /** Changes whenever the recipe or the way the image is kept changes, so that a new one is made. */
 export const IMAGE_TAG = createHash('sha256').update(`${BASE_IMAGE}\n${recipe('')}\n${JSON.stringify(IMAGE_RETENTION)}`).digest('hex').slice(0, 10);
 export const imageScript = () => recipe(IMAGE_TAG);
-export const imageName = (region) => `edusphere-judge-${IMAGE_TAG}-${region}`;
-export const IMAGE_NAME_PREFIX = 'edusphere-judge-';
+export const imageName = (region) => `discenda-judge-${IMAGE_TAG}-${region}`;
+export const IMAGE_NAME_PREFIX = 'discenda-judge-';
 /** How the machines of single jobs are marked on the account, so that leftovers can be found. */
-const RUN_TAGS = Object.freeze({ edusphere: 'judge-run' });
+const RUN_TAGS = Object.freeze({ discenda: 'judge-run' });
 
 const JOB_DIR = '/tmp/judge-job';
 /**
@@ -216,7 +216,7 @@ export function createSandboxJudge({ region, identity: resolve = () => resolveId
   }
 
   async function startBase(Sandbox, creds) {
-    const params = { name, image: BASE_IMAGE, region, resources: { vcpus: 2 }, timeout: PREPARE_LIFETIME_MS, persistent: true, tags: { edusphere: 'judge-image' }, ...creds };
+    const params = { name, image: BASE_IMAGE, region, resources: { vcpus: 2 }, timeout: PREPARE_LIFETIME_MS, persistent: true, tags: { discenda: 'judge-image' }, ...creds };
     let base;
     try {
       base = await Sandbox.create({ ...params, ...IMAGE_RETENTION });

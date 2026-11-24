@@ -292,7 +292,7 @@ describe('downloading the questions', () => {
     expect(file.headers['content-disposition']).toBe('attachment; filename="Quiz-3-Number-systems-Bits-questions.json"');
     expect(file.headers['cache-control']).toBe('no-store');
     const written = JSON.parse(file.text);
-    expect(written).toMatchObject({ format: 'edusphere.questions', version: 1, title: 'Quiz 3: Number systems / Bits' });
+    expect(written).toMatchObject({ format: 'discenda.questions', version: 1, title: 'Quiz 3: Number systems / Bits' });
     expect(written.questions[0]).toEqual({ type: 'multiple_choice', question: 'Which part carries out the instructions?', choices: ['RAM', 'CPU', 'Hard disk', 'Monitor'], answer: 'CPU', points: 2, difficulty: 'easy', explanation: 'IMPORTED-EXPLANATION' });
     expect(written.questions[7]).toMatchObject({ type: 'essay', questionHtml: '<p>Explain <strong>RAM</strong>.</p>', points: 10 });
     // The answers left the system: the audit log has who took them.
@@ -341,7 +341,7 @@ describe('question banks', () => {
     const file = await teacher.get(`/api/question-banks/${bank}/export`);
     expect(file.headers['content-disposition']).toBe('attachment; filename="Computing-chapter-2-questions.json"');
     const written = JSON.parse(file.text);
-    expect(written).toMatchObject({ format: 'edusphere.questions', title: 'Computing: chapter 2' });
+    expect(written).toMatchObject({ format: 'discenda.questions', title: 'Computing: chapter 2' });
     expect(written.questions).toHaveLength(7);
     expect(written.questions[2]).toEqual({ type: 'true_false', question: 'One byte is made of 8 bits.', answer: true, points: 1, difficulty: 'medium' });
     expect((await other.get(`/api/question-banks/${bank}/export`)).status).toBe(404);

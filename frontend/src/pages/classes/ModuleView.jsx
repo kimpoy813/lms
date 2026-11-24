@@ -19,7 +19,7 @@ import { LESSON_KINDS } from './Modules.jsx';
 import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
 
-const READER_PREFS_KEY = 'edusphere.readerPrefs';
+const READER_PREFS_KEY = 'discenda.readerPrefs';
 const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false };
 
 function useReaderPrefs() {

@@ -1,6 +1,6 @@
 # Architecture
 
-EduSphere is one PostgreSQL database, one Node.js API process and one single-page web app.
+Discenda is one PostgreSQL database, one Node.js API process and one single-page web app.
 
 ```
  Browser (React SPA)

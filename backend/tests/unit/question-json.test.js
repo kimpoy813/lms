@@ -150,7 +150,7 @@ describe('other names for the same things', () => {
     expect(clean(one({ q: 'What do the letters CPU stand for?', a: 'Central Processing Unit' }))).toMatchObject({ type: 'IDENTIFICATION', accepted: ['Central Processing Unit'] });
     expect(one({ q: 'Brain?', a: 'RAM', b: 'CPU' })).toMatchObject({ type: 'MULTIPLE_CHOICE', errors: ['Mark the correct choice.'] });
     // The file that was downloaded is read by its own names only.
-    const own = read({ format: 'edusphere.questions', version: 1, questions: [{ type: 'essay', question: 'Compare.', a: 'RAM', b: 'CPU' }] }).questions[0];
+    const own = read({ format: 'discenda.questions', version: 1, questions: [{ type: 'essay', question: 'Compare.', a: 'RAM', b: 'CPU' }] }).questions[0];
     expect([own.type, own.choices]).toEqual(['ESSAY', undefined]);
   });
 
@@ -327,7 +327,7 @@ describe('an answer key that stands apart from the questions', () => {
     // Answers and nothing else beside them: these are the questions.
     expect(read({ solutions: [{ question: 'One?', answer: '1' }, { question: 'Two?', answer: '2' }] }).questions.map((q) => q.accepted[0])).toEqual(['1', '2']);
     // A file that was downloaded is read by its own names only.
-    const own = read({ format: 'edusphere.questions', version: 1, questions: [{ type: 'essay', question: 'Compare.' }], answers: ['Model answer.'] });
+    const own = read({ format: 'discenda.questions', version: 1, questions: [{ type: 'essay', question: 'Compare.' }], answers: ['Model answer.'] });
     expect([own.questions[0].explanation, own.notes]).toEqual(['', []]);
   });
 });
@@ -520,7 +520,7 @@ describe('questions the teacher marks, and what cannot be told', () => {
   it('works the type out when the file names one it does not know', () => {
     const q = one({ type: 'riddle', ...MC, answer: 'B' });
     expect([q.type, key(q), q.errors]).toEqual(['MULTIPLE_CHOICE', 'RAM [CPU] Disk Monitor', []]);
-    expect(q.warnings).toEqual(['“riddle” is not a type of question EduSphere has. The type was worked out from the rest of the question.']);
+    expect(q.warnings).toEqual(['“riddle” is not a type of question Discenda has. The type was worked out from the rest of the question.']);
   });
 
   it('says that a picture was left behind', () => {
@@ -773,7 +773,7 @@ describe('questions written as JSON', () => {
 
   it('reads back as the questions that were written', () => {
     const file = questionsToJson(stored, { title: 'Quiz 1' });
-    expect(file).toMatchObject({ format: 'edusphere.questions', version: 1, title: 'Quiz 1' });
+    expect(file).toMatchObject({ format: 'discenda.questions', version: 1, title: 'Quiz 1' });
     const { questions, notes } = read(JSON.stringify(file, null, 2));
     expect(notes).toEqual([]);
     questions.forEach(clean);

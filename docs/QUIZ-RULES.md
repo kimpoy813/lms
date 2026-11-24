@@ -164,11 +164,11 @@ Reloading counts, so the page must not make it the only way on:
   connection. Nothing is lost by waiting.
 - **The code editor of a programming question is a download of its own.** It is fetched when the
   attempt starts. If it cannot be fetched — the connection dropped at that moment, or a new
-  version of EduSphere was installed during the examination — the program is written in a plain
+  version of Discenda was installed during the examination — the program is written in a plain
   text box instead, and is saved, run and checked all the same.
 - Python that will not load in the browser is run by the server's code runner, as in any quiz.
 
-Installing a new version of EduSphere in the middle of an examination is still best avoided.
+Installing a new version of Discenda in the middle of an examination is still best avoided.
 
 ## What "failed" means
 

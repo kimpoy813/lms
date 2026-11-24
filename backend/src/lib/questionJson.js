@@ -1,4 +1,4 @@
-// Questions written as JSON — by hand, by a chat assistant, or downloaded from EduSphere — turned
+// Questions written as JSON — by hand, by a chat assistant, or downloaded from Discenda — turned
 // into draft questions for the teacher to review. Nothing here writes to the database.
 //
 // The format that is documented (docs/QUESTION-IMPORT.md) is small:
@@ -455,8 +455,8 @@ function collect(node, defaults, out, depth, inList, keys = null) {
   // Only a name that says "each": "points" on a wrapper is as often the total of the quiz.
   const points = toPoints(r.get('pointseach', 'pointsperquestion', 'pointsperitem', 'markseach', 'marksperquestion'));
   if (points !== null && points > 0) next.points = points;
-  // A file downloaded from EduSphere is read back exactly as it was written.
-  if (r.get('format') === 'edusphere.questions') next.exact = true;
+  // A file downloaded from Discenda is read back exactly as it was written.
+  if (r.get('format') === 'discenda.questions' || r.get('format') === 'edusphere.questions') next.exact = true;
   // One of several parts, with a heading of its own.
   const heading = r.get('section', 'part', 'heading') ?? (inList ? r.get('title', 'name') : undefined);
   if (filled(heading)) next.section = heading.trim();
@@ -576,7 +576,7 @@ function applyAnswerKey(entries, value) {
 
 // ── Text ─────────────────────────────────────────────────────────────────────
 
-/** Written by a rich-text editor (or downloaded from EduSphere), not typed as plain text. */
+/** Written by a rich-text editor (or downloaded from Discenda), not typed as plain text. */
 const isMarkup = (s) => /^\s*<(p|div|h[1-6]|ul|ol|pre|blockquote|table)[\s>][\s\S]*<\/(p|div|h[1-6]|ul|ol|pre|blockquote|table)>\s*$/i.test(s);
 
 const inline = (line) => escapeHtml(line).replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -958,7 +958,7 @@ function readQuestion({ raw, defaults, keyed }, ctx) {
   const named = r.get('type', 'questiontype', 'kind');
   const explicit = typeFromName(named) ?? defaults.type ?? null;
   let type = explicit;
-  if (typeof named === 'string' && named.trim() && !typeFromName(named)) warn(`“${clip(named, 30)}” is not a type of question EduSphere has. The type was worked out from the rest of the question.`);
+  if (typeof named === 'string' && named.trim() && !typeFromName(named)) warn(`“${clip(named, 30)}” is not a type of question Discenda has. The type was worked out from the rest of the question.`);
 
   // ── The question itself ──
   const htmlGiven = r.get(...HTML_KEYS);
@@ -1268,5 +1268,5 @@ function writeQuestion(q) {
  * @param {{ title?: string }} [about]
  */
 export function questionsToJson(questions, { title } = {}) {
-  return { format: 'edusphere.questions', version: 1, ...(title ? { title } : {}), questions: questions.map(writeQuestion) };
+  return { format: 'discenda.questions', version: 1, ...(title ? { title } : {}), questions: questions.map(writeQuestion) };
 }

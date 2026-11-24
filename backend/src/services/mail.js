@@ -45,11 +45,11 @@ function layout(title, bodyHtml) {
   return `<!doctype html><html><body style="margin:0;background:#f4f5fb;font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#1f2433">
 <div style="max-width:560px;margin:0 auto;padding:32px 20px">
   <div style="background:#ffffff;border-radius:16px;padding:32px;border:1px solid #e6e8f2">
-    <div style="font-weight:700;font-size:18px;color:#4f46e5;margin-bottom:20px">EduSphere</div>
+    <div style="font-weight:700;font-size:18px;color:#4f46e5;margin-bottom:20px">Discenda</div>
     <h1 style="font-size:20px;margin:0 0 12px">${escapeHtml(title)}</h1>
     ${bodyHtml}
   </div>
-  <p style="font-size:12px;color:#7a8199;text-align:center;margin-top:16px">You received this message because of your EduSphere account.</p>
+  <p style="font-size:12px;color:#7a8199;text-align:center;margin-top:16px">You received this message because of your Discenda account.</p>
 </div></body></html>`;
 }
 

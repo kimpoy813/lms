@@ -143,7 +143,7 @@ describe('opt-in per-class AI Study Coach (POST /api/lessons/:lessonId/study-coa
     // Teacher preview always works even while off for students
     const preview = await teacher.post(`/api/lessons/${pubLesson.id}/study-coach`, { mode: 'summary' });
     expect(preview.status).toBe(200);
-    expect(preview.body.data.model).toBe('edusphere-builtin-v1');
+    expect(preview.body.data.model).toBe('discenda-builtin-v1');
 
     // Teacher enables AI Study Coach for the class
     expect((await teacher.patch(`/api/classes/${cls.id}`, { aiStudyCoachEnabled: true })).status).toBe(200);

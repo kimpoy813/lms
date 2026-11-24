@@ -118,7 +118,7 @@ export default function Calendar() {
   const exportIcs = async () => {
     setExportingIcs(true);
     try {
-      await api.download('/calendar/export.ics', { from: range.from, to: range.to, includeMeetings: showMeetings ? 'true' : 'false' }, `edusphere-${month}.ics`);
+      await api.download('/calendar/export.ics', { from: range.from, to: range.to, includeMeetings: showMeetings ? 'true' : 'false' }, `discenda-${month}.ics`);
       toast.success('Calendar (.ics) downloaded.');
     } catch (err) {
       toast.error(err.message);

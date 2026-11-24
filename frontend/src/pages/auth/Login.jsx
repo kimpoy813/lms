@@ -54,7 +54,7 @@ export default function Login() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle={`Sign in to ${config.data?.institutionName ?? 'your EduSphere account'}.`}
+      subtitle={`Sign in to ${config.data?.institutionName ?? 'your Discenda account'}.`}
       footer={canRegister ? <>New here? <Link to="/register" className="font-semibold text-brand hover:underline">Create an account</Link></> : null}
     >
       {location.state?.notice && <Alert tone="ok" className="mb-5">{location.state.notice}</Alert>}

@@ -38,7 +38,7 @@ export default function ForgotPassword() {
         <div className="flex flex-col items-center rounded-2xl border border-line bg-surface p-8 text-center shadow-card">
           <KeyRound className="size-12 text-brand" aria-hidden="true" />
           <p className="mt-4 font-semibold text-ink">Ask your school for a temporary password</p>
-          <p className="mt-1.5 text-sm leading-relaxed text-soft">This site does not send e-mail, so it cannot send you a reset link. Tell your teacher or the school’s EduSphere administrator: an administrator can give you a temporary password, and you choose a new one when you sign in with it.</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-soft">This site does not send e-mail, so it cannot send you a reset link. Tell your teacher or the school’s Discenda administrator: an administrator can give you a temporary password, and you choose a new one when you sign in with it.</p>
         </div>
       ) : sent ? (
         <div className="flex flex-col items-center rounded-2xl border border-line bg-surface p-8 text-center shadow-card">

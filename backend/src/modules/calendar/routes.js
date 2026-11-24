@@ -154,14 +154,14 @@ calendarRouter.get(
     const allItems = await collectCalendarItems(req.user, { from, to, classId: req.valid.query.classId, tz });
     const events = includeMeetings ? allItems : allItems.filter((item) => item.kind !== 'CLASS_MEETING');
     const ics = buildIcsCalendar({
-      name: `${settings['institution.name'] || 'EduSphere'} Calendar`,
+      name: `${settings['institution.name'] || 'Discenda'} Calendar`,
       timeZone: tz,
       appUrl: env.appUrl,
       events,
     });
     const buffer = Buffer.from(ics, 'utf8');
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="edusphere-calendar.ics"');
+    res.setHeader('Content-Disposition', 'attachment; filename="discenda-calendar.ics"');
     res.setHeader('Content-Length', String(buffer.length));
     res.setHeader('Cache-Control', 'no-store');
     res.end(buffer);

@@ -53,7 +53,7 @@ test.describe('roles', () => {
     // GE 105 is taught by the second demo teacher.
     await page.getByRole('button', { name: 'Account menu' }).click();
     await page.getByRole('menuitem', { name: 'Sign out' }).click();
-    await signIn(page, 'teacher2@edusphere.demo');
+    await signIn(page, 'teacher2@discenda.demo');
     const theirs = (await (await page.request.get('/api/classes?status=ACTIVE')).json()).data.map((c) => c.id);
     expect(theirs.some((id) => mine.includes(id))).toBe(false);
     // Asking for someone else's class by id answers "not found", not "forbidden".

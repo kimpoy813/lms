@@ -1,6 +1,6 @@
 // The administrator's guide through a new installation.
 //
-// A fresh EduSphere has one administrator and nothing else. This card on the dashboard lists what
+// A fresh Discenda has one administrator and nothing else. This card on the dashboard lists what
 // is needed before the first class can meet, in the order it is needed. The server reads each
 // step from the data (dashboard → setup.steps), so a step is ticked when the thing exists — not
 // when somebody clicked "done" — and the card goes away by itself once everything is there.
@@ -8,7 +8,7 @@ import { ArrowRight, Check, ListChecks, X } from 'lucide-react';
 import { useState } from 'react';
 import { Button, Card, cn, ProgressBar } from '../components/ui.jsx';
 
-const HIDDEN_KEY = 'edusphere.setupGuide.hidden';
+const HIDDEN_KEY = 'discenda.setupGuide.hidden';
 
 const readHidden = () => {
   try {

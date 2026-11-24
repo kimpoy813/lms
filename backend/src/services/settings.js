@@ -14,7 +14,7 @@ const int = (min, max) => z.number().int().min(min).max(max);
  */
 export const SETTING_DEFINITIONS = {
   'institution.name': {
-    default: 'EduSphere University', schema: z.string().trim().min(1).max(120), public: true,
+    default: 'Discenda University', schema: z.string().trim().min(1).max(120), public: true,
     group: 'Institution', label: 'Institution name',
   },
   'institution.timezone': {

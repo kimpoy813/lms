@@ -39,13 +39,13 @@ test('a teacher posts an announcement and a student of the class reads it', asyn
 
 test('a student who is not in the class does not get it', async ({ browser, baseURL }) => {
   // student9 is enrolled in CS 201 only.
-  const outsider = await apiAs('student9@edusphere.demo', baseURL);
+  const outsider = await apiAs('student9@discenda.demo', baseURL);
   const feed = await outsider.get('/announcements');
   expect((feed ?? []).some((p) => p.title === title)).toBe(false);
   await outsider.dispose();
   const context = await browser.newContext();
   const page = await context.newPage();
-  await signIn(page, 'student9@edusphere.demo');
+  await signIn(page, 'student9@discenda.demo');
   await page.goto('/announcements');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.getByText(title)).toHaveCount(0);

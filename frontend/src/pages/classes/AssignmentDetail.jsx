@@ -162,7 +162,7 @@ function StudentStatus({ a }) {
 }
 
 function localDraftKey(userId, assignmentId) {
-  return `edusphere.assignmentDraft.${userId || 'anon'}.${assignmentId}`;
+  return `discenda.assignmentDraft.${userId || 'anon'}.${assignmentId}`;
 }
 
 function readLocalDraft(key) {

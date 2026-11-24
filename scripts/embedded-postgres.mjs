@@ -8,7 +8,7 @@
 // Environment:
 //   EMBEDDED_PG_PORT      (default 5433)
 //   EMBEDDED_PG_DIR       (default .local/postgres)
-//   EMBEDDED_PG_DATABASE  (default edusphere)
+//   EMBEDDED_PG_DATABASE  (default discenda)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.EMBEDDED_PG_PORT ?? 5433);
 const databaseDir = path.resolve(root, process.env.EMBEDDED_PG_DIR ?? '.local/postgres');
-const database = process.env.EMBEDDED_PG_DATABASE ?? 'edusphere';
+const database = process.env.EMBEDDED_PG_DATABASE ?? 'discenda';
 const user = 'postgres';
 const password = 'postgres';
 

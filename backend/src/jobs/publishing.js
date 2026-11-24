@@ -50,7 +50,7 @@ export async function publishScheduled(now = new Date()) {
     await notify(await enrolledStudentIds(a.classId), {
       type: 'assignment.published',
       title: `New assignment in ${classLabel(a.class)}: ${a.title}`,
-      body: desc ? `${parts.join(' · ')} — ${desc}` : `${parts.join(' · ')}. Open EduSphere to view instructions and submit.`,
+      body: desc ? `${parts.join(' · ')} — ${desc}` : `${parts.join(' · ')}. Open Discenda to view instructions and submit.`,
       link: `/classes/${a.classId}/assignments/${a.id}`,
       classId: a.classId,
     });
@@ -64,7 +64,7 @@ export async function publishScheduled(now = new Date()) {
     await notify(await enrolledStudentIds(q.classId), {
       type: 'quiz.published',
       title: `New ${q.kind.toLowerCase()} in ${classLabel(q.class)}: ${q.title}`,
-      body: `${parts.join(' · ')}. Open EduSphere to review details and start when ready.`,
+      body: `${parts.join(' · ')}. Open Discenda to review details and start when ready.`,
       link: `/classes/${q.classId}/quizzes/${q.id}`,
       classId: q.classId,
     });

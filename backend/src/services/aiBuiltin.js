@@ -306,7 +306,7 @@ function negateStatement(sentence) {
   return `Contrary to the lesson, ${clean.charAt(0).toLowerCase()}${clean.slice(1)}`;
 }
 
-/** Extract high-signal accepted answer key words/sentence so EduSphere's keyWords auto-grader works well. */
+/** Extract high-signal accepted answer key words/sentence so Discenda's keyWords auto-grader works well. */
 function buildShortAnswerModel(text, keyword) {
   const cleaned = cleanLine(text, 240).replace(/[.!?]+$/, '');
   const list = [cleaned];

@@ -280,7 +280,7 @@ above them says that some may be missing.
 
 ## Letting a chat assistant write the questions
 
-EduSphere can draft questions itself where an administrator has set up an AI provider (*AI
+Discenda can draft questions itself where an administrator has set up an AI provider (*AI
 studio*). Without one, any chat assistant the teacher already uses does the same, and the import
 reads its answer:
 
@@ -291,7 +291,7 @@ reads its answer:
 4. Copy the whole answer and paste it into the import box. (When the request itself is pasted
    there instead — it is what was copied last — the dialog says so, and reads nothing.)
 
-EduSphere sends nothing to the assistant: the request is text that the teacher copies. What the
+Discenda sends nothing to the assistant: the request is text that the teacher copies. What the
 teacher pastes into the assistant is the teacher's to decide — it should not contain students'
 names or marks.
 

@@ -149,7 +149,7 @@ if (!(await reachable(db.hostname, dbPort))) {
     process.exit(1);
   }
   say(`no database on port ${dbPort} — starting the embedded PostgreSQL that ships with the npm packages`);
-  const server = start('db', process.execPath, ['scripts/embedded-postgres.mjs'], { env: { EMBEDDED_PG_PORT: String(dbPort), EMBEDDED_PG_DATABASE: decodeURIComponent(db.pathname.slice(1)) || 'edusphere' }, tint: '35' });
+  const server = start('db', process.execPath, ['scripts/embedded-postgres.mjs'], { env: { EMBEDDED_PG_PORT: String(dbPort), EMBEDDED_PG_DATABASE: decodeURIComponent(db.pathname.slice(1)) || 'discenda' }, tint: '35' });
   // The helper prints this line once the server accepts connections and the database exists.
   const ready = await sawLine(server, /Embedded PostgreSQL is ready/, 120_000);
   if (!ready) {

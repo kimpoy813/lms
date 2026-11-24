@@ -29,7 +29,7 @@ describe('reports of violations', () => {
     expect(report).toMatchObject({ kind: 'LEFT_PAGE', at: Date.now() });
     expect(report.key).toMatch(/^[A-Za-z0-9_-]{8,40}$/);
     expect(pendingReports('a1')).toEqual([report]);
-    expect(JSON.parse(window.localStorage.getItem('edusphere.quiz.reports.v1'))).toEqual({ a1: [report] });
+    expect(JSON.parse(window.localStorage.getItem('discenda.quiz.reports.v1'))).toEqual({ a1: [report] });
 
     vi.advanceTimersByTime(2500);
     api.post.mockResolvedValueOnce({ outcome: 'TERMINATED', kind: 'LEFT_PAGE' });
@@ -37,7 +37,7 @@ describe('reports of violations', () => {
     // The server is told how long ago it happened, not what this device's clock says.
     expect(api.post).toHaveBeenCalledWith('/attempts/a1/violations', { kind: 'LEFT_PAGE', key: report.key, agoMs: 2500 }, { keepalive: false });
     expect(pendingReports('a1')).toEqual([]);
-    expect(window.localStorage.getItem('edusphere.quiz.reports.v1')).toBeNull();
+    expect(window.localStorage.getItem('discenda.quiz.reports.v1')).toBeNull();
   });
 
   it('carry a short detail, and can be sent while the page is closing', async () => {
@@ -131,9 +131,9 @@ describe('reports of violations', () => {
   });
 
   it('ignore what somebody else wrote into the storage', () => {
-    window.localStorage.setItem('edusphere.quiz.reports.v1', '["not", "ours"]');
+    window.localStorage.setItem('discenda.quiz.reports.v1', '["not", "ours"]');
     expect(pendingReports('a1')).toEqual([]);
-    window.localStorage.setItem('edusphere.quiz.reports.v1', '{broken');
+    window.localStorage.setItem('discenda.quiz.reports.v1', '{broken');
     expect(pendingReports('a1')).toEqual([]);
     expect(recordReport('a1', 'COPY')).toMatchObject({ kind: 'COPY' });
   });

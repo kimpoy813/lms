@@ -122,7 +122,7 @@ test('pasted JSON becomes the questions of a quiz, with their answers', async ({
   const file = await saved(page, page.getByRole('button', { name: 'Download the questions as a JSON file' }));
   expect(file.name).toMatch(/^Imported-quiz-.*-questions\.json$/);
   const written = JSON.parse(file.text);
-  expect(written).toMatchObject({ format: 'edusphere.questions', version: 1, title: quiz.title });
+  expect(written).toMatchObject({ format: 'discenda.questions', version: 1, title: quiz.title });
   expect(written.questions.map((q) => [q.type, q.answer ?? null])).toEqual([
     ['multiple_choice', 'CPU'], ['true_false', true], ['identification', ['Central Processing Unit', 'central processor']],
     ['multiple_choice', 'for'], ['multiple_choice', 'Monitor'], ['fill_blanks', [['8', 'eight'], ['nibble']]], ['matching', null],

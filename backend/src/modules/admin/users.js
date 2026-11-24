@@ -338,7 +338,7 @@ adminUsersRouter.post('/:userId/approve', validate({ params: idParams('userId') 
   if (target.status !== 'PENDING') throw conflict('This account is not waiting for approval.', 'INVALID_STATUS');
   const user = await prisma.user.update({ where: { id: target.id }, data: { status: 'ACTIVE' }, include });
   await audit(req, { action: 'user.approve', entityType: 'User', entityId: target.id, summary: `Approved account of ${fullName(target)}` });
-  await notify([target.id], { type: 'account.approved', title: 'Your account was approved', body: 'You now have full access to EduSphere.', link: '/dashboard' });
+  await notify([target.id], { type: 'account.approved', title: 'Your account was approved', body: 'You now have full access to Discenda.', link: '/dashboard' });
   ok(res, serializeAdminUser(user));
 });
 

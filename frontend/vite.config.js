@@ -37,7 +37,7 @@ const pythonInBrowser = () => {
     return fs.createReadStream(new URL(`../node_modules/pyodide/${file}`, import.meta.url)).on('error', next).pipe(res);
   };
   return {
-    name: 'edusphere-python-in-browser',
+    name: 'discenda-python-in-browser',
     configureServer: (server) => void server.middlewares.use(headers).use(untouched),
     configurePreviewServer: (server) => void server.middlewares.use(headers),
   };

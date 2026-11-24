@@ -70,14 +70,14 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
     expect((await teacher.get('/api/ai/status')).body.data).toMatchObject({
       configured: true,
       provider: 'builtin',
-      model: 'edusphere-builtin-v1',
+      model: 'discenda-builtin-v1',
       askedWith: 'built-in',
     });
     expect((await admin.post('/api/admin/ai/check', {})).body.data).toMatchObject({
       ok: true,
       provider: 'builtin',
       askedWith: 'built-in',
-      model: 'edusphere-builtin-v1',
+      model: 'discenda-builtin-v1',
     });
 
     // Seed a real multi-lesson module and extract quiz + exam questions directly from it

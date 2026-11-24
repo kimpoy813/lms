@@ -75,7 +75,7 @@ export function Logo({ className, compact = false }) {
   return (
     <span className={cn('flex items-center gap-2.5', className)}>
       <img src="/favicon.svg" alt="" className="size-8 rounded-[9px]" />
-      {!compact && <span className="text-[17px] font-bold tracking-tight text-ink">EduSphere</span>}
+      {!compact && <span className="text-[17px] font-bold tracking-tight text-ink">Discenda</span>}
     </span>
   );
 }
@@ -85,7 +85,7 @@ function Sidebar({ onNavigate, messageCount }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center px-5">
-        <Link to="/" onClick={onNavigate} aria-label="EduSphere home"><Logo /></Link>
+        <Link to="/" onClick={onNavigate} aria-label="Discenda home"><Logo /></Link>
       </div>
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 pb-4 pt-2" aria-label="Main">
         {NAV[user.role].map((group) => (
@@ -106,7 +106,7 @@ function Sidebar({ onNavigate, messageCount }) {
         ))}
       </nav>
       <div className="shrink-0 border-t border-line px-5 py-3 text-xs text-faint">
-        <p className="truncate font-medium text-soft">{settings['institution.name'] ?? 'EduSphere'}</p>
+        <p className="truncate font-medium text-soft">{settings['institution.name'] ?? 'Discenda'}</p>
         <p>{{ STUDENT: 'Student portal', TEACHER: 'Teacher portal', ADMIN: 'Administration' }[user.role]}</p>
       </div>
     </div>
@@ -320,7 +320,7 @@ export default function AppShell() {
 
       <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-line bg-surface/85 px-3 backdrop-blur-md sm:px-5">
         <IconButton icon={MenuIcon} label="Open menu" onClick={() => setDrawer(true)} className="lg:hidden" />
-        <Link to="/" className="lg:hidden" aria-label="EduSphere home"><Logo compact /></Link>
+        <Link to="/" className="lg:hidden" aria-label="Discenda home"><Logo compact /></Link>
         <button type="button" onClick={() => setSearch(true)} className="ml-1 hidden h-10 w-full max-w-md items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 text-sm text-faint transition-colors hover:border-line-strong sm:flex" aria-label="Search">
           <Search className="size-4" aria-hidden="true" />
           <span className="flex-1 text-left">Search classes, lessons, people…</span>
@@ -399,7 +399,7 @@ export function PageError({ error, reset }) {
     <div className="grid min-h-[50vh] place-items-center p-6">
       <div className="max-w-md text-center">
         <h1 className="text-xl font-bold">{stale ? 'This page needs to be reloaded' : 'This page could not be displayed'}</h1>
-        <p className="mt-2 text-sm text-soft">{stale ? 'Part of the app could not be downloaded. You may be offline, or a newer version of EduSphere was just installed. Reloading fixes it.' : 'Something went wrong while showing this page. Your data is safe — try again, or go back to the dashboard.'}</p>
+        <p className="mt-2 text-sm text-soft">{stale ? 'Part of the app could not be downloaded. You may be offline, or a newer version of Discenda was just installed. Reloading fixes it.' : 'Something went wrong while showing this page. Your data is safe — try again, or go back to the dashboard.'}</p>
         {import.meta.env.DEV && error && <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-raised p-3 text-left text-xs text-bad">{String(error?.stack ?? error)}</pre>}
         <div className="mt-5 flex justify-center gap-2">
           {/* A lazily loaded page that failed to download stays failed until the document is reloaded. */}

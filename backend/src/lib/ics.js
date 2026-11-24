@@ -1,4 +1,4 @@
-// RFC 5545 iCalendar (.ics) serializer for EduSphere calendars.
+// RFC 5545 iCalendar (.ics) serializer for Discenda calendars.
 // Outputs CRLF-delimited, folded lines suitable for Google Calendar, Apple Calendar, and Outlook.
 
 function escapeText(value) {
@@ -50,12 +50,12 @@ function addUtcDay(date) {
 /**
  * @param {{ name?: string, timeZone?: string, appUrl?: string, events: Array<{ id: string, title: string, description?: string | null, location?: string | null, startAt: Date | string, endAt?: Date | string | null, allDay?: boolean, link?: string | null, classLabel?: string | null }> }} options
  */
-export function buildIcsCalendar({ name = 'EduSphere Calendar', timeZone = 'Asia/Manila', appUrl = '', events = [] }) {
+export function buildIcsCalendar({ name = 'Discenda Calendar', timeZone = 'Asia/Manila', appUrl = '', events = [] }) {
   const stamp = formatUtc(new Date());
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//EduSphere//LMS//EN',
+    'PRODID:-//Discenda//LMS//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-CALNAME:${escapeText(name)}`,
@@ -69,7 +69,7 @@ export function buildIcsCalendar({ name = 'EduSphere Calendar', timeZone = 'Asia
     const end = !ev.allDay && rawEnd <= start ? new Date(start.getTime() + 30 * 60_000) : rawEnd;
 
     lines.push('BEGIN:VEVENT');
-    lines.push(`UID:${escapeText(`${ev.id}@edusphere`)}`);
+    lines.push(`UID:${escapeText(`${ev.id}@discenda`)}`);
     lines.push(`DTSTAMP:${stamp}`);
     if (ev.allDay) {
       const startDay = formatDateOnly(start);

@@ -1,6 +1,6 @@
 # Deployment
 
-EduSphere has **not** been operated for a real institution. Treat this as a starting point and
+Discenda has **not** been operated for a real institution. Treat this as a starting point and
 test it in your own environment first.
 
 There are two ways to host it:
@@ -33,7 +33,7 @@ The application is the same in both; it adapts to where it runs.
 The simplest setup: the API serves the built web app.
 
 ```bash
-git clone <repository> edusphere && cd edusphere
+git clone <repository> discenda && cd discenda
 npm ci
 cp backend/.env.example backend/.env   # then edit it — see below
 
@@ -50,11 +50,11 @@ Minimum settings in `backend/.env` (or as real environment variables, which take
 NODE_ENV=production
 HOST=127.0.0.1                 # 0.0.0.0 in a container
 PORT=4000
-DATABASE_URL=postgresql://edusphere:<password>@127.0.0.1:5432/edusphere
+DATABASE_URL=postgresql://discenda:<password>@127.0.0.1:5432/discenda
 APP_URL=https://lms.example.edu
 TRUST_PROXY=1                  # number of reverse proxies in front of the API
 SERVE_FRONTEND=true
-STORAGE_DIR=/var/lib/edusphere/storage
+STORAGE_DIR=/var/lib/discenda/storage
 PASSWORD_HASH_COST=15
 
 # Used once by "npm run db:seed", only while no administrator exists.
@@ -138,7 +138,7 @@ setup, so the Vercel project needs no build settings.
 | Uploaded files | Kept in the database (table `FileBlob`), because a function has no lasting disk. One file can be at most **4 MB**: Vercel refuses larger requests before the API sees them, so the web app checks the size first and says so. All files together are limited to 300 MB (`STORAGE_QUOTA_MB`); the administrator's **Settings** page shows how full the store is |
 | Photos | A photo from a phone is 3 to 6 MB. JPEG, PNG and WebP pictures above **1 MB** (`REDUCE_PHOTOS_OVER_MB`; `0` = never) are made smaller in the browser before they are sent: at most 2048 pixels on the long side, saved as JPEG — a 4.5 MB photo became 0.6 MB when this was tried. The person is told, and the original is not kept. Pictures more than three times as long as they are wide (a screenshot of a scrolled page) are left alone, as is anything the browser cannot read |
 | Live updates | No WebSockets. The attendance monitor and an open conversation ask again every 5 seconds, the numbers in the page header every minute. The header and dashboard timers stop after ten minutes without keyboard or mouse and catch up when the reader returns; every request counts against the monthly allowance |
-| Background jobs | No timer runs between requests. The first request after a job is due runs it (claimed in the table `JobState`, so two instances never do the same turn), Vercel calls `/api/internal/cron` once a day, and `.github/workflows/cron.yml` can ping `/api/internal/cron` every 10 minutes once `CRON_SECRET` is added to GitHub Actions secrets (`EDUSPHERE_APP_URL` variable sets a custom domain). Nothing is decided by this: time limits, check-in windows and publishing times are enforced when a request is handled, whether or not a job has run. What waits for the next visitor or cron call is the tidying up (marking absentees, closing attempts nobody opened) and the sending of notifications, reminders and their e-mail copies |
+| Background jobs | No timer runs between requests. The first request after a job is due runs it (claimed in the table `JobState`, so two instances never do the same turn), Vercel calls `/api/internal/cron` once a day, and `.github/workflows/cron.yml` can ping `/api/internal/cron` every 10 minutes once `CRON_SECRET` is added to GitHub Actions secrets (`DISCENDA_APP_URL` variable sets a custom domain). Nothing is decided by this: time limits, check-in windows and publishing times are enforced when a request is handled, whether or not a job has run. What waits for the next visitor or cron call is the tidying up (marking absentees, closing attempts nobody opened) and the sending of notifications, reminders and their e-mail copies |
 | Rate limits | Counted per function instance, so they are looser than on one server. The lockout after failed sign-ins is kept in the database and works as usual |
 | Security headers for pages | Sent by Vercel from `vercel.json`. A test keeps them identical to what the API sends |
 | Demo accounts | Never: a function always runs in production mode |
@@ -240,7 +240,7 @@ Vercel can also run the programs students write for coding problems, in
 *Production* and *Preview* and deploy. There is nothing else to set and no key to keep: the
 machines are started with the project's own short-lived identity, which Vercel hands to the
 function with every request. (*Settings → Security → Secure backend access with OIDC federation*
-has to stay enabled, as it is by default.) EduSphere uses that identity only when it was issued
+has to stay enabled, as it is by default.) Discenda uses that identity only when it was issued
 to the project the site is deployed to, and keeps it out of everything the application logs or
 answers ([SECURITY.md](SECURITY.md#running-students-programs)).
 
@@ -266,7 +266,7 @@ C and C++ (GCC 15), JavaScript (Node.js 22).
 
 **The image** is a sandbox that was set up once (compilers installed, about a minute) and then
 stopped; Vercel keeps its disk as a snapshot of about 1 GB. It is called
-`edusphere-judge-<fingerprint of the recipe>-<region>` and is listed under the project's
+`discenda-judge-<fingerprint of the recipe>-<region>` and is listed under the project's
 *Sandboxes*.
 
 - The build makes sure of it ("Machine image for checking students' programs" in the build log)
@@ -279,7 +279,7 @@ stopped; Vercel keeps its disk as a snapshot of about 1 GB. It is called
 - When the image is missing — somebody deleted it, or it could not be kept after all — the first
   program finds out; the API prepares it again by itself, which takes a few minutes, and tells
   students to try again shortly.
-- A later version of EduSphere with another recipe gets another image. Production builds remove
+- A later version of Discenda with another recipe gets another image. Production builds remove
   the ones no longer in use.
 
 **Limits for a program**: the time per test and the memory set in the problem (the memory is for
@@ -413,7 +413,7 @@ during development. The Vercel Sandbox judge was, from a Vercel build; see
 Teachers can have a first draft written for them in the **AI studio**: a module, a quiz or an
 examination, an assignment, a rubric. The draft is made from a topic, from a document, or from
 the lessons of a module the teacher chooses, and it stays a draft until the teacher has read and
-approved it. EduSphere talks to the AI service from the server; the browser never does.
+approved it. Discenda talks to the AI service from the server; the browser never does.
 
 **What is sent to the service:** what the teacher typed or chose — the topic, the pasted text, or
 the text of the chosen module's lessons (shortened to about 24,000 characters) — and the
@@ -424,7 +424,7 @@ There are four ways to connect one (and administrators can also switch modes or 
 
 | | Set | Cost | Good to know |
 |---|---|---|---|
-| **Built-in free assistant** | `AI_PROVIDER=builtin` (or select **Built-in free assistant** in **Settings**) | Free ($0), no card, no key | Runs on EduSphere's server with zero external calls. Extracts quiz/exam items from lesson text & uploaded files and drafts editable modules, assignments, and rubrics |
+| **Built-in free assistant** | `AI_PROVIDER=builtin` (or select **Built-in free assistant** in **Settings**) | Free ($0), no card, no key | Runs on Discenda's server with zero external calls. Extracts quiz/exam items from lesson text & uploaded files and drafts editable modules, assignments, and rubrics |
 | **Vercel's AI Gateway** | `AI_PROVIDER=vercel-ai-gateway` | $5 of credit a month is included, for a part of the models. **Vercel wants a payment card on the account first**, and says it does not charge it for this | No key: on Vercel the gateway is asked with the project's own identity, as the code runner is. From another host, put a key of the gateway into `AI_API_KEY` |
 | **A service with a free plan and a key** | `AI_PROVIDER=openai-compatible`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` (or preset in **Settings**) | Free within the limits of the plan, no card | You create the key in an account of your own (Google AI Studio / Gemini, Groq, OpenRouter `:free` models) |
 | **Any other OpenAI-compatible service** | the same four | As that service charges | OpenAI itself is the default address (`https://api.openai.com/v1`, model `gpt-4o-mini`) |
@@ -439,7 +439,7 @@ There are four ways to connect one (and administrators can also switch modes or 
   it as a link.
 - The monthly credit covers [a part of the models](https://vercel.com/ai-gateway/models?freeTier=true),
   with lower limits on requests per minute. On that day the small models of Anthropic, Google and
-  OpenAI were not among them. EduSphere asks `meta/muse-ember` unless `AI_MODEL` names another
+  OpenAI were not among them. Discenda asks `meta/muse-ember` unless `AI_MODEL` names another
   one. That choice rests on what the lists said, not on an answer: the model was on the list,
   the catalogue priced it at $0.10 per million tokens read and $0.50 written, and named every
   provider behind it as neither keeping what it is sent nor training on it. By those prices a
@@ -482,7 +482,7 @@ Limits and terms change; read them before a class depends on it.
 
 | The service | The teacher reads | Who can do something |
 |---|---|---|
-| is busy (`429`) | To wait a minute and try again. EduSphere has already asked a second time after a short wait | The teacher |
+| is busy (`429`) | To wait a minute and try again. Discenda has already asked a second time after a short wait | The teacher |
 | takes too long, or fails | To try again | The teacher |
 | finds the request too large | To ask for fewer items, or to draft from a topic or a shorter module | The teacher |
 | does not accept the key, the account, the model, or has no credit left | That the assistant needs an administrator, who finds the reason under **Settings** | The administrator |
@@ -509,7 +509,7 @@ a message that would never arrive:
 - **E-mail verification** is not asked for, and nobody is kept out for an unverified address.
   The settings *Require e-mail verification before first sign-in* and *Send e-mail
   notifications to users who opted in* cannot be switched on.
-- **Notifications** reach people inside EduSphere only.
+- **Notifications** reach people inside Discenda only.
 - **Keep a second administrator account.** An administrator's password can only be reset by
   another administrator. With a single one and no e-mail, a forgotten password means nobody can
   get in to reset it; the way back is then through the database. Create the second account on
@@ -522,7 +522,7 @@ Nothing has to be changed when SMTP settings are added later: the pages and sett
 To move uploaded attachments out of PostgreSQL (`FileBlob`) onto S3-compatible object storage
 such as Cloudflare R2, set `STORAGE_DRIVER=s3` along with `S3_BUCKET`, `S3_REGION` (`auto` for
 Cloudflare R2), `S3_ENDPOINT` (`https://<account-id>.r2.cloudflarestorage.com`),
-`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and optionally `S3_PREFIX` (`edusphere` by default)
+`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and optionally `S3_PREFIX` (`discenda` by default)
 and `S3_FORCE_PATH_STYLE=true` (set `false` for AWS S3 virtual-hosted URLs).
 
 ### Web Push notifications (VAPID)
@@ -591,18 +591,18 @@ Back up before applying migrations.
 
 ## PWABuilder & Store Packaging
 
-EduSphere ships as an installable Progressive Web App with a complete `manifest.webmanifest`
+Discenda ships as an installable Progressive Web App with a complete `manifest.webmanifest`
 (`id`, `lang`, `dir`, `display_override`, `launch_handler`, `prefer_related_applications: false`,
 `any` + `maskable` icons, `wide` + `narrow` screenshots, and shortcut icons), an offline shell
 service worker (`/sw.js` + `/offline.html`), an opaque `apple-touch-icon.png` (`180x180`), and
 a dynamic Digital Asset Links endpoint (`/.well-known/assetlinks.json`).
 
 1. Open [PWABuilder](https://www.pwabuilder.com/) and enter your deployed HTTPS origin (e.g.
-   `https://edusphere-sigma-two.vercel.app`).
+   `https://discenda-sigma-two.vercel.app`).
 2. **Android / Google Play (TWA):** Generate the Android package in PWABuilder. Copy the
    generated package name and SHA-256 signing certificate fingerprint(s) into your environment
    variables (or Vercel project Environment Variables):
-   - `ANDROID_TWA_PACKAGE=app.edusphere.lms` (match your chosen package ID)
+   - `ANDROID_TWA_PACKAGE=app.discenda.lms` (match your chosen package ID)
    - `ANDROID_TWA_SHA256=<SHA-256 fingerprint from PWABuilder or Play App Signing>` (comma-separated
      for multiple keys)
    Redeploy and verify `https://<your-domain>/.well-known/assetlinks.json` returns your statement

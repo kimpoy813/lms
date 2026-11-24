@@ -15,7 +15,7 @@ const VM_RUNNER_PATH = fileURLToPath(new URL('./vmRunner.mjs', import.meta.url))
 const GRACE_MS = 10_000;
 
 async function runRunner(job) {
-  const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edusphere-local-judge-'));
+  const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discenda-local-judge-'));
   const started = Date.now();
   const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
   const payload = {

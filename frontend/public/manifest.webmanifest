@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "EduSphere — Campus LMS",
-  "short_name": "EduSphere",
+  "name": "Discenda — Campus LMS",
+  "short_name": "Discenda",
   "description": "Classes, lessons, QR attendance, quizzes, coding assignments, AI studio, and grades in one place.",
   "lang": "en",
   "dir": "ltr",
@@ -30,14 +30,14 @@
       "sizes": "1280x720",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "EduSphere desktop dashboard with classes, AI studio, and gradebook"
+      "label": "Discenda desktop dashboard with classes, AI studio, and gradebook"
     },
     {
       "src": "/screenshots/mobile-narrow.png",
       "sizes": "390x844",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "EduSphere mobile classroom, lessons, and QR attendance check-in"
+      "label": "Discenda mobile classroom, lessons, and QR attendance check-in"
     }
   ],
   "shortcuts": [

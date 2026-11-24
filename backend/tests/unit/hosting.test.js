@@ -16,7 +16,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 
 describe('database connection options', () => {
   it('leaves a plain local URL alone', () => {
-    const url = 'postgresql://postgres:postgres@127.0.0.1:5433/edusphere';
+    const url = 'postgresql://postgres:postgres@127.0.0.1:5433/discenda';
     expect(pgOptionsFromUrl(url)).toEqual({ connectionString: url });
   });
 
@@ -48,7 +48,7 @@ describe('database connection options', () => {
     expect(pgFieldsFromUrl('postgresql://app%40team:p%2Fss%3Aword@db.example.org:6543/school%20db?sslmode=require')).toEqual({
       host: 'db.example.org', port: 6543, user: 'app@team', password: 'p/ss:word', database: 'school db', ssl: { rejectUnauthorized: true },
     });
-    expect(pgFieldsFromUrl('postgresql://postgres:postgres@127.0.0.1/edusphere')).toEqual({ host: '127.0.0.1', port: 5432, user: 'postgres', password: 'postgres', database: 'edusphere' });
+    expect(pgFieldsFromUrl('postgresql://postgres:postgres@127.0.0.1/discenda')).toEqual({ host: '127.0.0.1', port: 5432, user: 'postgres', password: 'postgres', database: 'discenda' });
   });
 });
 
@@ -328,7 +328,7 @@ describe('PWABuilder readiness', () => {
     const prevPkg = process.env.ANDROID_TWA_PACKAGE;
     const prevSha = process.env.ANDROID_TWA_SHA256;
     try {
-      process.env.ANDROID_TWA_PACKAGE = 'app.edusphere.lms';
+      process.env.ANDROID_TWA_PACKAGE = 'app.discenda.lms';
       process.env.ANDROID_TWA_SHA256 = 'AA:BB:CC, 11:22:33';
       vi.resetModules();
       const { createApp: createFreshApp } = await import('../../src/app.js');
@@ -339,7 +339,7 @@ describe('PWABuilder readiness', () => {
           relation: ['delegate_permission/common.handle_all_urls'],
           target: {
             namespace: 'android_app',
-            package_name: 'app.edusphere.lms',
+            package_name: 'app.discenda.lms',
             sha256_cert_fingerprints: ['AA:BB:CC', '11:22:33'],
           },
         },
@@ -364,14 +364,14 @@ describe('PWABuilder readiness', () => {
       process.env.VAPID_PUBLIC_KEY = '"BEl6+Test/Key=="';
       process.env.VAPID_PRIVATE_KEY = 'UUxI+Priv/Key=';
       delete process.env.VAPID_SUBJECT;
-      process.env.APP_URL = 'https://edusphere.example.edu/';
+      process.env.APP_URL = 'https://discenda.example.edu/';
       vi.resetModules();
       const { env: freshEnv } = await import('../../src/config/env.js');
       expect(freshEnv.push).toEqual({
         configured: true,
         publicKey: 'BEl6-Test_Key',
         privateKey: 'UUxI-Priv_Key',
-        subject: 'https://edusphere.example.edu',
+        subject: 'https://discenda.example.edu',
       });
     } finally {
       for (const [k, v] of Object.entries(prev)) {

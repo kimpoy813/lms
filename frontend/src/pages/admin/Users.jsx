@@ -362,7 +362,7 @@ function ImportDialog({ onClose }) {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" icon={Upload} onClick={() => fileInput.current?.click()}>Choose a CSV file</Button>
-            <Button variant="ghost" icon={Download} onClick={() => download('edusphere-accounts-template.csv', TEMPLATE)}>Download a template</Button>
+            <Button variant="ghost" icon={Download} onClick={() => download('discenda-accounts-template.csv', TEMPLATE)}>Download a template</Button>
             <input ref={fileInput} type="file" accept=".csv,text/csv" hidden onChange={async (e) => { const file = e.target.files?.[0]; if (file) setText(await file.text()); e.target.value = ''; }} />
           </div>
           <Field label="…or paste the rows here" hint={`Columns: ${IMPORT_COLUMNS.join(', ')}. Only role, firstName, lastName and email are required.`}>
