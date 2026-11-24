@@ -160,6 +160,53 @@ describe('Module book-like reader & outline CTA', () => {
     unmount();
   });
 
+  it('enters and exits browser fullscreen for the lesson reader', async () => {
+    const originalRequest = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'requestFullscreen');
+    const originalExit = Object.getOwnPropertyDescriptor(document, 'exitFullscreen');
+    const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, 'fullscreenElement');
+    const requestFullscreen = vi.fn(function request() {
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: this });
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    });
+    const exitFullscreen = vi.fn(() => {
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    });
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: requestFullscreen });
+    Object.defineProperty(document, 'exitFullscreen', { configurable: true, value: exitFullscreen });
+
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?lesson=les-1');
+      await flush();
+
+      let toggle = [...view.container.querySelectorAll('button')].find((button) => button.textContent.includes('Full screen'));
+      expect(toggle).toBeTruthy();
+      act(() => toggle.click());
+      await flush();
+      expect(requestFullscreen).toHaveBeenCalledTimes(1);
+      expect(document.fullscreenElement).toBe(view.container.querySelector('[data-module-reader]'));
+      expect(view.container.querySelector('[data-module-reader]').className).toContain('bg-canvas');
+      expect([...view.container.querySelectorAll('button')].some((button) => button.textContent.includes('Exit full screen'))).toBe(true);
+
+      toggle = [...view.container.querySelectorAll('button')].find((button) => button.textContent.includes('Exit full screen'));
+      act(() => toggle.click());
+      await flush();
+      expect(exitFullscreen).toHaveBeenCalledTimes(1);
+      expect([...view.container.querySelectorAll('button')].some((button) => button.textContent.trim() === 'Full screen')).toBe(true);
+    } finally {
+      view?.unmount();
+      if (originalRequest) Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', originalRequest);
+      else delete HTMLElement.prototype.requestFullscreen;
+      if (originalExit) Object.defineProperty(document, 'exitFullscreen', originalExit);
+      else delete document.exitFullscreen;
+      if (originalFullscreenElement) Object.defineProperty(document, 'fullscreenElement', originalFullscreenElement);
+      else delete document.fullscreenElement;
+    }
+  });
+
   it('renders a cohesive book view with cover, table of contents, sequential chapters, typography controls, and completion trigger', async () => {
     const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
     await flush();

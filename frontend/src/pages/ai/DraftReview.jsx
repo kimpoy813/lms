@@ -1,7 +1,7 @@
 // Review of an AI-generated module draft. The teacher reads and edits every lesson, then
 // approves it into a class as an ordinary unpublished module — or discards it.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, Download, Plus, Save, Sparkles, Trash2, Wand2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, ClipboardList, Download, Plus, Save, Sparkles, Trash2, Wand2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AlsoPostToClasses } from '../../components/ClassTargets.jsx';
@@ -13,6 +13,7 @@ import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import QuestionDrafts from './QuestionDrafts.jsx';
+import ActivityAssignmentDialog from './ActivityAssignmentDialog.jsx';
 import { LESSON_KINDS } from '../classes/Modules.jsx';
 import { classLabel } from '../classes/useClass.js';
 
@@ -33,8 +34,11 @@ function Review({ draft, onBack, configured }) {
   const [dirty, setDirty] = useState(false);
   const [open, setOpen] = useState(0);
   const [dialog, setDialog] = useState(null);
+  const [assignmentActivityIndex, setAssignmentActivityIndex] = useState(null);
+  const [assignmentNotice, setAssignmentNotice] = useState(null);
   const [questions, setQuestions] = useState(() => (draft.content.assessment ?? []).map((q, i) => ({ ...q, key: `q${i}`, include: true })));
   const locked = draft.reviewStatus === 'APPROVED';
+  const assignmentClassId = [draft.moduleClassId, draft.request.classId].find((id) => classes.data?.some((cls) => cls.id === id)) ?? '';
   const change = (patch) => { setC((s) => ({ ...s, ...patch })); setDirty(true); };
   const setLesson = (i, patch) => change({ lessons: c.lessons.map((l, n) => (n === i ? { ...l, ...patch } : l)) });
   const move = (i, by) => { const next = [...c.lessons]; const [l] = next.splice(i, 1); next.splice(i + by, 0, l); change({ lessons: next }); setOpen(i + by); };
@@ -70,6 +74,16 @@ function Review({ draft, onBack, configured }) {
         <Alert tone="warn" className="mb-5" title="Written by AI — you are the author of record">Read every lesson. Check facts, examples, computations and references, and adapt the wording to your class. Students see nothing until you approve this draft <em>and</em> publish the module.</Alert>
       )}
       {(draft.content.notes ?? []).map((n) => <Alert key={n} tone="info" className="mb-5">{n}</Alert>)}
+      {assignmentNotice && (
+        <Alert
+          tone="ok"
+          className="mb-5"
+          title="Draft assignment created"
+          action={<Button size="sm" variant="secondary" to={`/classes/${assignmentNotice.classId}/assignments/${assignmentNotice.id}`}>Review draft</Button>}
+        >
+          “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable starter rubric' : ''}. Students will not see it until you publish it.
+        </Alert>
+      )}
 
       <div className="space-y-5">
         <Card>
@@ -128,12 +142,30 @@ function Review({ draft, onBack, configured }) {
 
         {(c.activities.length > 0 || !locked) && (
           <Card>
-            <CardHeader title="Practice activities" description="Added to the module as one “Practice activities” lesson." action={!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.activities.length >= 10} onClick={() => change({ activities: [...c.activities, { title: '', instructions: '' }] })}>Add</Button>} />
+            <CardHeader
+              title="Practice activities"
+              description="These appear in the module as one “Practice activities” lesson. Create an unpublished assignment draft from any activity when you want students to submit and be graded on it."
+              action={!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.activities.length >= 10} onClick={() => change({ activities: [...c.activities, { title: '', instructions: '' }] })}>Add</Button>}
+            />
             <ul className="space-y-3">
               {c.activities.map((a, i) => (
                 <li key={i} className="rounded-xl border border-line p-3">
                   <div className="flex gap-2"><Input value={a.title} disabled={locked} onChange={(e) => change({ activities: c.activities.map((x, n) => (n === i ? { ...x, title: e.target.value } : x)) })} placeholder="Activity title" aria-label={`Activity ${i + 1} title`} maxLength={200} />{!locked && <IconButton icon={X} label="Remove activity" onClick={() => change({ activities: c.activities.filter((_, n) => n !== i) })} />}</div>
                   <Textarea rows={3} className="mt-2" value={a.instructions} disabled={locked} onChange={(e) => change({ activities: c.activities.map((x, n) => (n === i ? { ...x, instructions: e.target.value } : x)) })} placeholder="Instructions" aria-label={`Activity ${i + 1} instructions`} maxLength={3000} />
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                    {dirty && <p className="text-xs text-faint">Save your module changes before creating an assignment.</p>}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={ClipboardList}
+                      disabled={dirty || classes.isPending || !classes.data?.length}
+                      title={dirty ? 'Save module changes first' : undefined}
+                      onClick={() => { setAssignmentNotice(null); setAssignmentActivityIndex(i); }}
+                      className="ml-auto"
+                    >
+                      Create assignment draft
+                    </Button>
+                  </div>
                 </li>
               ))}
               {c.activities.length === 0 && <li className="text-sm text-faint">No activities.</li>}
@@ -175,6 +207,22 @@ function Review({ draft, onBack, configured }) {
 
       {dialog === 'approve' && <ApproveDialog draft={draft} classes={classes.data ?? []} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} lessons={c.lessons.length} onClose={() => setDialog(null)} onDone={(r) => { setDirty(false); client.invalidateQueries({ queryKey: ['ai'] }); client.invalidateQueries({ queryKey: ['class', r.classId] }); for (const copy of r.createdCopies ?? []) client.invalidateQueries({ queryKey: ['class', copy.classId] }); navigate(`/classes/${r.classId}/modules/${r.moduleId}`); }} />}
       {dialog?.rewrite !== undefined && <RewriteDialog draftId={draft.id} index={dialog.rewrite} lesson={c.lessons[dialog.rewrite]} dirty={dirty} saveDraft={() => api.put(`/ai/generated/${draft.id}`, { content: content() })} onClose={() => setDialog(null)} onAccept={(lesson) => { setLesson(dialog.rewrite, { ...lesson, rewriteKey: Date.now() }); setDialog(null); }} />}
+      {assignmentActivityIndex !== null && c.activities[assignmentActivityIndex] && (
+        <ActivityAssignmentDialog
+          activity={c.activities[assignmentActivityIndex]}
+          activityNumber={assignmentActivityIndex + 1}
+          moduleTitle={c.title}
+          classes={classes.data ?? []}
+          defaultClassId={assignmentClassId}
+          moduleId={draft.moduleId}
+          moduleClassId={draft.moduleClassId}
+          onClose={() => setAssignmentActivityIndex(null)}
+          onCreated={(assignment, classId, withRubric) => {
+            setAssignmentActivityIndex(null);
+            setAssignmentNotice({ id: assignment.id, classId, title: assignment.title, withRubric });
+          }}
+        />
+      )}
       <ConfirmDialog open={dialog === 'discard'} onClose={() => setDialog(null)} onConfirm={() => discard.mutate()} loading={discard.isPending} title="Discard this draft?" confirmLabel="Discard">The draft is marked as discarded and nothing is added to any class.</ConfirmDialog>
     </>
   );

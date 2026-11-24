@@ -379,14 +379,24 @@ aiRouter.get('/requests', async (req, res) => {
 });
 
 async function loadGenerated(req) {
-  const generated = await prisma.aIGeneratedModule.findUnique({ where: { id: req.valid.params.generatedId }, include: { generationRequest: { include: { class: requestInclude.class } } } });
+  const generated = await prisma.aIGeneratedModule.findUnique({
+    where: { id: req.valid.params.generatedId },
+    include: {
+      module: { select: { classId: true } },
+      generationRequest: { include: { class: requestInclude.class } },
+    },
+  });
   if (!generated || generated.generationRequest.teacherId !== req.user.id) throw notFound('Generated module');
   return generated;
 }
 
 aiRouter.get('/generated/:generatedId', validate({ params: idParams('generatedId') }), async (req, res) => {
   const g = await loadGenerated(req);
-  ok(res, { ...generatedView(g), request: { id: g.generationRequest.id, topic: g.generationRequest.topic, classId: g.generationRequest.classId, classLabel: g.generationRequest.class ? classLabel(g.generationRequest.class) : null } });
+  ok(res, {
+    ...generatedView(g),
+    moduleClassId: g.module?.classId ?? null,
+    request: { id: g.generationRequest.id, topic: g.generationRequest.topic, classId: g.generationRequest.classId, classLabel: g.generationRequest.class ? classLabel(g.generationRequest.class) : null },
+  });
 });
 
 /** Save the teacher's edits to the draft. */
