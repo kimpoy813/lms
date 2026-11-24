@@ -325,7 +325,7 @@ const importBody = generateBody.extend({
 aiRouter.post('/modules/import', aiLimiter, validate({ body: importBody }), async (req, res) => {
   await assertPermission(req.user, 'ai.use');
   const b = req.valid.body;
-  const existing = await prisma.aIGenerationRequest.findUnique({ where: { teacherId: req.user.id, clientRequestId: b.clientRequestId }, include: requestInclude });
+  const existing = await prisma.aIGenerationRequest.findUnique({ where: { teacherId_clientRequestId: { teacherId: req.user.id, clientRequestId: b.clientRequestId } }, include: requestInclude });
   if (existing) {
     if (existing.generationStatus === 'RUNNING' || existing.generationStatus === 'PENDING') throw conflict('This module is still being generated. Please wait.', 'AI_IN_PROGRESS');
     return ok(res, requestView(existing));
@@ -365,7 +365,7 @@ aiRouter.post('/modules/import', aiLimiter, validate({ body: importBody }), asyn
       data: { generationStatus: 'COMPLETED', completedAt: new Date(), modelIdentifier: 'external-ai', generatedModule: { create: { generatedContent: content, modelIdentifier: 'external-ai' } } },
       include: requestInclude,
     });
-    await audit(req, { action: 'ai.module.import', entityType: 'AIGenerationRequest', entityId: request.id, classId: cls?.id, summary: `Imported an external AI draft module on \"${request.topic}\"` });
+    await audit(req, { action: 'ai.module.import', entityType: 'AIGenerationRequest', entityId: request.id, classId: cls?.id, summary: `Imported an external AI draft module on "${request.topic}"` });
     return created(res, requestView(done));
   } catch (err) {
     await prisma.aIGenerationRequest.update({ where: { id: request.id }, data: { generationStatus: 'FAILED', completedAt: new Date(), errorMessage: String(err.message ?? err).slice(0, 500) } }).catch(() => {});
