@@ -3,7 +3,7 @@
 Discenda has **not** been operated for a real institution. Treat this as a starting point and
 test it in your own environment first.
 
-There are two ways to host it:
+There are a few ways to host it:
 
 | | [One server](#one-process-one-port) | [Vercel and Neon](#vercel-and-neon) |
 |---|---|---|
@@ -14,7 +14,9 @@ There are two ways to host it:
 | Timed work (closing a quiz, scheduled posts) | On a timer | When somebody uses the site, and once a day |
 | Fits | Real classes, a whole school | A demonstration, a pilot with a few classes |
 
-The application is the same in both; it adapts to where it runs.
+For **Hostinger**, see [Hostinger](#hostinger) — including **Websites Unlimited** (hPanel Node.js app + external PostgreSQL) and VPS/Docker.
+
+The application is the same in all of them; it adapts to where it runs.
 
 ## One server
 
@@ -392,6 +394,60 @@ the same database works with both.
   moves files between the database and a disk.
 - **Trying it locally.** `npx vercel build` writes what Vercel would deploy to `.vercel/output`;
   `node e2e/vercel/serve.mjs` serves it the way Vercel routes it (see [TESTING.md](TESTING.md)).
+
+## Hostinger
+
+Discenda is a **Node.js + PostgreSQL** app. Hostinger **Websites/Business/Cloud shared hosting** plans (including **Websites Unlimited**) can run Node.js apps through hPanel, but their built-in databases are MySQL/MariaDB — **not PostgreSQL**. Because Discenda uses PostgreSQL, you must connect it to an **external PostgreSQL database** (for example Neon, Supabase, Railway, or another managed Postgres).
+
+### Hostinger Websites Unlimited / hPanel Node.js app
+
+1. **Create an external PostgreSQL database** (Neon/Supabase/etc.) and copy its connection string. Prefer an SSL URL, e.g. `...?sslmode=require`. If your provider gives a pooled and a direct URL, set `DATABASE_URL` to the pooled URL and `DIRECT_URL` to the direct/unpooled URL.
+2. **Create a Node.js app in hPanel** (Websites/Advanced → Node.js). Use the repository/app root as the application root.
+3. **Configure the app:**
+
+   | Setting | Value |
+   |---|---|
+   | Node version | 22.x (see `.nvmrc`) |
+   | Build command | `npm ci && npm run db:generate && npm run build` |
+   | Start command | `npm run db:deploy && npm run start` |
+
+4. **Set environment variables in hPanel:**
+
+   ```ini
+   NODE_ENV=production
+   HOST=0.0.0.0
+   PORT=4000                 # Use the PORT Hostinger assigns, if provided
+   DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>?sslmode=require
+   # DIRECT_URL=postgresql://...  # optional: direct/unpooled URL for migrations
+   APP_URL=https://your-domain.example
+   TRUST_PROXY=true
+   SERVE_FRONTEND=true
+   STORAGE_DRIVER=database    # safest on shared hosting; or use s3 if configured
+   # STORAGE_DIR=./storage    # only if your plan provides persistent disk
+   SESSION_TTL_HOURS=168
+   COOKIE_SECURE=auto
+   SEED_ADMIN_EMAIL=admin@example.edu
+   SEED_ADMIN_PASSWORD=<a long temporary password>
+   ```
+
+5. **Deploy/start the app**, then verify:
+
+   ```bash
+   curl https://your-domain.example/readyz
+   ```
+
+6. Sign in, change the seeded admin password, then remove `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`.
+
+**Notes for shared hosting:**
+- `SERVE_FRONTEND=true` lets the backend serve the built `frontend/dist` app.
+- `STORAGE_DRIVER=database` keeps uploads in PostgreSQL, which avoids relying on shared-host filesystem persistence. Watch the upload quota (`STORAGE_QUOTA_MB`) and your database size. For larger deployments, use `STORAGE_DRIVER=s3`.
+- Prisma CLI is included in backend dependencies so `npm run db:deploy` works in production installs.
+- If Hostinger manages the process/port, do not hardcode a conflicting port; use the assigned `PORT`.
+- If WebSockets are not supported by the proxy, set `REALTIME_ENABLED=false` and the UI will fall back to polling.
+
+### Hostinger VPS with Docker (alternative)
+
+If you upgrade to a Hostinger VPS, the repository includes a production [`Dockerfile`](../Dockerfile) and [`docker-compose.yml`](../docker-compose.yml). That path can run PostgreSQL locally in Docker and is the simplest fully self-contained Hostinger deployment.
 
 ## Optional services
 
