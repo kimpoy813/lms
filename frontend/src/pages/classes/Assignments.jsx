@@ -10,6 +10,7 @@ import { api } from '../../lib/api.js';
 import { dueLabel, formatDateTime, formatScore } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import AssignmentDialog from './AssignmentDialog.jsx';
+import { groupByModule, ModuleGroupHeading } from './ModuleGroups.jsx';
 import { useClass } from './useClass.js';
 
 /** How a student's own status is shown. */
@@ -59,7 +60,19 @@ export default function Assignments() {
               </Card>
             );
           }
-          return <ul className="space-y-3">{rows.map((a) => <li key={a.id}>{canManage ? <TeacherRow a={a} onEdit={() => setEditing(a.id)} readOnly={readOnly} /> : <StudentRow a={a} />}</li>)}</ul>;
+          const groups = groupByModule(rows);
+          return (
+            <div className="space-y-7">
+              {groups.map((group) => (
+                <section key={group.key} aria-label={`Assignments in ${group.title}`}>
+                  <ModuleGroupHeading group={group} noun="assignment" />
+                  <ul className="mt-3 space-y-3">
+                    {group.items.map((a) => <li key={a.id}>{canManage ? <TeacherRow a={a} onEdit={() => setEditing(a.id)} readOnly={readOnly} /> : <StudentRow a={a} />}</li>)}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          );
         }}
       </QueryState>
       {(creating || editing) && <AssignmentDialog assignmentId={editing} onClose={() => { setEditing(null); if (creating) setParams({}, { replace: true }); }} />}

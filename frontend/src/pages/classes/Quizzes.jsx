@@ -10,6 +10,7 @@ import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, plural } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import QuizDialog, { QUIZ_KINDS } from './QuizDialog.jsx';
+import { groupByModule, ModuleGroupHeading } from './ModuleGroups.jsx';
 import { useClass } from './useClass.js';
 
 export const windowText = (q) => {
@@ -39,7 +40,18 @@ export default function Quizzes() {
             <EmptyState icon={FileQuestion} title={canManage ? 'No quizzes yet' : 'No quizzes have been posted'} description={canManage ? 'Quizzes are checked automatically for most question types, with a server-side timer.' : 'Quizzes and exams appear here when your teacher opens them.'}
               action={canManage && !readOnly ? <Button icon={Plus} onClick={() => setCreating(true)}>New quiz</Button> : null} />
           </Card>
-        ) : <ul className="space-y-3">{list.map((q) => <li key={q.id}>{canManage ? <TeacherRow q={q} readOnly={readOnly} /> : <StudentRow q={q} />}</li>)}</ul>}
+        ) : (
+          <div className="space-y-7">
+            {groupByModule(list).map((group) => (
+              <section key={group.key} aria-label={`Quizzes in ${group.title}`}>
+                <ModuleGroupHeading group={group} noun="quiz" />
+                <ul className="mt-3 space-y-3">
+                  {group.items.map((q) => <li key={q.id}>{canManage ? <TeacherRow q={q} readOnly={readOnly} /> : <StudentRow q={q} />}</li>)}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
       </QueryState>
       {creating && <QuizDialog onClose={() => setCreating(false)} onSaved={(q) => navigate(`${base}/quizzes/${q.id}`)} />}
     </>

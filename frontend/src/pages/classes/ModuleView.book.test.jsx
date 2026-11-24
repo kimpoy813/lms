@@ -235,9 +235,10 @@ describe('Module book-like reader & outline CTA', () => {
     mockClassContext.canManage = true;
     mockClassContext.user = { id: 'teacher-1', role: 'TEACHER' };
     const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?lesson=les-1');
-    await flush();
+    await act(async () => {
+      await vi.waitFor(() => expect(container.textContent).toContain('Draft — hidden from students'));
+    });
 
-    expect(container.textContent).toContain('Draft — hidden from students');
     const createButton = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment draft'));
     expect(createButton).toBeTruthy();
     act(() => createButton.click());
