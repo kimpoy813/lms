@@ -65,6 +65,7 @@ describe('AssignmentDraftDialog', () => {
     const createButton = [...document.body.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment and rubric'));
     expect(createButton).toBeTruthy();
     expect(createButton.disabled).toBe(false);
+    expect(document.body.textContent).toContain('not be linked to a gradebook category by default');
     act(() => createButton.click());
     await flush();
 
@@ -82,6 +83,7 @@ describe('AssignmentDraftDialog', () => {
       moduleId: 'module-1',
       points: 100,
     }));
+    expect(apiPost.mock.calls[1][1]).not.toHaveProperty('categoryId');
     expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Threat-model exercise' }, 'class-1', true);
   });
 
@@ -118,6 +120,65 @@ describe('AssignmentDraftDialog', () => {
       moduleId: 'module-1',
     }));
     expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Draft chapter' }, 'class-1', true);
+  });
+
+  it('attaches the activity rubric read from the lesson HTML instead of making a starter rubric', async () => {
+    const onCreated = vi.fn();
+    const contentHtml = '<h2>Lesson rubric</h2><table><thead><tr><th>Criterion</th><th>Excellent (4 points)</th><th>Developing (2 points)</th></tr></thead><tbody><tr><th>Accuracy (4 points)</th><td>Correct and complete.</td><td>Some errors.</td></tr><tr><th>Evidence (6 points)</th><td>Supports claims.</td><td>Limited support.</td></tr></tbody></table>';
+    render(
+      <AssignmentDraftDialog
+        source={{ title: 'Threat-model exercise', instructionsHtml: contentHtml }}
+        sourceNumber={1}
+        moduleTitle="Information security"
+        classes={[{ id: 'class-1', course: { code: 'CS101' }, section: null }]}
+        defaultClassId="class-1"
+        moduleId="module-1"
+        moduleClassId="class-1"
+        sourceLabel="lesson"
+        onClose={() => {}}
+        onCreated={onCreated}
+      />,
+    );
+
+    expect(document.body.textContent).toContain('The rubric found in this lesson (2 criteria, 10 points)');
+    expect(document.body.textContent).toContain('Attach the lesson rubric');
+    const pointsInput = document.body.querySelector('input[type="number"]');
+    expect(pointsInput.value).toBe('10');
+    expect(pointsInput.disabled).toBe(true);
+    const createButton = [...document.body.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment and rubric'));
+    expect(createButton.disabled).toBe(false);
+    act(() => createButton.click());
+    await flush();
+
+    expect(apiPost).toHaveBeenNthCalledWith(1, '/rubrics', {
+      title: 'Lesson rubric',
+      description: '',
+      criteria: [
+        {
+          title: 'Accuracy', description: '', maxPoints: 4,
+          levels: [
+            { title: 'Excellent', points: 4, description: 'Correct and complete.' },
+            { title: 'Developing', points: 2, description: 'Some errors.' },
+          ],
+        },
+        {
+          title: 'Evidence', description: '', maxPoints: 6,
+          levels: [
+            { title: 'Excellent', points: 4, description: 'Supports claims.' },
+            { title: 'Developing', points: 2, description: 'Limited support.' },
+          ],
+        },
+      ],
+    });
+    expect(apiPost).toHaveBeenNthCalledWith(2, '/classes/class-1/assignments', expect.objectContaining({
+      title: 'Threat-model exercise',
+      instructionsHtml: contentHtml,
+      status: 'DRAFT',
+      rubricId: 'rubric-1',
+      moduleId: 'module-1',
+      points: 10,
+    }));
+    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Threat-model exercise' }, 'class-1', true);
   });
 
   it('removes the newly created rubric if saving the assignment fails', async () => {

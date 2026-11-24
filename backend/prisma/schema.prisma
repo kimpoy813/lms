@@ -298,6 +298,7 @@ enum AIRequestType {
   ACTIVITIES
   PROGRAMMING_EXERCISE
   RUBRIC
+  RUBRIC_GRADING
 }
 
 enum AIGenerationStatus {
@@ -1205,6 +1206,13 @@ model AssignmentSubmission {
   feedback       String?
   /// { "<criterionId>": { "points": 8, "comment": "…" } }
   rubricScores   Json?
+  /// Teacher-private AI rubric draft. It never changes the official grade or appears in student views.
+  aiGradingStatus      AIGenerationStatus?
+  aiRubricSuggestions  Json?
+  aiGradingError       String?
+  aiGradingModel       String?
+  aiGradingStartedAt   DateTime?          @db.Timestamptz(3)
+  aiGradingCompletedAt DateTime?          @db.Timestamptz(3)
   gradedById     String?
   gradedAt       DateTime?        @db.Timestamptz(3)
   returnedAt     DateTime?        @db.Timestamptz(3)
@@ -1222,6 +1230,7 @@ model AssignmentSubmission {
   @@unique([assignmentId, studentId])
   @@index([studentId, status])
   @@index([assignmentId, status])
+  @@index([aiGradingStatus, aiGradingStartedAt])
 }
 
 // ─────────────────── Question banks, quizzes & examinations ───────────────────

@@ -35,6 +35,7 @@ import { searchRouter } from './modules/search/routes.js';
 
 // Background jobs register themselves when imported.
 import './jobs/maintenance.js';
+import './jobs/aiGrading.js';
 import './jobs/attendance.js';
 import './jobs/publishing.js';
 

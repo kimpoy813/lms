@@ -1,6 +1,6 @@
 // Grading: the class list on the left, one student's work and the grading form on the right.
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, CalendarClock, CheckCircle2, ChevronLeft, Download, Inbox, RotateCcw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarClock, CheckCircle2, ChevronLeft, Download, Inbox, RotateCcw, Send, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -23,6 +23,8 @@ const ROSTER_STATUS = {
   GRADED: { label: 'Graded', tone: 'warn' },
   RETURNED: { label: 'Returned', tone: 'ok' },
 };
+
+const textToEditorHtml = (value) => `<p>${String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}</p>`;
 
 export default function Submissions() {
   const { cls, canManage, base } = useClass();
@@ -124,8 +126,16 @@ export default function Submissions() {
 
 function GradePanel({ assignmentId, studentId, invalidate, onNavigate }) {
   const { cls } = useClass();
-  const query = useQuery({ queryKey: ['class', cls.id, 'assignment', assignmentId, 'submission', studentId], queryFn: () => api.get(`/assignments/${assignmentId}/submissions/${studentId}`) });
-  return <QueryState query={query}>{(data) => <GradeForm key={data.submission?.updatedAt ?? 'none'} data={data} invalidate={invalidate} onNavigate={onNavigate} />}</QueryState>;
+  const query = useQuery({
+    queryKey: ['class', cls.id, 'assignment', assignmentId, 'submission', studentId],
+    queryFn: () => api.get(`/assignments/${assignmentId}/submissions/${studentId}`),
+    refetchInterval: (current) => (['PENDING', 'RUNNING'].includes(current.state.data?.submission?.aiGrading?.status) ? 2_000 : false),
+  });
+  return <QueryState query={query}>{(data) => {
+    const s = data.submission;
+    const formKey = `${s?.id ?? 'none'}-${s?.attemptNumber ?? 0}-${s?.status ?? 'none'}-${s?.gradedAt ?? ''}`;
+    return <GradeForm key={formKey} data={data} invalidate={invalidate} onNavigate={onNavigate} />;
+  }}</QueryState>;
 }
 
 function GradeForm({ data, invalidate, onNavigate }) {
@@ -140,6 +150,19 @@ function GradeForm({ data, invalidate, onNavigate }) {
   const [errors, setErrors] = useState({});
   const [reopening, setReopening] = useState(false);
   const readOnly = cls.status === 'ARCHIVED';
+  const aiGrading = s?.aiGrading;
+  const retryAi = useAction(() => api.post(`/assignments/${a.id}/submissions/${student.id}/ai-grading/retry`, {}), {
+    invalidate: [...invalidate, ['class', cls.id, 'assignment', a.id, 'submission', student.id]],
+    success: 'A new private AI suggestion is being generated.',
+  });
+  const loadAiSuggestions = () => {
+    const suggestions = aiGrading?.suggestions;
+    if (!suggestions || !rubric) return;
+    setRubricScores(suggestions.scores ?? {});
+    setScore('');
+    setFeedback(suggestions.feedback ? textToEditorHtml(suggestions.feedback) : '');
+    setErrors({});
+  };
 
   const rubricComplete = rubric ? rubric.criteria.every((c) => rubricScores[c.id]?.points !== undefined && rubricScores[c.id]?.points !== '') : false;
   const rubricTotal = rubric ? rubric.criteria.reduce((sum, c) => sum + (Number(rubricScores[c.id]?.points) || 0), 0) : null;
@@ -195,6 +218,59 @@ function GradeForm({ data, invalidate, onNavigate }) {
           )}
         </div>
       </Card>
+
+      {rubric && s?.submittedAt && !s.textContent && s.files?.length > 0 && (
+        <Alert tone="info">AI rubric suggestions are generated for typed answers. This file-only submission is saved and can still be graded manually.</Alert>
+      )}
+
+      {aiGrading && (
+        <Card>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Sparkles className="size-4 text-brand" aria-hidden="true" />
+            <h3 className="text-[15px] font-semibold text-ink">AI rubric suggestions</h3>
+            <Badge tone="info">Private draft</Badge>
+          </div>
+          <p className="mb-4 text-[13px] text-soft">Only authorized teachers can see these suggestions. They do not change the official grade or reach the student unless you review, save, and return a grade.</p>
+          {['PENDING', 'RUNNING'].includes(aiGrading.status) && (
+            <Alert tone="info">Preparing private suggestions from the typed answer and rubric. This can take a short time.</Alert>
+          )}
+          {aiGrading.status === 'COMPLETED' && aiGrading.suggestions && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                {rubric?.criteria.map((criterion) => {
+                  const suggestion = aiGrading.suggestions.scores?.[criterion.id];
+                  if (!suggestion) return null;
+                  return (
+                    <div key={criterion.id} className="rounded-lg border border-line bg-canvas p-3">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{criterion.title}</p>
+                        <p className="text-sm font-semibold tabular-nums text-ink">{formatScore(suggestion.points)} / {formatScore(criterion.maxPoints)}</p>
+                      </div>
+                      {suggestion.comment && <p className="mt-1 text-[13px] text-soft">{suggestion.comment}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+              {aiGrading.suggestions.feedback && (
+                <div className="rounded-lg bg-raised p-3">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-faint">Suggested overall feedback</p>
+                  <p className="whitespace-pre-wrap text-[13px] text-soft">{aiGrading.suggestions.feedback}</p>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                <p className="text-xs text-faint">Review each score and edit the grade form before saving.</p>
+                <Button variant="secondary" size="sm" icon={Sparkles} disabled={readOnly || !rubric} onClick={loadAiSuggestions}>Load suggestions into grade form</Button>
+              </div>
+            </div>
+          )}
+          {aiGrading.status === 'FAILED' && (
+            <div className="space-y-3">
+              <Alert tone="warn">{aiGrading.error || 'AI suggestions could not be generated. Your submission is saved and can still be graded manually.'}</Alert>
+              <Button variant="secondary" size="sm" icon={RotateCcw} loading={retryAi.isPending} disabled={readOnly} onClick={() => retryAi.mutate()}>Retry AI suggestions</Button>
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card>
         <h3 className="mb-4 text-[15px] font-semibold">Grade</h3>
