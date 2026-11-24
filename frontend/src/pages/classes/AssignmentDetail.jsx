@@ -80,6 +80,7 @@ export default function AssignmentDetail() {
                   ['Resubmission', a.allowResubmission ? 'Allowed until graded' : 'Not allowed'],
                   a.gradeCategory && ['Counts toward', `${a.gradeCategory.period} › ${a.gradeCategory.name}`],
                   a.module && ['Module', <Link key="m" to={`${base}/modules/${a.module.id}`} className="text-brand hover:underline">{a.module.title}</Link>],
+                  a.lesson && ['Lesson', <Link key="l" to={`${base}/modules/${a.lesson.moduleId}?lesson=${a.lesson.id}`} className="text-brand hover:underline">{a.lesson.title}</Link>],
                 ]} />
               </Card>
             </div>

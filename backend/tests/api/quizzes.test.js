@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { actor, categoryId, classroom, defaultScale, minutesFromNow, prepare, prisma } from '../helpers/index.js';
+import { actor, categoryId, classroom, createClass, defaultScale, minutesFromNow, prepare, prisma } from '../helpers/index.js';
 import { autoSubmitOverdue } from '../../src/modules/quizzes/routes.js';
 
 beforeAll(async () => {
@@ -138,6 +138,44 @@ describe('building a quiz', () => {
       expect((await who.get(`/api/quizzes/${id}/analysis`)).status).toBe(code);
       expect((await who.delete(`/api/quizzes/${id}`)).status).toBe(code);
     }
+  });
+
+  it('links quizzes to lessons only in the selected module and class', async () => {
+    const { teacher, cls } = await classroom(0);
+    const foreignClass = await createClass(teacher.user);
+    const moduleA = (await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Quiz unit A' })).body.data;
+    const moduleB = (await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Quiz unit B' })).body.data;
+    const foreignModule = (await teacher.post(`/api/classes/${foreignClass.id}/modules`, { title: 'Foreign quiz unit' })).body.data;
+    const lessonA = (await teacher.post(`/api/modules/${moduleA.id}/lessons`, { title: 'Quiz lesson A', status: 'DRAFT' })).body.data;
+    const lessonB = (await teacher.post(`/api/modules/${moduleB.id}/lessons`, { title: 'Quiz lesson B', status: 'DRAFT' })).body.data;
+    const foreignLesson = (await teacher.post(`/api/modules/${foreignModule.id}/lessons`, { title: 'Foreign quiz lesson', status: 'DRAFT' })).body.data;
+
+    const mismatchedModule = await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'Wrong module', moduleId: moduleB.id, lessonId: lessonA.id });
+    expect(mismatchedModule.status).toBe(422);
+    expect(mismatchedModule.body.error.details.fields).toHaveProperty('lessonId');
+    const foreignLessonLink = await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'Wrong class', moduleId: moduleA.id, lessonId: foreignLesson.id });
+    expect(foreignLessonLink.status).toBe(422);
+    expect(foreignLessonLink.body.error.details.fields).toHaveProperty('lessonId');
+    const missingModule = await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'No module', lessonId: lessonA.id });
+    expect(missingModule.status).toBe(422);
+    expect(missingModule.body.error.details.fields).toHaveProperty('lessonId');
+
+    const linked = await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'Linked quiz', moduleId: moduleA.id, lessonId: lessonA.id });
+    expect(linked.status).toBe(201);
+    expect(linked.body.data).toMatchObject({ module: { id: moduleA.id }, lesson: { id: lessonA.id, title: 'Quiz lesson A', moduleId: moduleA.id } });
+    const listed = await teacher.get(`/api/classes/${cls.id}/quizzes`);
+    expect(listed.body.data.find((q) => q.id === linked.body.data.id).lesson.id).toBe(lessonA.id);
+
+    const moduleOnly = await teacher.post(`/api/classes/${cls.id}/quizzes`, { title: 'No lesson link', moduleId: moduleA.id });
+    expect(moduleOnly.body.data).toMatchObject({ module: { id: moduleA.id }, lesson: null });
+
+    const changedModule = await teacher.patch(`/api/quizzes/${linked.body.data.id}`, { moduleId: moduleB.id });
+    expect(changedModule.status).toBe(200);
+    expect(changedModule.body.data).toMatchObject({ module: { id: moduleB.id }, lesson: null });
+    const linkedAgain = await teacher.patch(`/api/quizzes/${linked.body.data.id}`, { lessonId: lessonB.id });
+    expect(linkedAgain.body.data.lesson).toMatchObject({ id: lessonB.id, moduleId: moduleB.id });
+    const unlinked = await teacher.patch(`/api/quizzes/${linked.body.data.id}`, { moduleId: null });
+    expect(unlinked.body.data).toMatchObject({ module: null, lesson: null });
   });
 
   it('draws random questions from a pool, differently per student', async () => {

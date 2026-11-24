@@ -231,7 +231,7 @@ describe('Module book-like reader & outline CTA', () => {
     }
   });
 
-  it('offers teachers a draft assignment action from an unpublished lesson', async () => {
+  it('offers lesson-linked assignment and quiz composers plus a content-based assignment draft', async () => {
     mockClassContext.canManage = true;
     mockClassContext.user = { id: 'teacher-1', role: 'TEACHER' };
     const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?lesson=les-1');
@@ -239,13 +239,39 @@ describe('Module book-like reader & outline CTA', () => {
       await vi.waitFor(() => expect(container.textContent).toContain('Draft — hidden from students'));
     });
 
-    const createButton = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment draft'));
-    expect(createButton).toBeTruthy();
-    act(() => createButton.click());
+    const openAssignment = [...container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'New assignment');
+    expect(openAssignment).toBeTruthy();
+    act(() => openAssignment.click());
     await flush();
 
-    const dialog = document.body.querySelector('[role="dialog"]');
+    let dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
+    const moduleLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Module'));
+    const lessonLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Lesson'));
+    expect(document.getElementById(moduleLabel.htmlFor).value).toBe('mod-1');
+    expect(document.getElementById(lessonLabel.htmlFor).value).toBe('les-1');
+    act(() => [...dialog.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Cancel').click());
+    await flush();
+
+    const openQuiz = [...container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Create quiz');
+    expect(openQuiz).toBeTruthy();
+    act(() => openQuiz.click());
+    await flush();
+
+    dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog.textContent).toContain('New quiz');
+    const quizModuleLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Module'));
+    const quizLessonLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Lesson'));
+    expect(document.getElementById(quizModuleLabel.htmlFor).value).toBe('mod-1');
+    expect(document.getElementById(quizLessonLabel.htmlFor).value).toBe('les-1');
+    act(() => [...dialog.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Cancel').click());
+    await flush();
+
+    const createDraft = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment draft'));
+    expect(createDraft).toBeTruthy();
+    act(() => createDraft.click());
+    await flush();
+    dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog.textContent).toContain('Create an assignment from this lesson');
     const titleLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Assignment title'));
     expect(document.getElementById(titleLabel.htmlFor).value).toBe('Foundations of Modularity');

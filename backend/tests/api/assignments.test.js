@@ -66,6 +66,39 @@ describe('assignments', () => {
     expect(patched.body.data.dueAt).toBe(made.body.data.dueAt);
   });
 
+  it('links assignments to lessons only in the selected module and class', async () => {
+    const { teacher, cls } = await classroom(0);
+    const foreignClass = await createClass(teacher.user);
+    const moduleA = (await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Unit A' })).body.data;
+    const moduleB = (await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Unit B' })).body.data;
+    const foreignModule = (await teacher.post(`/api/classes/${foreignClass.id}/modules`, { title: 'Foreign unit' })).body.data;
+    const lessonA = (await teacher.post(`/api/modules/${moduleA.id}/lessons`, { title: 'Lesson A', status: 'DRAFT' })).body.data;
+    const lessonB = (await teacher.post(`/api/modules/${moduleB.id}/lessons`, { title: 'Lesson B', status: 'DRAFT' })).body.data;
+    const foreignLesson = (await teacher.post(`/api/modules/${foreignModule.id}/lessons`, { title: 'Foreign lesson', status: 'DRAFT' })).body.data;
+    const fields = async (body) => (await create(teacher, cls, { status: 'DRAFT', ...body })).body.error?.details?.fields ?? {};
+
+    expect(await fields({ moduleId: moduleB.id, lessonId: lessonA.id })).toHaveProperty('lessonId');
+    expect(await fields({ moduleId: moduleA.id, lessonId: foreignLesson.id })).toHaveProperty('lessonId');
+    expect(await fields({ lessonId: lessonA.id })).toHaveProperty('lessonId');
+
+    const linked = await create(teacher, cls, { status: 'DRAFT', moduleId: moduleA.id, lessonId: lessonA.id });
+    expect(linked.status).toBe(201);
+    expect(linked.body.data).toMatchObject({ module: { id: moduleA.id }, lesson: { id: lessonA.id, title: 'Lesson A', moduleId: moduleA.id } });
+    const listed = await teacher.get(`/api/classes/${cls.id}/assignments`);
+    expect(listed.body.data.find((a) => a.id === linked.body.data.id).lesson.id).toBe(lessonA.id);
+
+    const moduleOnly = await create(teacher, cls, { title: 'No lesson link', status: 'DRAFT', moduleId: moduleA.id });
+    expect(moduleOnly.body.data).toMatchObject({ module: { id: moduleA.id }, lesson: null });
+
+    const changedModule = await teacher.patch(`/api/assignments/${linked.body.data.id}`, { moduleId: moduleB.id });
+    expect(changedModule.status).toBe(200);
+    expect(changedModule.body.data).toMatchObject({ module: { id: moduleB.id }, lesson: null });
+    const linkedAgain = await teacher.patch(`/api/assignments/${linked.body.data.id}`, { lessonId: lessonB.id });
+    expect(linkedAgain.body.data.lesson).toMatchObject({ id: lessonB.id, moduleId: moduleB.id });
+    const unlinked = await teacher.patch(`/api/assignments/${linked.body.data.id}`, { moduleId: null });
+    expect(unlinked.body.data).toMatchObject({ module: null, lesson: null });
+  });
+
   it('validates dates, points and submission types', async () => {
     const { teacher, cls } = await classroom(0);
     const fields = async (body) => (await create(teacher, cls, body)).body.error?.details?.fields ?? {};

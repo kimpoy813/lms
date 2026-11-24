@@ -205,6 +205,32 @@ describe('calendar', () => {
     expect((await students[0].get(`/api/calendar?from=${encodeURIComponent(iso(0))}&to=${encodeURIComponent(iso(60 * 24 * 90))}`)).status).toBe(422);
   });
 
+  it('limits recurring class meetings to the admin-set semester dates', async () => {
+    const tz = await getTimeZone();
+    const { teacher, students } = await classroom(1, {
+      schedules: { create: [{ dayOfWeek: 1, startTime: '09:00', endTime: '10:30' }] },
+    });
+    const meetingDays = async (firstDay, afterLastDay) => {
+      const from = atTime(firstDay, '00:00', tz).toISOString();
+      const to = atTime(afterLastDay, '00:00', tz).toISOString();
+      const range = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      const items = (await students[0].get(`/api/calendar?${range}`)).body.data;
+      return items.filter((item) => item.kind === 'CLASS_MEETING').map((item) => dateKey(new Date(item.startAt), tz));
+    };
+
+    // The fixture's semester starts on Saturday, August 1, 2026. The first scheduled class
+    // inside it is Monday, August 3; the previous Monday is outside the term.
+    expect(await meetingDays('2026-07-26', '2026-08-05')).toEqual(['2026-08-03']);
+    // The semester ends Sunday, December 20, so a recurring Monday class is not shown after it.
+    expect(await meetingDays('2026-12-14', '2026-12-24')).toEqual(['2026-12-14']);
+
+    const outsideStart = atTime('2026-07-27', '09:15', tz).toISOString();
+    const outsideEnd = atTime('2026-07-27', '10:00', tz).toISOString();
+    const preview = await teacher.get(`/api/calendar/overlapping-classes?startAt=${encodeURIComponent(outsideStart)}&endAt=${encodeURIComponent(outsideEnd)}`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.overlapping).toEqual([]);
+  });
+
   it('detects overlapping future classes for teacher leave/events, notifies affected students without leaks, and updates/cancels cleanly', async () => {
     const tz = await getTimeZone();
     const futureDay = addDays(dateKey(new Date(), tz), 14);

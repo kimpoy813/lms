@@ -282,6 +282,58 @@ describe('posting content to multiple classes', () => {
     expect((await studentsA[0].get(`/api/quizzes/${quizAId}`)).status).toBe(200);
   });
 
+  it('keeps explicit lesson links when classwork is distributed or copied to matching modules', async () => {
+    const { teacher, cls: sourceClass } = await classroom(0);
+    const matchingClass = await createClass(teacher.user);
+    const moduleOnlyClass = await createClass(teacher.user);
+    const sourceModule = (await teacher.post(`/api/classes/${sourceClass.id}/modules`, { title: 'Shared Unit' })).body.data;
+    const sourceLesson = (await teacher.post(`/api/modules/${sourceModule.id}/lessons`, { title: 'Lesson One', status: 'DRAFT' })).body.data;
+    const matchingModule = (await teacher.post(`/api/classes/${matchingClass.id}/modules`, { title: 'Shared Unit' })).body.data;
+    const matchingLesson = (await teacher.post(`/api/modules/${matchingModule.id}/lessons`, { title: 'Lesson One', status: 'DRAFT' })).body.data;
+    const moduleOnly = (await teacher.post(`/api/classes/${moduleOnlyClass.id}/modules`, { title: 'Shared Unit' })).body.data;
+
+    const assignment = await teacher.post(`/api/classes/${sourceClass.id}/assignments`, {
+      title: 'Lesson assignment',
+      status: 'DRAFT',
+      moduleId: sourceModule.id,
+      lessonId: sourceLesson.id,
+      targetClassIds: [matchingClass.id, moduleOnlyClass.id],
+    });
+    expect(assignment.status).toBe(201);
+    const assignmentCopyId = (classId) => assignment.body.data.createdCopies.find((copy) => copy.classId === classId).id;
+    const matchedAssignment = (await teacher.get(`/api/assignments/${assignmentCopyId(matchingClass.id)}`)).body.data;
+    expect(matchedAssignment).toMatchObject({ module: { id: matchingModule.id }, lesson: { id: matchingLesson.id, moduleId: matchingModule.id } });
+    const moduleOnlyAssignment = (await teacher.get(`/api/assignments/${assignmentCopyId(moduleOnlyClass.id)}`)).body.data;
+    expect(moduleOnlyAssignment).toMatchObject({ module: { id: moduleOnly.id }, lesson: null });
+
+    const copiedAssignment = await teacher.post(`/api/assignments/${assignment.body.data.id}/copy`, {
+      targetClassIds: [matchingClass.id, moduleOnlyClass.id],
+    });
+    expect(copiedAssignment.status).toBe(201);
+    const copiedAssignmentId = (classId) => copiedAssignment.body.data.createdCopies.find((copy) => copy.classId === classId).id;
+    expect((await teacher.get(`/api/assignments/${copiedAssignmentId(matchingClass.id)}`)).body.data.lesson.id).toBe(matchingLesson.id);
+    expect((await teacher.get(`/api/assignments/${copiedAssignmentId(moduleOnlyClass.id)}`)).body.data.lesson).toBeNull();
+
+    const quiz = await teacher.post(`/api/classes/${sourceClass.id}/quizzes`, {
+      title: 'Lesson quiz',
+      moduleId: sourceModule.id,
+      lessonId: sourceLesson.id,
+      targetClassIds: [matchingClass.id, moduleOnlyClass.id],
+    });
+    expect(quiz.status).toBe(201);
+    const quizCopyId = (classId) => quiz.body.data.createdCopies.find((copy) => copy.classId === classId).id;
+    expect((await teacher.get(`/api/quizzes/${quizCopyId(matchingClass.id)}`)).body.data.lesson.id).toBe(matchingLesson.id);
+    expect((await teacher.get(`/api/quizzes/${quizCopyId(moduleOnlyClass.id)}`)).body.data.lesson).toBeNull();
+
+    const copiedQuiz = await teacher.post(`/api/quizzes/${quiz.body.data.id}/copy`, {
+      targetClassIds: [matchingClass.id, moduleOnlyClass.id],
+    });
+    expect(copiedQuiz.status).toBe(201);
+    const copiedQuizId = (classId) => copiedQuiz.body.data.createdCopies.find((copy) => copy.classId === classId).id;
+    expect((await teacher.get(`/api/quizzes/${copiedQuizId(matchingClass.id)}`)).body.data.lesson.id).toBe(matchingLesson.id);
+    expect((await teacher.get(`/api/quizzes/${copiedQuizId(moduleOnlyClass.id)}`)).body.data.lesson).toBeNull();
+  });
+
   it('approves an AI-generated module draft into multiple classes at once', async () => {
     const { teacher, cls: clsA } = await classroom(0);
     const clsB = await createClass(teacher.user);

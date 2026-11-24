@@ -10,7 +10,7 @@ import { api } from '../../lib/api.js';
 import { dueLabel, formatDateTime, formatScore } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import AssignmentDialog from './AssignmentDialog.jsx';
-import { groupByModule, ModuleGroupHeading } from './ModuleGroups.jsx';
+import { groupByModule, LessonGroupHeading, ModuleGroupHeading } from './ModuleGroups.jsx';
 import { useClass } from './useClass.js';
 
 /** How a student's own status is shown. */
@@ -66,9 +66,22 @@ export default function Assignments() {
               {groups.map((group) => (
                 <section key={group.key} aria-label={`Assignments in ${group.title}`}>
                   <ModuleGroupHeading group={group} noun="assignment" />
-                  <ul className="mt-3 space-y-3">
-                    {group.items.map((a) => <li key={a.id}>{canManage ? <TeacherRow a={a} onEdit={() => setEditing(a.id)} readOnly={readOnly} /> : <StudentRow a={a} />}</li>)}
-                  </ul>
+                  {group.sections.length > 0 ? (
+                    <div className="mt-3 space-y-4 pl-2">
+                      {group.sections.map((section) => (
+                        <section key={section.key} aria-label={`Assignments in ${section.title}`}>
+                          <LessonGroupHeading group={section} noun="assignment" />
+                          <ul className="mt-2 space-y-3">
+                            {section.items.map((a) => <li key={a.id}>{canManage ? <TeacherRow a={a} onEdit={() => setEditing(a.id)} readOnly={readOnly} /> : <StudentRow a={a} />}</li>)}
+                          </ul>
+                        </section>
+                      ))}
+                    </div>
+                  ) : (
+                    <ul className="mt-3 space-y-3">
+                      {group.items.map((a) => <li key={a.id}>{canManage ? <TeacherRow a={a} onEdit={() => setEditing(a.id)} readOnly={readOnly} /> : <StudentRow a={a} />}</li>)}
+                    </ul>
+                  )}
                 </section>
               ))}
             </div>
@@ -89,7 +102,7 @@ function StudentRow({ a }) {
       <span className={cn('grid size-10 shrink-0 place-items-center rounded-xl', a.myStatus === 'MISSING' ? 'bg-bad-soft text-bad' : a.myStatus === 'RETURNED' ? 'bg-ok-soft text-ok' : 'bg-brand-soft text-brand')}><ClipboardList className="size-5" aria-hidden="true" /></span>
       <span className="min-w-0 flex-1 basis-56">
         <span className="block truncate font-semibold text-ink">{a.title}</span>
-        <span className="block truncate text-[13px] text-faint">{dueLabel(a.dueAt)} · {formatScore(a.points)} points{a.module ? ` · ${a.module.title}` : ''}</span>
+        <span className="block truncate text-[13px] text-faint">{dueLabel(a.dueAt)} · {formatScore(a.points)} points{a.module ? ` · ${a.module.title}` : ''}{a.lesson ? ` · ${a.lesson.title}` : ''}</span>
       </span>
       <span className="flex shrink-0 items-center gap-2">
         {a.isLate && a.myStatus !== 'MISSING' && <Badge tone="warn">Late</Badge>}

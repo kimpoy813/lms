@@ -16,6 +16,7 @@ export default function AssignmentDraftDialog({
   defaultClassId,
   moduleId,
   moduleClassId,
+  lessonId,
   sourceLabel = 'activity',
   onClose,
   onCreated,
@@ -65,7 +66,7 @@ export default function AssignmentDraftDialog({
         status: 'DRAFT',
         rubricId: rubric?.id ?? null,
         ...(countInGradebook && selectedCategoryId ? { categoryId: selectedCategoryId } : {}),
-        ...(moduleId && moduleClassId === classId ? { moduleId } : {}),
+        ...(moduleId && moduleClassId === classId ? { moduleId, ...(lessonId ? { lessonId } : {}) } : {}),
       });
     } catch (err) {
       // Avoid leaving an unused rubric behind if assignment creation fails.

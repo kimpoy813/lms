@@ -1,7 +1,7 @@
 // One module: chapter-by-chapter reading or full-module "book view".
 // Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, FileQuestion, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -15,7 +15,9 @@ import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
 import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
+import AssignmentDialog from './AssignmentDialog.jsx';
 import AssignmentDraftDialog from './AssignmentDraftDialog.jsx';
+import QuizDialog from './QuizDialog.jsx';
 import { LESSON_KINDS } from './Modules.jsx';
 import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
@@ -822,7 +824,9 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                     {!canManage && <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={lesson.bookmarked ? 'text-brand' : ''} onClick={() => bookmark.mutate(!lesson.bookmarked)}>{lesson.bookmarked ? 'Saved' : 'Save'}</Button>}
                     <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} aria-label="Print this lesson" />
                     {canManage && <Button variant="secondary" size="sm" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>}
+                    {canManage && !readOnly && <Button variant="secondary" size="sm" icon={FilePlus2} onClick={() => setDialog('new-assignment')}>New assignment</Button>}
                     {canManage && !readOnly && <Button variant="secondary" size="sm" icon={ClipboardList} onClick={() => { setAssignmentNotice(null); setDialog('assignment'); }}>Create assignment draft</Button>}
+                    {canManage && !readOnly && <Button variant="secondary" size="sm" icon={FileQuestion} onClick={() => setDialog('quiz')}>Create quiz</Button>}
                     {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
                     {canManage && !readOnly && <Button variant="dangerGhost" size="sm" icon={Trash2} onClick={() => setDialog('delete')} aria-label="Delete this lesson" />}
                   </div>
@@ -881,6 +885,13 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
             hint={`Copies this lesson and its attachments into “${mod.title}” in each selected class (creating the module if needed).`}
             onSubmit={({ targetClassIds, status }) => api.post(`/lessons/${lesson.id}/copy`, { targetClassIds, status })}
           />
+          {dialog === 'new-assignment' && (
+            <AssignmentDialog
+              initialModuleId={mod.id}
+              initialLessonId={lesson.id}
+              onClose={() => setDialog(null)}
+            />
+          )}
           {dialog === 'assignment' && (
             <AssignmentDraftDialog
               source={{ title: lesson.title, instructionsHtml: lesson.contentHtml ?? '' }}
@@ -890,12 +901,21 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
               defaultClassId={cls.id}
               moduleId={mod.id}
               moduleClassId={cls.id}
+              lessonId={lesson.id}
               sourceLabel="lesson"
               onClose={() => setDialog(null)}
               onCreated={(assignment, classId, withRubric) => {
                 setDialog(null);
                 setAssignmentNotice({ ...assignment, classId, withRubric, countedInGradebook: Boolean(assignment.gradeCategory) });
               }}
+            />
+          )}
+          {dialog === 'quiz' && (
+            <QuizDialog
+              initialModuleId={mod.id}
+              initialLessonId={lesson.id}
+              onClose={() => setDialog(null)}
+              onSaved={(quiz) => navigate(`${base}/quizzes/${quiz.id}`)}
             />
           )}
           <ConfirmDialog open={dialog === 'delete'} onClose={() => setDialog(null)} onConfirm={() => remove.mutate()} loading={remove.isPending} title={`Delete “${lesson.title}”?`} confirmLabel="Delete lesson">

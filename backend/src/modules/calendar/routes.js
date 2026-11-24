@@ -12,7 +12,7 @@ import { conflict, fieldErrors, forbidden, notFound } from '../../lib/errors.js'
 import { created, fullName, idParams, noContent, ok, patchOf, zDateTime, zId, zTitle } from '../../lib/http.js';
 import { buildIcsCalendar } from '../../lib/ics.js';
 import { plainText } from '../../lib/sanitize.js';
-import { addDays, atTime, dateKey, formatDateTimeInZone, weekdayOf } from '../../lib/time.js';
+import { addDays, atTime, dateKey, dbToDateKey, formatDateTimeInZone, weekdayOf } from '../../lib/time.js';
 import { publishedWhere } from '../../lib/visibility.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
@@ -35,7 +35,10 @@ async function collectCalendarItems(user, { from, to, classId, tz }) {
   // Administrators see institution events (and one class when they ask for it), not every class meeting.
   let classIds = user.role === 'ADMIN' && !classId ? [] : await classIdsFor(user, { includeArchived: false });
   if (classId) classIds = classIds.filter((id) => id === classId);
-  const classes = await prisma.class.findMany({ where: { id: { in: classIds } }, include: { ...classInclude, schedules: true } });
+  const classes = await prisma.class.findMany({
+    where: { id: { in: classIds } },
+    include: { ...classInclude, schedules: true, semester: { select: { startDate: true, endDate: true } } },
+  });
   const labelOf = new Map(classes.map((c) => [c.id, classLabel(c)]));
   const colorOf = new Map(classes.map((c) => [c.id, c.color]));
   const forStudents = user.role === 'STUDENT';
@@ -95,6 +98,9 @@ async function collectCalendarItems(user, { from, to, classId, tz }) {
   for (let day = dateKey(from, tz), guard = 0; day <= lastDay && guard <= MAX_RANGE_DAYS + 1; day = addDays(day, 1), guard += 1) {
     const weekday = weekdayOf(day);
     for (const cls of classes) {
+      const semesterStart = dbToDateKey(cls.semester.startDate);
+      const semesterEnd = dbToDateKey(cls.semester.endDate);
+      if (day < semesterStart || day > semesterEnd) continue;
       for (const s of cls.schedules) {
         if (s.dayOfWeek !== weekday) continue;
         const startAt = atTime(day, s.startTime, tz);
@@ -169,7 +175,11 @@ calendarRouter.get(
 );
 
 // ── Events ───────────────────────────────────────────────────────────────────
-const teacherClassInclude = { ...classInclude, schedules: { orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }] } };
+const teacherClassInclude = {
+  ...classInclude,
+  semester: { select: { startDate: true, endDate: true } },
+  schedules: { orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }] },
+};
 
 calendarRouter.get(
   '/overlapping-classes',
