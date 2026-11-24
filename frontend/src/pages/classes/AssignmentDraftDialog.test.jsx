@@ -6,8 +6,8 @@ import AssignmentDraftDialog from './AssignmentDraftDialog.jsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const { apiDelete, apiPost } = vi.hoisted(() => ({ apiDelete: vi.fn(), apiPost: vi.fn() }));
-vi.mock('../../lib/api.js', () => ({ api: { delete: apiDelete, post: apiPost } }));
+const { apiDelete, apiGet, apiPost } = vi.hoisted(() => ({ apiDelete: vi.fn(), apiGet: vi.fn(), apiPost: vi.fn() }));
+vi.mock('../../lib/api.js', () => ({ api: { delete: apiDelete, get: apiGet, post: apiPost } }));
 vi.mock('../../components/LazyEditor.jsx', () => ({
   default: ({ value, onChange, ariaLabel }) => (
     <textarea aria-label={ariaLabel} value={value} onChange={(e) => onChange(e.target.value)} />
@@ -32,9 +32,19 @@ async function flush() {
 describe('AssignmentDraftDialog', () => {
   beforeEach(() => {
     apiDelete.mockReset().mockResolvedValue(null);
+    apiGet.mockReset().mockImplementation(async (path) => {
+      if (path === '/classes/class-1/gradebook/categories') {
+        return [{ id: 'period-1', name: 'Midterm', locked: false, categories: [{ id: 'category-1', name: 'Assignments', weight: 60 }] }];
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
     apiPost.mockReset().mockImplementation(async (path, body) => {
       if (path === '/rubrics') return { id: 'rubric-1', totalPoints: body.criteria.reduce((sum, criterion) => sum + criterion.maxPoints, 0) };
-      if (path === '/classes/class-1/assignments') return { id: 'assignment-1', title: body.title };
+      if (path === '/classes/class-1/assignments') return {
+        id: 'assignment-1',
+        title: body.title,
+        gradeCategory: body.categoryId ? { id: body.categoryId } : null,
+      };
       throw new Error(`Unexpected request: ${path}`);
     });
   });
@@ -65,7 +75,8 @@ describe('AssignmentDraftDialog', () => {
     const createButton = [...document.body.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment and rubric'));
     expect(createButton).toBeTruthy();
     expect(createButton.disabled).toBe(false);
-    expect(document.body.textContent).toContain('not be linked to a gradebook category by default');
+    expect(document.body.textContent).toContain('not counted in the gradebook');
+    expect(document.body.textContent).toContain('Teachers can still score it with a rubric or manually, but the score will not count toward class grades.');
     act(() => createButton.click());
     await flush();
 
@@ -84,7 +95,55 @@ describe('AssignmentDraftDialog', () => {
       points: 100,
     }));
     expect(apiPost.mock.calls[1][1]).not.toHaveProperty('categoryId');
-    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Threat-model exercise' }, 'class-1', true);
+    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Threat-model exercise', gradeCategory: null }, 'class-1', true);
+  });
+
+  it('lets a teacher include the draft in the gradebook by choosing a category', async () => {
+    const onCreated = vi.fn();
+    render(
+      <AssignmentDraftDialog
+        source={{ title: 'Threat-model exercise', instructions: 'List the assets.' }}
+        sourceNumber={1}
+        moduleTitle="Information security"
+        classes={[{ id: 'class-1', course: { code: 'CS101' }, section: null }]}
+        defaultClassId="class-1"
+        moduleId={null}
+        moduleClassId={null}
+        onClose={() => {}}
+        onCreated={onCreated}
+      />,
+    );
+    await flush();
+
+    const gradebookLabel = [...document.body.querySelectorAll('label')].find((label) => label.textContent.includes('Count this assignment toward the gradebook'));
+    const gradebookCheckbox = document.getElementById(gradebookLabel.htmlFor);
+    expect(gradebookCheckbox.checked).toBe(false);
+    act(() => gradebookCheckbox.click());
+    await flush();
+
+    const categorySelect = [...document.body.querySelectorAll('select')].find((select) => [...select.options].some((option) => option.value === 'category-1'));
+    expect(categorySelect).toBeTruthy();
+    act(() => {
+      categorySelect.value = 'category-1';
+      categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+
+    const createButton = [...document.body.querySelectorAll('button')].find((button) => button.textContent.includes('Create assignment and rubric'));
+    expect(createButton.disabled).toBe(false);
+    act(() => createButton.click());
+    await flush();
+
+    expect(apiPost).toHaveBeenNthCalledWith(2, '/classes/class-1/assignments', expect.objectContaining({
+      title: 'Threat-model exercise',
+      status: 'DRAFT',
+      categoryId: 'category-1',
+    }));
+    expect(onCreated).toHaveBeenCalledWith(
+      { id: 'assignment-1', title: 'Threat-model exercise', gradeCategory: { id: 'category-1' } },
+      'class-1',
+      true,
+    );
   });
 
   it('creates a draft assignment from rich lesson content before the lesson is published', async () => {
@@ -119,7 +178,7 @@ describe('AssignmentDraftDialog', () => {
       rubricId: 'rubric-1',
       moduleId: 'module-1',
     }));
-    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Draft chapter' }, 'class-1', true);
+    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Draft chapter', gradeCategory: null }, 'class-1', true);
   });
 
   it('attaches the activity rubric read from the lesson HTML instead of making a starter rubric', async () => {
@@ -178,7 +237,7 @@ describe('AssignmentDraftDialog', () => {
       moduleId: 'module-1',
       points: 10,
     }));
-    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Threat-model exercise' }, 'class-1', true);
+    expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Threat-model exercise', gradeCategory: null }, 'class-1', true);
   });
 
   it('removes the newly created rubric if saving the assignment fails', async () => {

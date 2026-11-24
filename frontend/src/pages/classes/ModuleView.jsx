@@ -782,7 +782,9 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
               title="Draft assignment created"
               action={<Button size="sm" variant="secondary" to={`/classes/${assignmentNotice.classId}/assignments/${assignmentNotice.id}`}>Review draft</Button>}
             >
-              “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with a grading rubric' : ''}. Students will not see it until you publish it.
+              “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with a grading rubric' : ''}. {assignmentNotice.countedInGradebook
+                ? 'It will count toward its selected gradebook category when graded.'
+                : 'It is not counted in the gradebook, but the teacher can still score it.'} Students will not see it until you publish it.
             </Alert>
           )}
           {readingOffline && (
@@ -892,7 +894,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
               onClose={() => setDialog(null)}
               onCreated={(assignment, classId, withRubric) => {
                 setDialog(null);
-                setAssignmentNotice({ ...assignment, classId, withRubric });
+                setAssignmentNotice({ ...assignment, classId, withRubric, countedInGradebook: Boolean(assignment.gradeCategory) });
               }}
             />
           )}

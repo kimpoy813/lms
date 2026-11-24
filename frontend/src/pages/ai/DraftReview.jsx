@@ -81,7 +81,9 @@ function Review({ draft, onBack, configured }) {
           title="Draft assignment created"
           action={<Button size="sm" variant="secondary" to={`/classes/${assignmentNotice.classId}/assignments/${assignmentNotice.id}`}>Review draft</Button>}
         >
-          “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable rubric' : ''}. It is not linked to the gradebook by default, and students will not see it until you publish it.
+          “{assignmentNotice.title}” was saved as a draft{assignmentNotice.withRubric ? ' with an editable rubric' : ''}. {assignmentNotice.countedInGradebook
+            ? 'It will count toward its selected gradebook category when graded.'
+            : 'It is not counted in the gradebook, but the teacher can still score it.'} Students will not see it until you publish it.
         </Alert>
       )}
 
@@ -144,7 +146,7 @@ function Review({ draft, onBack, configured }) {
           <Card>
             <CardHeader
               title="Practice activities"
-              description="These appear together as a “Practice activities” lesson. Create a separate unpublished assignment draft from any activity when students should submit it. It is not linked to the gradebook by default, though you can still score it with a rubric or manually."
+              description="These appear together as a “Practice activities” lesson. Create a separate unpublished assignment draft from any activity when students should submit it, then choose whether it counts toward the gradebook. Teachers can still score it when it is not counted."
               action={!locked && <Button size="sm" variant="secondary" icon={Plus} disabled={c.activities.length >= 10} onClick={() => change({ activities: [...c.activities, { title: '', instructions: '' }] })}>Add</Button>}
             />
             <ul className="space-y-3">
@@ -219,7 +221,7 @@ function Review({ draft, onBack, configured }) {
           onClose={() => setAssignmentActivityIndex(null)}
           onCreated={(assignment, classId, withRubric) => {
             setAssignmentActivityIndex(null);
-            setAssignmentNotice({ id: assignment.id, classId, title: assignment.title, withRubric });
+            setAssignmentNotice({ id: assignment.id, classId, title: assignment.title, withRubric, countedInGradebook: Boolean(assignment.gradeCategory) });
           }}
         />
       )}

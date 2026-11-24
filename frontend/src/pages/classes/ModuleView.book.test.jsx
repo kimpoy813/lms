@@ -246,7 +246,8 @@ describe('Module book-like reader & outline CTA', () => {
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
     expect(dialog.textContent).toContain('Create an assignment from this lesson');
-    expect(dialog.querySelector('input').value).toBe('Foundations of Modularity');
+    const titleLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Assignment title'));
+    expect(document.getElementById(titleLabel.htmlFor).value).toBe('Foundations of Modularity');
     expect(dialog.querySelector('[aria-label="Assignment instructions"]').value).toBe(mockLesson1.contentHtml);
 
     unmount();
