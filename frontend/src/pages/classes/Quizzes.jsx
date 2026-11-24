@@ -10,7 +10,7 @@ import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, plural } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
 import QuizDialog, { QUIZ_KINDS } from './QuizDialog.jsx';
-import { groupByModule, ModuleGroupHeading } from './ModuleGroups.jsx';
+import { groupByModule, LessonGroupHeading, ModuleGroupHeading } from './ModuleGroups.jsx';
 import { useClass } from './useClass.js';
 
 export const windowText = (q) => {
@@ -45,9 +45,22 @@ export default function Quizzes() {
             {groupByModule(list).map((group) => (
               <section key={group.key} aria-label={`Quizzes in ${group.title}`}>
                 <ModuleGroupHeading group={group} noun="quiz" />
-                <ul className="mt-3 space-y-3">
-                  {group.items.map((q) => <li key={q.id}>{canManage ? <TeacherRow q={q} readOnly={readOnly} /> : <StudentRow q={q} />}</li>)}
-                </ul>
+                {group.sections.length > 0 ? (
+                  <div className="mt-3 space-y-4 pl-2">
+                    {group.sections.map((section) => (
+                      <section key={section.key} aria-label={`Quizzes in ${section.title}`}>
+                        <LessonGroupHeading group={section} noun="quiz" />
+                        <ul className="mt-2 space-y-3">
+                          {section.items.map((q) => <li key={q.id}>{canManage ? <TeacherRow q={q} readOnly={readOnly} /> : <StudentRow q={q} />}</li>)}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <ul className="mt-3 space-y-3">
+                    {group.items.map((q) => <li key={q.id}>{canManage ? <TeacherRow q={q} readOnly={readOnly} /> : <StudentRow q={q} />}</li>)}
+                  </ul>
+                )}
               </section>
             ))}
           </div>

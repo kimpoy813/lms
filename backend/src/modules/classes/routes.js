@@ -501,6 +501,7 @@ classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({
 
     // Modules & lessons (always copied as DRAFT with prerequisites preserved)
     const moduleMap = new Map();
+    const lessonMap = new Map();
     let moduleCount = 0;
     if (body.includeModules) {
       const sourceModules = await tx.learningModule.findMany({
@@ -508,8 +509,9 @@ classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({
         orderBy: { position: 'asc' },
       });
       for (const [index, mod] of sourceModules.entries()) {
-        const copiedMod = await copyModule(tx, mod, createdClass.id, req.user.id, index);
+        const { module: copiedMod, lessonMap: copiedLessonMap } = await copyModule(tx, mod, createdClass.id, req.user.id, index);
         moduleMap.set(mod.id, copiedMod.id);
+        for (const [sourceLessonId, copiedLessonId] of copiedLessonMap) lessonMap.set(sourceLessonId, copiedLessonId);
       }
       for (const mod of sourceModules) {
         if (mod.prerequisiteModuleId && moduleMap.has(mod.prerequisiteModuleId)) {
@@ -535,6 +537,7 @@ classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({
           data: {
             classId: createdClass.id,
             moduleId: a.moduleId ? (moduleMap.get(a.moduleId) ?? null) : null,
+            lessonId: a.lessonId ? (lessonMap.get(a.lessonId) ?? null) : null,
             title: a.title,
             instructionsHtml: a.instructionsHtml,
             points: a.points,
@@ -586,6 +589,7 @@ classesRouter.post('/:classId/copy', requireRole('TEACHER', 'ADMIN'), validate({
           data: {
             classId: createdClass.id,
             moduleId: q.moduleId ? (moduleMap.get(q.moduleId) ?? null) : null,
+            lessonId: q.lessonId ? (lessonMap.get(q.lessonId) ?? null) : null,
             title: q.title,
             instructionsHtml: q.instructionsHtml,
             kind: q.kind,

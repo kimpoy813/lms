@@ -1,5 +1,5 @@
 // Calendar schedule-overlap and affected-class notification helpers.
-import { addDays, atTime, dateKey, timeKey, weekdayOf } from '../../lib/time.js';
+import { addDays, atTime, dateKey, dbToDateKey, timeKey, weekdayOf } from '../../lib/time.js';
 import { notify } from '../../services/notifications.js';
 import { classLabel } from '../classes/access.js';
 
@@ -38,6 +38,9 @@ export function findOverlappingClassMeetings(classes, { startAt, endAt, allDay =
   for (let day = firstDay, guard = 0; day <= lastDay && guard <= MAX_OVERLAP_SPAN_DAYS; day = addDays(day, 1), guard += 1) {
     const weekday = weekdayOf(day);
     for (const cls of classes) {
+      const semesterStart = cls.semester?.startDate ? dbToDateKey(cls.semester.startDate) : null;
+      const semesterEnd = cls.semester?.endDate ? dbToDateKey(cls.semester.endDate) : null;
+      if ((semesterStart && day < semesterStart) || (semesterEnd && day > semesterEnd)) continue;
       for (const s of cls.schedules ?? []) {
         if (s.dayOfWeek !== weekday) continue;
         const mStart = atTime(day, s.startTime, tz);

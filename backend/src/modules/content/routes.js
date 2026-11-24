@@ -442,7 +442,7 @@ export async function copyModule(tx, mod, targetClassId, userId, position, { sta
     }
   }
   if (source.resources.length > 0) await tx.learningResource.createMany({ data: source.resources.map((r) => resourceData(r, null)) });
-  return copy;
+  return { module: copy, lessonMap };
 }
 
 const copyModuleBody = z.object({
@@ -464,7 +464,7 @@ contentRouter.post('/modules/:moduleId/copy', validate({ params: idParams('modul
     const out = [];
     for (const target of targets) {
       const last = await tx.learningModule.aggregate({ where: { classId: target.cls.id, deletedAt: null }, _max: { position: true } });
-      const row = await copyModule(tx, mod, target.cls.id, req.user.id, (last._max.position ?? -1) + 1, { status: body.status, now });
+      const { module: row } = await copyModule(tx, mod, target.cls.id, req.user.id, (last._max.position ?? -1) + 1, { status: body.status, now });
       if (target.cls.id === mod.classId) {
         await tx.learningModule.update({ where: { id: row.id }, data: { title: `${mod.title} (copy)`.slice(0, 200) } });
       }

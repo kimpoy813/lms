@@ -28,6 +28,21 @@ export async function matchingModuleId(tx, sourceModuleOrId, targetClassId) {
   return match?.id ?? null;
 }
 
+/** Find an active lesson with the same title in the already-matched target module. */
+export async function matchingLessonId(tx, sourceLessonOrId, targetModuleId) {
+  if (!sourceLessonOrId || !targetModuleId) return null;
+  const source = typeof sourceLessonOrId === 'string'
+    ? await tx.lesson.findUnique({ where: { id: sourceLessonOrId }, select: { id: true, title: true, deletedAt: true } })
+    : sourceLessonOrId;
+  if (!source?.title || source.deletedAt) return null;
+  const match = await tx.lesson.findFirst({
+    where: { moduleId: targetModuleId, deletedAt: null, title: { equals: source.title, mode: 'insensitive' } },
+    orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  });
+  return match?.id ?? null;
+}
+
 /**
  * Find a module with the same title in `targetClassId`, or create a matching shell module there
  * so lessons/resources posted to multiple classes always have a home.

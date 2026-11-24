@@ -19,7 +19,7 @@ import { enrolledStudentIds, notify } from '../../services/notifications.js';
 import { getTimeZone } from '../../services/settings.js';
 import { cloneFilesForParent, fileSummary, readStoredFile, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
-import { cleanupStoredFiles, matchingCategoryId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
+import { cleanupStoredFiles, matchingCategoryId, matchingLessonId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
 import { generateAiRubricSuggestion } from '../../services/aiRubricGrading.js';
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { applyPenalty, latePenalty } from './penalty.js';
@@ -39,6 +39,7 @@ const include = {
   rubric: { include: { criteria: true } },
   gradeItem: { select: { id: true, categoryId: true, category: { select: { name: true, period: { select: { name: true, lockedAt: true } } } } } },
   module: { select: { id: true, title: true } },
+  lesson: { select: { id: true, title: true, moduleId: true, deletedAt: true } },
 };
 
 // ── Availability rules (the server clock is the only one that counts) ────────
@@ -90,6 +91,7 @@ function baseView(a) {
     maxFiles: a.maxFiles,
     allowResubmission: a.allowResubmission,
     module: a.module ?? null,
+    lesson: a.lesson ? { id: a.lesson.id, title: a.lesson.title, moduleId: a.lesson.moduleId } : null,
     gradeCategory: a.gradeItem ? { id: a.gradeItem.categoryId, name: a.gradeItem.category.name, period: a.gradeItem.category.period.name } : null,
     hasRubric: Boolean(a.rubricId),
   };
@@ -143,7 +145,7 @@ classAssignmentsRouter.get('/', validate({ params: classParams }), async (req, r
   const now = new Date();
   const assignments = await prisma.assignment.findMany({
     where: { classId: access.cls.id, deletedAt: null, ...(access.canManage ? {} : publishedWhere(now)) },
-    include: { gradeItem: include.gradeItem, module: include.module },
+    include: { gradeItem: include.gradeItem, module: include.module, lesson: include.lesson },
     orderBy: [{ dueAt: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }],
   });
   if (!access.canManage) {
@@ -208,6 +210,7 @@ const body = z.object({
   allowResubmission: z.boolean().default(true),
   rubricId: zId.nullable().optional(),
   moduleId: zId.nullable().optional(),
+  lessonId: zId.nullable().optional(),
   /** Grade category this assignment counts under; null = not graded. */
   categoryId: zId.nullable().optional(),
   fileIds: z.array(zId).max(10).default([]),
@@ -224,7 +227,7 @@ function assertSchedule(a) {
   if (Object.keys(errors).length > 0) throw fieldErrors(errors);
 }
 
-async function resolveLinks(user, classId, { rubricId, moduleId }) {
+async function resolveLinks(user, classId, { rubricId, moduleId, lessonId }) {
   let rubric = null;
   if (rubricId) {
     rubric = await prisma.rubric.findFirst({ where: { id: rubricId, ...(user.role === 'ADMIN' ? {} : { ownerId: user.id }) }, include: { criteria: true } });
@@ -233,6 +236,14 @@ async function resolveLinks(user, classId, { rubricId, moduleId }) {
   if (moduleId) {
     const mod = await prisma.learningModule.findFirst({ where: { id: moduleId, classId, deletedAt: null }, select: { id: true } });
     if (!mod) throw fieldErrors({ moduleId: 'Choose a module from this class.' });
+  }
+  if (lessonId) {
+    if (!moduleId) throw fieldErrors({ lessonId: 'Choose a module before choosing a lesson.' });
+    const lesson = await prisma.lesson.findFirst({
+      where: { id: lessonId, moduleId, deletedAt: null, module: { classId, deletedAt: null } },
+      select: { id: true },
+    });
+    if (!lesson) throw fieldErrors({ lessonId: 'Choose an active lesson from this module and class.' });
   }
   return rubric;
 }
@@ -276,7 +287,7 @@ classAssignmentsRouter.post('/', validate({ params: classParams, body: createBod
     result = await prisma.$transaction(async (tx) => {
       const row = await tx.assignment.create({
         data: {
-          classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml, points, ...publication,
+          classId: cls.id, moduleId: b.moduleId ?? null, lessonId: b.lessonId ?? null, title, instructionsHtml, points, ...publication,
           availableFrom: b.availableFrom ?? null, dueAt: b.dueAt ?? null, closeAt: b.closeAt ?? null, allowLate: b.allowLate,
           latePenaltyType: b.latePenaltyType, latePenaltyValue: b.latePenaltyValue, latePenaltyMax: b.latePenaltyMax,
           allowText: b.allowText, allowFiles: b.allowFiles, maxFiles: b.maxFiles, allowResubmission: b.allowResubmission,
@@ -297,11 +308,15 @@ classAssignmentsRouter.post('/', validate({ params: classParams, body: createBod
         const sourceMod = b.moduleId
           ? await tx.learningModule.findUnique({ where: { id: b.moduleId }, select: { id: true, title: true } })
           : null;
+        const sourceLesson = b.lessonId
+          ? await tx.lesson.findUnique({ where: { id: b.lessonId }, select: { id: true, title: true, deletedAt: true } })
+          : null;
         for (const target of targets) {
           const targetModuleId = sourceMod ? await matchingModuleId(tx, sourceMod, target.cls.id) : null;
+          const targetLessonId = sourceLesson && targetModuleId ? await matchingLessonId(tx, sourceLesson, targetModuleId) : null;
           const copyRow = await tx.assignment.create({
             data: {
-              classId: target.cls.id, moduleId: targetModuleId, title, instructionsHtml, points, ...publication,
+              classId: target.cls.id, moduleId: targetModuleId, lessonId: targetLessonId, title, instructionsHtml, points, ...publication,
               availableFrom: b.availableFrom ?? null, dueAt: b.dueAt ?? null, closeAt: b.closeAt ?? null, allowLate: b.allowLate,
               latePenaltyType: b.latePenaltyType, latePenaltyValue: b.latePenaltyValue, latePenaltyMax: b.latePenaltyMax,
               allowText: b.allowText, allowFiles: b.allowFiles, maxFiles: b.maxFiles, allowResubmission: b.allowResubmission,
@@ -392,8 +407,18 @@ assignmentsRouter.patch('/:assignmentId', validate({ params: assignmentParams, b
   assertSchedule(next);
   const publication = resolvePublication({ status: b.status, publishAt: b.publishAt ?? assignment.publishAt }, assignment);
   if (publication.error) throw fieldErrors({ publishAt: publication.error });
-  const rubric = b.rubricId !== undefined || b.moduleId !== undefined
-    ? await resolveLinks(req.user, cls.id, { rubricId: b.rubricId === undefined ? assignment.rubricId : b.rubricId, moduleId: b.moduleId === undefined ? null : b.moduleId })
+  const placementSupplied = b.moduleId !== undefined || b.lessonId !== undefined;
+  const nextModuleId = b.moduleId === undefined ? assignment.moduleId : b.moduleId;
+  const nextLessonId = b.lessonId === undefined
+    ? b.moduleId !== undefined && b.moduleId !== assignment.moduleId ? null : assignment.lessonId
+    : b.lessonId;
+  const placementChanged = placementSupplied && (nextModuleId !== assignment.moduleId || nextLessonId !== assignment.lessonId);
+  const rubric = b.rubricId !== undefined || placementSupplied
+    ? await resolveLinks(req.user, cls.id, {
+        rubricId: b.rubricId === undefined ? assignment.rubricId : b.rubricId,
+        moduleId: placementSupplied ? nextModuleId : null,
+        lessonId: placementSupplied ? nextLessonId : null,
+      })
     : assignment.rubric;
   const points = rubric ? rubricTotal(rubric) : next.points;
   const title = b.title !== undefined ? plainText(b.title, 200) : assignment.title;
@@ -417,10 +442,11 @@ assignmentsRouter.patch('/:assignmentId', validate({ params: assignmentParams, b
         points,
         ...(b.instructionsHtml !== undefined ? { instructionsHtml: sanitizeRichText(b.instructionsHtml) } : {}),
         ...Object.fromEntries(
-          ['availableFrom', 'dueAt', 'closeAt', 'allowLate', 'latePenaltyType', 'latePenaltyValue', 'latePenaltyMax', 'allowText', 'allowFiles', 'maxFiles', 'allowResubmission', 'moduleId']
+          ['availableFrom', 'dueAt', 'closeAt', 'allowLate', 'latePenaltyType', 'latePenaltyValue', 'latePenaltyMax', 'allowText', 'allowFiles', 'maxFiles', 'allowResubmission']
             .filter((k) => b[k] !== undefined)
             .map((k) => [k, b[k]]),
         ),
+        ...(placementChanged ? { moduleId: nextModuleId, lessonId: nextLessonId } : {}),
         ...(b.rubricId !== undefined ? { rubricId: rubric?.id ?? null } : {}),
         // A new deadline deserves a new reminder.
         ...(dueChanged ? { reminderSentAt: null } : {}),
@@ -500,6 +526,11 @@ assignmentsRouter.post('/:assignmentId/copy', validate({ params: assignmentParam
           : assignment.module
             ? await matchingModuleId(tx, assignment.module, target.cls.id)
             : null;
+        const targetLessonId = sameClass
+          ? assignment.lessonId
+          : assignment.lesson && targetModuleId
+            ? await matchingLessonId(tx, assignment.lesson, targetModuleId)
+            : null;
         const row = await tx.assignment.create({
           data: {
             classId: target.cls.id,
@@ -518,6 +549,7 @@ assignmentsRouter.post('/:assignmentId/copy', validate({ params: assignmentParam
             allowResubmission: assignment.allowResubmission,
             rubricId: assignment.rubricId,
             moduleId: targetModuleId,
+            lessonId: targetLessonId,
             createdById: req.user.id,
           },
         });

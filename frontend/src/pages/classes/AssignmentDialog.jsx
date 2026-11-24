@@ -15,10 +15,10 @@ import { useClass } from './useClass.js';
 const blank = {
   title: '', instructionsHtml: '', points: 100, status: 'DRAFT', publishAt: null, availableFrom: null, dueAt: null, closeAt: null,
   allowLate: true, latePenaltyType: 'NONE', latePenaltyValue: 0, latePenaltyMax: 100, allowText: true, allowFiles: true, maxFiles: 5, allowResubmission: true,
-  rubricId: '', moduleId: '', categoryId: '', files: [],
+  rubricId: '', moduleId: '', lessonId: '', categoryId: '', files: [],
 };
 
-export default function AssignmentDialog({ assignmentId, onClose }) {
+export default function AssignmentDialog({ assignmentId, initialModuleId = '', initialLessonId = '', onClose }) {
   const { cls, base } = useClass();
   const navigate = useNavigate();
   const existing = useQuery({ queryKey: ['class', cls.id, 'assignment', assignmentId], queryFn: () => api.get(`/assignments/${assignmentId}`), enabled: Boolean(assignmentId) });
@@ -26,21 +26,28 @@ export default function AssignmentDialog({ assignmentId, onClose }) {
   return (
     <Modal open onClose={onClose} title={assignmentId ? 'Edit assignment' : 'New assignment'} size="xl">
       {loading ? <PageLoader /> : (
-        <Form key={assignmentId ?? 'new'} existing={existing.data} onCancel={onClose} onSaved={(saved) => { onClose(); if (!assignmentId) navigate(`${base}/assignments/${saved.id}`); }} />
+        <Form
+          key={`${assignmentId ?? 'new'}:${initialModuleId}:${initialLessonId}`}
+          existing={existing.data}
+          initialModuleId={initialModuleId}
+          initialLessonId={initialLessonId}
+          onCancel={onClose}
+          onSaved={(saved) => { onClose(); if (!assignmentId) navigate(`${base}/assignments/${saved.id}`); }}
+        />
       )}
     </Modal>
   );
 }
 
-function Form({ existing, onSaved, onCancel }) {
+function Form({ existing, initialModuleId, initialLessonId, onSaved, onCancel }) {
   const { cls, base } = useClass();
   const client = useQueryClient();
   const modules = useQuery({ queryKey: ['class', cls.id, 'modules'], queryFn: () => api.get(`${base}/modules`) });
   const categories = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'categories'], queryFn: () => api.get(`${base}/gradebook/categories`) });
   const rubrics = useQuery({ queryKey: ['rubrics'], queryFn: () => api.get('/rubrics') });
   const [v, setV] = useState(() => existing ? {
-    ...blank, ...existing, rubricId: existing.rubric?.id ?? '', moduleId: existing.module?.id ?? '', categoryId: existing.gradeCategory?.id ?? '', files: existing.attachments ?? [],
-  } : blank);
+    ...blank, ...existing, rubricId: existing.rubric?.id ?? '', moduleId: existing.module?.id ?? '', lessonId: existing.lesson?.id ?? '', categoryId: existing.gradeCategory?.id ?? '', files: existing.attachments ?? [],
+  } : { ...blank, moduleId: initialModuleId, lessonId: initialLessonId });
   const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const set = (name, value) => setV((s) => ({ ...s, [name]: value }));
@@ -51,7 +58,7 @@ function Form({ existing, onSaved, onCancel }) {
       availableFrom: v.availableFrom, dueAt: v.dueAt, closeAt: v.closeAt, allowLate: v.allowLate,
       latePenaltyType: v.allowLate ? v.latePenaltyType : 'NONE', latePenaltyValue: Number(v.latePenaltyValue) || 0, latePenaltyMax: Number(v.latePenaltyMax) || 100,
       allowText: v.allowText, allowFiles: v.allowFiles, maxFiles: Number(v.maxFiles) || 1, allowResubmission: v.allowResubmission,
-      rubricId: v.rubricId || null, moduleId: v.moduleId || null, categoryId: v.categoryId || null, fileIds: v.files.map((f) => f.id),
+      rubricId: v.rubricId || null, moduleId: v.moduleId || null, lessonId: v.lessonId || null, categoryId: v.categoryId || null, fileIds: v.files.map((f) => f.id),
       ...(existing ? {} : { targetClassIds }),
     };
     return existing ? api.patch(`/assignments/${existing.id}`, body) : api.post(`${base}/assignments`, body);
@@ -70,6 +77,7 @@ function Form({ existing, onSaved, onCancel }) {
   });
 
   const rubric = (rubrics.data ?? []).find((r) => r.id === v.rubricId);
+  const lessons = (modules.data ?? []).find((m) => m.id === v.moduleId)?.lessons ?? [];
   const hasErrors = Object.keys(errors).length > 0;
 
   return (
@@ -140,9 +148,15 @@ function Form({ existing, onSaved, onCancel }) {
           </Select>
         </Field>
         <Field label="Module" optional error={errors.moduleId}>
-          <Select value={v.moduleId} onChange={(e) => set('moduleId', e.target.value)}>
+          <Select value={v.moduleId} onChange={(e) => setV((s) => ({ ...s, moduleId: e.target.value, lessonId: '' }))}>
             <option value="">None</option>
             {(modules.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
+          </Select>
+        </Field>
+        <Field label="Lesson" optional error={errors.lessonId} hint={v.moduleId ? 'Optional; links work to one lesson.' : 'Choose a module first.'}>
+          <Select value={v.lessonId} disabled={!v.moduleId} onChange={(e) => set('lessonId', e.target.value)}>
+            <option value="">None</option>
+            {lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.title}</option>)}
           </Select>
         </Field>
       </div>

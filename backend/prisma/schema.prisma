@@ -1033,6 +1033,8 @@ model Lesson {
   prerequisite Lesson?            @relation("LessonPrerequisite", fields: [prerequisiteLessonId], references: [id], onDelete: SetNull)
   dependents   Lesson[]           @relation("LessonPrerequisite")
   resources    LearningResource[]
+  assignments  Assignment[]
+  quizzes      Quiz[]
   progress     LessonProgress[]
   bookmarks    Bookmark[]
 
@@ -1148,6 +1150,7 @@ model Assignment {
   id                String          @id @default(cuid())
   classId           String
   moduleId          String?
+  lessonId          String?
   title             String
   instructionsHtml  String          @default("")
   points            Float           @default(100)
@@ -1178,6 +1181,7 @@ model Assignment {
 
   class       Class                  @relation(fields: [classId], references: [id], onDelete: Restrict)
   module      LearningModule?        @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  lesson      Lesson?                @relation(fields: [lessonId], references: [id], onDelete: SetNull)
   rubric      Rubric?                @relation(fields: [rubricId], references: [id], onDelete: SetNull)
   createdBy   User                   @relation(fields: [createdById], references: [id], onDelete: Restrict)
   attachments File[]
@@ -1187,39 +1191,40 @@ model Assignment {
   @@index([classId, status])
   @@index([status, publishAt])
   @@index([dueAt])
+  @@index([lessonId])
 }
 
 model AssignmentSubmission {
-  id             String           @id @default(cuid())
-  assignmentId   String
-  studentId      String
-  status         SubmissionStatus @default(DRAFT)
-  textContent    String?
-  attemptNumber  Int              @default(0)
-  submittedAt    DateTime?        @db.Timestamptz(3)
-  isLate         Boolean          @default(false)
+  id                   String              @id @default(cuid())
+  assignmentId         String
+  studentId            String
+  status               SubmissionStatus    @default(DRAFT)
+  textContent          String?
+  attemptNumber        Int                 @default(0)
+  submittedAt          DateTime?           @db.Timestamptz(3)
+  isLate               Boolean             @default(false)
   /// Score awarded by the teacher before any late deduction.
-  rawScore       Float?
-  penaltyPercent Float            @default(0)
+  rawScore             Float?
+  penaltyPercent       Float               @default(0)
   /// rawScore after the late deduction — this is what reaches the gradebook.
-  finalScore     Float?
-  feedback       String?
+  finalScore           Float?
+  feedback             String?
   /// { "<criterionId>": { "points": 8, "comment": "…" } }
-  rubricScores   Json?
+  rubricScores         Json?
   /// Teacher-private AI rubric draft. It never changes the official grade or appears in student views.
   aiGradingStatus      AIGenerationStatus?
   aiRubricSuggestions  Json?
   aiGradingError       String?
   aiGradingModel       String?
-  aiGradingStartedAt   DateTime?          @db.Timestamptz(3)
-  aiGradingCompletedAt DateTime?          @db.Timestamptz(3)
-  gradedById     String?
-  gradedAt       DateTime?        @db.Timestamptz(3)
-  returnedAt     DateTime?        @db.Timestamptz(3)
+  aiGradingStartedAt   DateTime?           @db.Timestamptz(3)
+  aiGradingCompletedAt DateTime?           @db.Timestamptz(3)
+  gradedById           String?
+  gradedAt             DateTime?           @db.Timestamptz(3)
+  returnedAt           DateTime?           @db.Timestamptz(3)
   /// Set when the teacher reopens a closed assignment for this student.
-  reopenedUntil  DateTime?        @db.Timestamptz(3)
-  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @db.Timestamptz(3)
+  reopenedUntil        DateTime?           @db.Timestamptz(3)
+  createdAt            DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime            @updatedAt @db.Timestamptz(3)
 
   assignment      Assignment              @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
   student         User                    @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Restrict)
@@ -1303,6 +1308,7 @@ model Quiz {
   id                 String           @id @default(cuid())
   classId            String
   moduleId           String?
+  lessonId           String?
   title              String
   instructionsHtml   String           @default("")
   kind               QuizKind         @default(QUIZ)
@@ -1336,6 +1342,7 @@ model Quiz {
 
   class     Class              @relation(fields: [classId], references: [id], onDelete: Restrict)
   module    LearningModule?    @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  lesson    Lesson?            @relation(fields: [lessonId], references: [id], onDelete: SetNull)
   createdBy User               @relation(fields: [createdById], references: [id], onDelete: Restrict)
   questions QuizQuestion[]
   pools     QuizQuestionPool[]
@@ -1344,6 +1351,7 @@ model Quiz {
 
   @@index([classId, status])
   @@index([status, publishAt])
+  @@index([lessonId])
 }
 
 /// A fixed question placed in a quiz.

@@ -158,6 +158,7 @@ describe('AssignmentDraftDialog', () => {
         defaultClassId="class-1"
         moduleId="module-1"
         moduleClassId="class-1"
+        lessonId="lesson-1"
         sourceLabel="lesson"
         onClose={() => {}}
         onCreated={onCreated}
@@ -177,6 +178,7 @@ describe('AssignmentDraftDialog', () => {
       status: 'DRAFT',
       rubricId: 'rubric-1',
       moduleId: 'module-1',
+      lessonId: 'lesson-1',
     }));
     expect(onCreated).toHaveBeenCalledWith({ id: 'assignment-1', title: 'Draft chapter', gradeCategory: null }, 'class-1', true);
   });

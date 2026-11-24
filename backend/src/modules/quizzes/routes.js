@@ -25,7 +25,7 @@ import { registerJob } from '../../services/scheduler.js';
 import { getTimeZone } from '../../services/settings.js';
 import { fileSummary, syncAttachments } from '../../services/storage.js';
 import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, requireWritableClassManager } from '../classes/access.js';
-import { matchingCategoryId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
+import { matchingCategoryId, matchingLessonId, matchingModuleId, resolveTargetClasses } from '../classes/distribute.js';
 import { recordGrade, syncLinkedItem } from '../gradebook/service.js';
 import { quizOutcome } from './attemptScore.js';
 import { defaultBankFor, questionFingerprint, questionProblems, questionTextKey, readImportRequest, saveQuestion } from './banks.js';
@@ -48,6 +48,7 @@ const FINISHED = ['SUBMITTED', 'AUTO_SUBMITTED', 'GRADED'];
 const quizInclude = {
   gradeItem: { select: { id: true, categoryId: true, maxPoints: true, category: { select: { name: true, period: { select: { name: true } } } } } },
   module: { select: { id: true, title: true } },
+  lesson: { select: { id: true, title: true, moduleId: true, deletedAt: true } },
   questions: { orderBy: { position: 'asc' }, include: { question: { include: { choices: true } } } },
   pools: { orderBy: { position: 'asc' }, include: { bank: { select: { id: true, title: true, ownerId: true, deletedAt: true } } } },
   _count: { select: { attempts: true } },
@@ -75,6 +76,7 @@ function baseView(quiz) {
     questionCount: questionCount(quiz),
     totalPoints: totalPoints(quiz),
     module: quiz.module ?? null,
+    lesson: quiz.lesson ? { id: quiz.lesson.id, title: quiz.lesson.title, moduleId: quiz.lesson.moduleId } : null,
     gradeCategory: quiz.gradeItem ? { id: quiz.gradeItem.categoryId, name: quiz.gradeItem.category.name, period: quiz.gradeItem.category.period.name } : null,
   };
 }
@@ -221,6 +223,7 @@ const body = z.object({
   resultVisibility: z.enum(['IMMEDIATE', 'AFTER_CLOSE', 'MANUAL', 'NEVER']).default('MANUAL'),
   answerVisibility: z.enum(['SCORE_ONLY', 'RESPONSES', 'CORRECT_ANSWERS']).default('SCORE_ONLY'),
   moduleId: zId.nullable().optional(),
+  lessonId: zId.nullable().optional(),
   /** Grade category this quiz counts under; null = not graded (e.g. practice). */
   categoryId: zId.nullable().optional(),
 });
@@ -232,10 +235,19 @@ function assertSchedule(q) {
   if (Object.keys(errors).length > 0) throw fieldErrors(errors);
 }
 
-async function assertModule(classId, moduleId) {
-  if (!moduleId) return;
-  const mod = await prisma.learningModule.findFirst({ where: { id: moduleId, classId, deletedAt: null }, select: { id: true } });
-  if (!mod) throw fieldErrors({ moduleId: 'Choose a module from this class.' });
+async function assertModule(classId, moduleId, lessonId = null) {
+  if (moduleId) {
+    const mod = await prisma.learningModule.findFirst({ where: { id: moduleId, classId, deletedAt: null }, select: { id: true } });
+    if (!mod) throw fieldErrors({ moduleId: 'Choose a module from this class.' });
+  }
+  if (lessonId) {
+    if (!moduleId) throw fieldErrors({ lessonId: 'Choose a module before choosing a lesson.' });
+    const lesson = await prisma.lesson.findFirst({
+      where: { id: lessonId, moduleId, deletedAt: null, module: { classId, deletedAt: null } },
+      select: { id: true },
+    });
+    if (!lesson) throw fieldErrors({ lessonId: 'Choose an active lesson from this module and class.' });
+  }
 }
 
 /** A quiz must be takeable before students can see it. */
@@ -279,7 +291,7 @@ classQuizzesRouter.post('/', validate({ params: classParams, body: createQuizBod
   // A new quiz has no questions yet, so it always starts as a draft.
   if (b.status !== 'DRAFT') throw new AppError(422, 'QUIZ_EMPTY', 'Add at least one question before publishing.');
   assertSchedule(b);
-  await assertModule(cls.id, b.moduleId);
+  await assertModule(cls.id, b.moduleId, b.lessonId);
   const targets = await resolveTargetClasses(req.user, cls.id, b.targetClassIds);
   const title = plainText(b.title, 200);
   const instructionsHtml = sanitizeRichText(b.instructionsHtml);
@@ -288,7 +300,7 @@ classQuizzesRouter.post('/', validate({ params: classParams, body: createQuizBod
   const { quiz, copies } = await prisma.$transaction(async (tx) => {
     const row = await tx.quiz.create({
       data: {
-        classId: cls.id, moduleId: b.moduleId ?? null, title, instructionsHtml, kind: b.kind, status: 'DRAFT',
+        classId: cls.id, moduleId: b.moduleId ?? null, lessonId: b.lessonId ?? null, title, instructionsHtml, kind: b.kind, status: 'DRAFT',
         availableFrom: b.availableFrom ?? null, availableUntil: b.availableUntil ?? null, timeLimitMinutes: b.timeLimitMinutes ?? null, maxAttempts: b.maxAttempts,
         attemptScoring: b.attemptScoring, passingPercent: b.passingPercent ?? null, shuffleQuestions: b.shuffleQuestions, shuffleChoices: b.shuffleChoices,
         // Practice is for trying things out: no strict rules unless the teacher asks for them.
@@ -307,11 +319,15 @@ classQuizzesRouter.post('/', validate({ params: classParams, body: createQuizBod
       const sourceMod = b.moduleId
         ? await tx.learningModule.findUnique({ where: { id: b.moduleId }, select: { id: true, title: true } })
         : null;
+      const sourceLesson = b.lessonId
+        ? await tx.lesson.findUnique({ where: { id: b.lessonId }, select: { id: true, title: true, deletedAt: true } })
+        : null;
       for (const target of targets) {
         const targetModuleId = sourceMod ? await matchingModuleId(tx, sourceMod, target.cls.id) : null;
+        const targetLessonId = sourceLesson && targetModuleId ? await matchingLessonId(tx, sourceLesson, targetModuleId) : null;
         const copyRow = await tx.quiz.create({
           data: {
-            classId: target.cls.id, moduleId: targetModuleId, title, instructionsHtml, kind: b.kind, status: 'DRAFT',
+            classId: target.cls.id, moduleId: targetModuleId, lessonId: targetLessonId, title, instructionsHtml, kind: b.kind, status: 'DRAFT',
             availableFrom: b.availableFrom ?? null, availableUntil: b.availableUntil ?? null, timeLimitMinutes: b.timeLimitMinutes ?? null, maxAttempts: b.maxAttempts,
             attemptScoring: b.attemptScoring, passingPercent: b.passingPercent ?? null, shuffleQuestions: b.shuffleQuestions, shuffleChoices: b.shuffleChoices,
             strictMode, violationWarnings: b.violationWarnings,
@@ -388,7 +404,12 @@ quizzesRouter.patch('/:quizId', validate({ params: quizParams, body: patchOf(bod
   const b = req.valid.body;
   const next = { ...quiz, ...Object.fromEntries(Object.entries(b).filter(([, v]) => v !== undefined)) };
   assertSchedule(next);
-  if (b.moduleId) await assertModule(cls.id, b.moduleId);
+  const placementChanged = b.moduleId !== undefined || b.lessonId !== undefined;
+  const nextModuleId = b.moduleId === undefined ? quiz.moduleId : b.moduleId;
+  const nextLessonId = b.lessonId === undefined
+    ? b.moduleId !== undefined && b.moduleId !== quiz.moduleId ? null : quiz.lessonId
+    : b.lessonId;
+  if (placementChanged) await assertModule(cls.id, nextModuleId, nextLessonId);
   const publication = resolvePublication({ status: b.status, publishAt: b.publishAt ?? quiz.publishAt }, quiz);
   if (publication.error) throw fieldErrors({ publishAt: publication.error });
   if (publication.status === 'PUBLISHED' || publication.status === 'SCHEDULED') await assertPublishable(quiz);
@@ -404,10 +425,11 @@ quizzesRouter.patch('/:quizId', validate({ params: quizParams, body: patchOf(bod
         ...(b.title !== undefined ? { title: plainText(b.title, 200) } : {}),
         ...(b.instructionsHtml !== undefined ? { instructionsHtml: sanitizeRichText(b.instructionsHtml) } : {}),
         ...Object.fromEntries(
-          ['kind', 'availableFrom', 'availableUntil', 'timeLimitMinutes', 'maxAttempts', 'attemptScoring', 'passingPercent', 'shuffleQuestions', 'shuffleChoices', 'strictMode', 'violationWarnings', 'resultVisibility', 'answerVisibility', 'moduleId']
+          ['kind', 'availableFrom', 'availableUntil', 'timeLimitMinutes', 'maxAttempts', 'attemptScoring', 'passingPercent', 'shuffleQuestions', 'shuffleChoices', 'strictMode', 'violationWarnings', 'resultVisibility', 'answerVisibility']
             .filter((k) => b[k] !== undefined)
             .map((k) => [k, b[k]]),
         ),
+        ...(placementChanged ? { moduleId: nextModuleId, lessonId: nextLessonId } : {}),
         ...(closeChanged ? { reminderSentAt: null } : {}),
         ...publication,
       },
@@ -476,6 +498,11 @@ quizzesRouter.post('/:quizId/copy', validate({ params: quizParams, body: copyQui
         : quiz.module
           ? await matchingModuleId(tx, quiz.module, target.cls.id)
           : null;
+      const targetLessonId = same
+        ? quiz.lessonId
+        : quiz.lesson && targetModuleId
+          ? await matchingLessonId(tx, quiz.lesson, targetModuleId)
+          : null;
       const row = await tx.quiz.create({
         data: {
           classId: target.cls.id,
@@ -495,6 +522,7 @@ quizzesRouter.post('/:quizId/copy', validate({ params: quizParams, body: copyQui
           resultVisibility,
           answerVisibility: quiz.answerVisibility,
           moduleId: targetModuleId,
+          lessonId: targetLessonId,
           createdById: req.user.id,
           questions: { create: activeQuestions.map((qq) => ({ questionId: qq.questionId, points: qq.points, position: qq.position })) },
           pools: { create: activePools.map((p) => ({ bankId: p.bankId, topic: p.topic, difficulty: p.difficulty, type: p.type, count: p.count, pointsEach: p.pointsEach, position: p.position })) },

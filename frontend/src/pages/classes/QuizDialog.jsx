@@ -21,20 +21,23 @@ export const ANSWER_VISIBILITY = { SCORE_ONLY: 'Score only', RESPONSES: 'Their o
 
 const blank = {
   title: '', instructionsHtml: '', kind: 'QUIZ', status: 'DRAFT', publishAt: null, availableFrom: null, availableUntil: null, timeLimitMinutes: '', maxAttempts: 1,
-  attemptScoring: 'HIGHEST', passingPercent: '', shuffleQuestions: false, shuffleChoices: false, resultVisibility: 'MANUAL', answerVisibility: 'SCORE_ONLY', moduleId: '', categoryId: '',
+  attemptScoring: 'HIGHEST', passingPercent: '', shuffleQuestions: false, shuffleChoices: false, resultVisibility: 'MANUAL', answerVisibility: 'SCORE_ONLY', moduleId: '', lessonId: '', categoryId: '',
   // Strict rules while answering. `null` = not chosen yet: on for quizzes and examinations, off for practice.
   strictMode: null, violationWarnings: 0,
 };
 
-export default function QuizDialog({ quiz, onClose, onSaved }) {
+export default function QuizDialog({ quiz, initialModuleId = '', initialLessonId = '', onClose, onSaved }) {
   const { cls, base } = useClass();
   const client = useQueryClient();
   const modules = useQuery({ queryKey: ['class', cls.id, 'modules'], queryFn: () => api.get(`${base}/modules`) });
   const categories = useQuery({ queryKey: ['class', cls.id, 'gradebook', 'categories'], queryFn: () => api.get(`${base}/gradebook/categories`) });
-  const [v, setV] = useState(() => quiz ? { ...blank, ...quiz, timeLimitMinutes: quiz.timeLimitMinutes ?? '', passingPercent: quiz.passingPercent ?? '', moduleId: quiz.module?.id ?? '', categoryId: quiz.gradeCategory?.id ?? '' } : blank);
+  const [v, setV] = useState(() => quiz
+    ? { ...blank, ...quiz, timeLimitMinutes: quiz.timeLimitMinutes ?? '', passingPercent: quiz.passingPercent ?? '', moduleId: quiz.module?.id ?? '', lessonId: quiz.lesson?.id ?? '', categoryId: quiz.gradeCategory?.id ?? '' }
+    : { ...blank, moduleId: initialModuleId, lessonId: initialLessonId });
   const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const set = (name, value) => setV((s) => ({ ...s, [name]: value }));
+  const lessons = (modules.data ?? []).find((m) => m.id === v.moduleId)?.lessons ?? [];
   const strict = v.strictMode ?? v.kind !== 'PRACTICE';
 
   const save = useAction(() => {
@@ -42,7 +45,7 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
       title: v.title.trim(), instructionsHtml: v.instructionsHtml, kind: v.kind, availableFrom: v.availableFrom, availableUntil: v.availableUntil,
       timeLimitMinutes: v.timeLimitMinutes === '' ? null : Number(v.timeLimitMinutes), maxAttempts: Number(v.maxAttempts) || 1, attemptScoring: v.attemptScoring,
       passingPercent: v.passingPercent === '' ? null : Number(v.passingPercent), shuffleQuestions: v.shuffleQuestions, shuffleChoices: v.shuffleChoices,
-      resultVisibility: v.resultVisibility, answerVisibility: v.answerVisibility, moduleId: v.moduleId || null, categoryId: v.kind === 'PRACTICE' ? null : v.categoryId || null,
+      resultVisibility: v.resultVisibility, answerVisibility: v.answerVisibility, moduleId: v.moduleId || null, lessonId: v.lessonId || null, categoryId: v.kind === 'PRACTICE' ? null : v.categoryId || null,
       // Left out until the teacher chooses, so that a new quiz follows its kind.
       ...(v.strictMode === null ? {} : { strictMode: v.strictMode }), violationWarnings: Number(v.violationWarnings) || 0,
       // A new quiz starts as a draft: it can only be published once it has questions.
@@ -147,9 +150,15 @@ export default function QuizDialog({ quiz, onClose, onSaved }) {
             </Select>
           </Field>
           <Field label="Module" optional error={errors.moduleId}>
-            <Select value={v.moduleId} onChange={(e) => set('moduleId', e.target.value)}>
+            <Select value={v.moduleId} onChange={(e) => setV((s) => ({ ...s, moduleId: e.target.value, lessonId: '' }))}>
               <option value="">None</option>
               {(modules.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
+            </Select>
+          </Field>
+          <Field label="Lesson" optional error={errors.lessonId} hint={v.moduleId ? 'Optional; links the quiz to one lesson.' : 'Choose a module first.'}>
+            <Select value={v.lessonId} disabled={!v.moduleId} onChange={(e) => set('lessonId', e.target.value)}>
+              <option value="">None</option>
+              {lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.title}</option>)}
             </Select>
           </Field>
         </div>

@@ -32,7 +32,7 @@ describe('whole-class semester rollover (POST /api/classes/:classId/copy)', () =
 
     const mod = (await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Unit 1: Algorithms', status: 'PUBLISHED' })).body.data;
     const l1 = (await teacher.post(`/api/modules/${mod.id}/lessons`, { title: 'Sorting Basics', contentHtml: '<p>Bubble sort compares adjacent items.</p>', status: 'PUBLISHED' })).body.data;
-    await teacher.post(`/api/modules/${mod.id}/lessons`, { title: 'Merge Sort', contentHtml: '<p>Merge sort splits the array in half.</p>', prerequisiteLessonId: l1.id, status: 'PUBLISHED' });
+    const l2 = (await teacher.post(`/api/modules/${mod.id}/lessons`, { title: 'Merge Sort', contentHtml: '<p>Merge sort splits the array in half.</p>', prerequisiteLessonId: l1.id, status: 'PUBLISHED' })).body.data;
 
     const rubric = (await teacher.post('/api/rubrics', {
       title: 'Lab Rubric',
@@ -49,6 +49,7 @@ describe('whole-class semester rollover (POST /api/classes/:classId/copy)', () =
       points: 50,
       rubricId: rubric.id,
       moduleId: mod.id,
+      lessonId: l1.id,
       categoryId: assignCategoryId,
       status: 'PUBLISHED',
       dueAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -60,6 +61,7 @@ describe('whole-class semester rollover (POST /api/classes/:classId/copy)', () =
       title: 'Quiz 1: Complexity',
       kind: 'QUIZ',
       moduleId: mod.id,
+      lessonId: l2.id,
       categoryId: quizCategoryId,
     })).body.data;
     await teacher.put(`/api/quizzes/${quiz.id}/questions`, { items: [{ questionId: q1.id, points: 5 }] });
@@ -99,11 +101,13 @@ describe('whole-class semester rollover (POST /api/classes/:classId/copy)', () =
     expect(newAssigns).toHaveLength(1);
     expect(newAssigns[0]).toMatchObject({ title: 'Lab 1: Sorting', status: 'DRAFT', dueAt: null });
     expect(newAssigns[0].module?.id).toBe(newMods[0].id);
+    expect(newAssigns[0].lesson).toMatchObject({ id: newMods[0].lessons[0].id, title: 'Sorting Basics', moduleId: newMods[0].id });
 
     const newQuizzes = (await teacher.get(`/api/classes/${copied.id}/quizzes`)).body.data;
     expect(newQuizzes).toHaveLength(1);
     expect(newQuizzes[0]).toMatchObject({ title: 'Quiz 1: Complexity', status: 'DRAFT', questionCount: 1 });
     expect(newQuizzes[0].module?.id).toBe(newMods[0].id);
+    expect(newQuizzes[0].lesson).toMatchObject({ id: newMods[0].lessons[1].id, title: 'Merge Sort', moduleId: newMods[0].id });
 
     const copiedBook = (await teacher.get(`/api/classes/${copied.id}/gradebook`)).body.data;
     expect(copiedBook.structure.valid).toBe(true);

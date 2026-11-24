@@ -170,6 +170,8 @@ function StudentView({ quiz }) {
             ['Attempts', `${quiz.attemptsUsed} of ${quiz.maxAttempts} used`],
             quiz.passingPercent != null && ['Passing score', `${quiz.passingPercent}%`],
             quiz.gradeCategory && ['Counts toward', `${quiz.gradeCategory.period} › ${quiz.gradeCategory.name}`],
+            quiz.module && ['Module', <Link key="quiz-module" to={`${base}/modules/${quiz.module.id}`} className="text-brand hover:underline">{quiz.module.title}</Link>],
+            quiz.lesson && ['Lesson', <Link key="quiz-lesson" to={`${base}/modules/${quiz.lesson.moduleId}?lesson=${quiz.lesson.id}`} className="text-brand hover:underline">{quiz.lesson.title}</Link>],
           ]} />
         </Card>
       </div>
@@ -501,6 +503,8 @@ function Builder({ quiz }) {
             ['Scores shown', RESULT_VISIBILITY[quiz.resultVisibility]],
             ['Review shows', ANSWER_VISIBILITY[quiz.answerVisibility]],
             ['Gradebook', quiz.gradeCategory ? `${quiz.gradeCategory.period} › ${quiz.gradeCategory.name}` : 'Not graded'],
+            quiz.module && ['Module', <Link key="quiz-module" to={`${base}/modules/${quiz.module.id}`} className="text-brand hover:underline">{quiz.module.title}</Link>],
+            quiz.lesson && ['Lesson', <Link key="quiz-lesson" to={`${base}/modules/${quiz.lesson.moduleId}?lesson=${quiz.lesson.id}`} className="text-brand hover:underline">{quiz.lesson.title}</Link>],
           ]} />
         </Card>
       </div>
