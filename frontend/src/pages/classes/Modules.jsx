@@ -67,7 +67,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(m.lessons.length <= 5);
   const [confirm, setConfirm] = useState(null);
   const [posting, setPosting] = useState(false);
   const invalidate = [['class', cls.id, 'modules'], ['dashboard']];
@@ -105,7 +105,7 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
             {locked && <Badge icon={Lock}>Locked</Badge>}
             {!canManage && !locked && m.lessonCount > 0 && m.progressPercent === 100 && <Badge tone="ok" icon={CheckCircle2}>Completed</Badge>}
           </div>
-          {m.description && <p className="mt-1 text-sm text-soft">{m.description}</p>}
+          {m.description && <p className="mt-1 line-clamp-2 max-w-4xl text-sm text-soft">{m.description}</p>}
           {locked && <p className="mt-1 text-[13px] text-warn">{m.lockedReason}</p>}
           <p className="mt-1.5 text-xs text-faint">
             {plural(m.lessonCount, 'chapter')}{totalMinutes > 0 ? ` · ~${totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60 ? `${totalMinutes % 60}m` : ''}`.trim() : `${totalMinutes} min`}` : ''}{m.resources.length > 0 ? ` · ${plural(m.resources.length, 'resource')}` : ''}{m.availableUntil ? ` · available until ${formatDateTime(m.availableUntil)}` : ''}
