@@ -99,7 +99,7 @@ const schema = z.object({
   S3_ENDPOINT: z.string().url().optional(),
   S3_ACCESS_KEY_ID: optionalString,
   S3_SECRET_ACCESS_KEY: optionalString,
-  S3_PREFIX: z.string().default('edusphere'),
+  S3_PREFIX: z.string().default('discenda'),
   S3_FORCE_PATH_STYLE: bool(true),
   /** Largest single upload. Default 25; 4 when SERVERLESS (Vercel refuses request bodies over 4.5 MB). */
   MAX_UPLOAD_MB: z.coerce.number().positive().max(500).optional(),
@@ -123,7 +123,7 @@ const schema = z.object({
   SMTP_SECURE: bool(false),
   SMTP_USER: optionalString,
   SMTP_PASS: optionalString,
-  MAIL_FROM: z.string().default('EduSphere <no-reply@edusphere.local>'),
+  MAIL_FROM: z.string().default('Discenda <no-reply@discenda.local>'),
 
   /** Map tiles shown in the attendance geofence picker (Leaflet URL template). */
   MAP_TILE_URL: z.string().default('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
@@ -255,7 +255,7 @@ const normalizeVapidSubject = (subject, appUrl) => {
   } catch {
     // Fallback below
   }
-  return 'mailto:admin@edusphere.local';
+  return 'mailto:admin@discenda.local';
 };
 
 const vapidPublicKey = normalizeVapidKey(raw.VAPID_PUBLIC_KEY);
@@ -313,7 +313,7 @@ export const env = Object.freeze({
       : null,
   // Relative paths are relative to the backend folder, whatever the working directory is.
   // A function may write only below the system's temporary folder.
-  storageDir: path.resolve(backendRoot, raw.STORAGE_DIR ?? (serverless ? path.join(os.tmpdir(), 'edusphere') : 'storage')),
+  storageDir: path.resolve(backendRoot, raw.STORAGE_DIR ?? (serverless ? path.join(os.tmpdir(), 'discenda') : 'storage')),
   maxUploadBytes: Math.round(maxUploadMb * 1024 * 1024),
   /** The web app shrinks photos above this size before sending them. 0 = it never does. */
   reducePhotosOverBytes: Math.round(reducePhotosOverMb * 1024 * 1024),

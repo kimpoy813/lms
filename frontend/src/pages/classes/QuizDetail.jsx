@@ -194,7 +194,7 @@ function StudentView({ quiz }) {
 function readQuizSyncTargets(quizId) {
   if (typeof window === 'undefined' || !window.sessionStorage) return [];
   try {
-    const raw = window.sessionStorage.getItem(`edusphere.quizSync.${quizId}`);
+    const raw = window.sessionStorage.getItem(`discenda.quizSync.${quizId}`);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -206,7 +206,7 @@ function readQuizSyncTargets(quizId) {
 function clearQuizSyncTargets(quizId) {
   if (typeof window === 'undefined' || !window.sessionStorage) return;
   try {
-    window.sessionStorage.removeItem(`edusphere.quizSync.${quizId}`);
+    window.sessionStorage.removeItem(`discenda.quizSync.${quizId}`);
   } catch {
     /* ignore */
   }

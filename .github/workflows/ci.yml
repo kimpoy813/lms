@@ -1,4 +1,4 @@
-name: EduSphere CI
+name: Discenda CI
 
 on:
   pull_request:

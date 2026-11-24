@@ -175,7 +175,7 @@ export const STARTUP_REPORT_PARAM = 'startup-report';
  * @param {string} secret
  */
 export function startupReportToken(secret) {
-  return createHmac('sha256', secret).update('edusphere start-up report').digest('base64url');
+  return createHmac('sha256', secret).update('discenda start-up report').digest('base64url');
 }
 
 function asksForReport(req, token) {
@@ -225,7 +225,7 @@ export function createFunctionHandler({ load, reportSecret, loadedWith }) {
     .then(
       (app) => ({ app }),
       (error) => {
-        console.error('EduSphere could not start:', error);
+        console.error('Discenda could not start:', error);
         return { error };
       },
     );

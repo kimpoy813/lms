@@ -1,8 +1,8 @@
 {
-  "name": "edusphere",
+  "name": "discenda",
   "version": "0.1.0",
   "private": true,
-  "description": "EduSphere — all-in-one Learning Management System for colleges and universities",
+  "description": "Discenda — all-in-one Learning Management System for colleges and universities",
   "type": "module",
   "workspaces": [
     "backend",

@@ -1164,7 +1164,7 @@ async function sendReportCard(res, student, { format, semesterId, includeDropped
   await sendTable(res, format, {
     filename: `report-card-${student.studentProfile?.studentNumber || student.lastName || 'student'}`,
     title: `Student Report Card — ${fullName(student)}`,
-    subtitle: `${institution || 'EduSphere'} · ${termLabel}`,
+    subtitle: `${institution || 'Discenda'} · ${termLabel}`,
     meta: [
       ...(profileParts.length > 0 ? [profileParts.join(' · ')] : []),
       `Generated ${dateKey(new Date(), tz)} (${tz})`,

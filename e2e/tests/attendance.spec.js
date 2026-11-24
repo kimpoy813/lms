@@ -55,7 +55,7 @@ test('a student who is far away is refused and told the distance', async ({ brow
 });
 
 test('a student who does not share a location is refused', async ({ browser }) => {
-  const { page, context } = await checkIn(browser, 'student3@edusphere.demo', null);
+  const { page, context } = await checkIn(browser, 'student3@discenda.demo', null);
   await expect(page.getByText(/You are checked in|Checked in — late/)).toHaveCount(0);
   await expect(page.getByText(/location/i).first()).toBeVisible({ timeout: 30_000 });
   await context.close();

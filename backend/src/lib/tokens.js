@@ -12,7 +12,7 @@ export const sha256 = (value) => createHash('sha256').update(value).digest('hex'
  * nothing but its own purpose.
  */
 export function operatorToken(secret, purpose) {
-  return createHmac('sha256', String(secret)).update(`edusphere ${purpose}`).digest('base64url');
+  return createHmac('sha256', String(secret)).update(`discenda ${purpose}`).digest('base64url');
 }
 
 /** Constant-time string comparison. */

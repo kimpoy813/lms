@@ -58,7 +58,7 @@ function ensureDatabaseClient() {
 
 export default async function setup(project) {
   ensureDatabaseClient();
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'edusphere-test-'));
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'discenda-test-'));
   let embedded = null;
   let adminUrl = process.env.TEST_DATABASE_URL;
 
@@ -80,7 +80,7 @@ export default async function setup(project) {
     adminUrl = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
   }
 
-  const database = `edusphere_test_${process.pid}_${Date.now()}`;
+  const database = `discenda_test_${process.pid}_${Date.now()}`;
   const admin = new pg.Client(pgOptionsFromUrl(adminUrl));
   await admin.connect();
   await admin.query(`CREATE DATABASE "${database}"`);

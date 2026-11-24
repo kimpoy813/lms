@@ -123,7 +123,7 @@ export function createRuntime(pyodide, harnessSource, { onOverflow, onWrite } = 
 
   // The built-in exec, called from here so that the program has no frame of the harness below it.
   const pyExec = pyodide.runPython('__import__("builtins").exec');
-  const namespace = pyodide.runPython('dict(__name__="edusphere_harness")');
+  const namespace = pyodide.runPython('dict(__name__="discenda_harness")');
   pyodide.runPython(harnessSource, { globals: namespace, filename: 'harness.py' });
   const pyCheck = namespace.get('check');
   const pyBegin = namespace.get('begin');

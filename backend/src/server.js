@@ -30,7 +30,7 @@ async function main() {
   if (env.schedulerEnabled) startScheduler();
 
   server.listen(env.port, env.host, () => {
-    logger.info(`EduSphere API listening on http://${env.host}:${env.port} (${env.nodeEnv})`);
+    logger.info(`Discenda API listening on http://${env.host}:${env.port} (${env.nodeEnv})`);
     if (env.demoAccountsEnabled) logger.info('Demo accounts are ENABLED (non-production mode).');
     if (!env.realtime) logger.info('Real-time push is off; the web app refreshes its live screens on a timer.');
     if (env.storageDriver === 'database') logger.info('Uploaded files are kept in the database (STORAGE_DRIVER=database).');

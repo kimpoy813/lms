@@ -263,7 +263,7 @@ async function announce(quiz, cls) {
   await notify(await enrolledStudentIds(cls.id), {
     type: 'quiz.published',
     title: `New ${quiz.kind.toLowerCase()} in ${classLabel(cls)}: ${quiz.title}`,
-    body: `${parts.join(' · ')}. Open EduSphere to review details and start when ready.`,
+    body: `${parts.join(' · ')}. Open Discenda to review details and start when ready.`,
     link: `/classes/${cls.id}/quizzes/${quiz.id}`,
     classId: cls.id,
   });
@@ -1787,7 +1787,7 @@ const release = (publish) => async (req, res) => {
     await notify(takers.map((t) => t.studentId), {
       type: 'quiz.results',
       title: `Results are available: ${quiz.title}`,
-      body: `${classLabel(cls)} — open EduSphere to view your score and review.`,
+      body: `${classLabel(cls)} — open Discenda to view your score and review.`,
       link: `/classes/${cls.id}/quizzes/${quiz.id}`,
       classId: cls.id,
     });

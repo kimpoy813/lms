@@ -69,7 +69,7 @@ async function sendEmailCopies(userIds, notification) {
       text: notification.body ?? notification.title,
       title: notification.title,
       paragraphs: notification.body ? [notification.body] : [],
-      action: notification.link ? { label: 'Open in EduSphere', url: `${env.appUrl}${notification.link}` } : undefined,
+      action: notification.link ? { label: 'Open in Discenda', url: `${env.appUrl}${notification.link}` } : undefined,
     });
   }
   if (users.length > 0) {

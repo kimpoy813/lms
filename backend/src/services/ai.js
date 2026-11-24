@@ -2,7 +2,7 @@
 // (services/aiBuiltin.js), an OpenAI-compatible chat-completions API configured via env or
 // Administration -> Settings (services/aiConfig.js), or Vercel's AI Gateway.
 //
-// Design rules for every AI feature in EduSphere:
+// Design rules for every AI feature in Discenda:
 //   • Keys stay on the server; the browser never talks to the provider.
 //   • Nothing generated reaches students by itself. Output is stored as a DRAFT that a teacher
 //     has to review, can edit, and must approve explicitly.

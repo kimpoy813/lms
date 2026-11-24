@@ -1,5 +1,5 @@
 // Curated built-in programming problem templates with verified multi-language starter code
-// and exact sample/hidden stdin-stdout test cases for EduSphere's zero-key AI mode.
+// and exact sample/hidden stdin-stdout test cases for Discenda's zero-key AI mode.
 
 const STARTER_BOILERPLATE = {
   PYTHON: 'import sys\n\ndef main():\n    data = sys.stdin.read().strip().split()\n    if not data:\n        return\n    # TODO: compute and print the result\n\nif __name__ == "__main__":\n    main()\n',

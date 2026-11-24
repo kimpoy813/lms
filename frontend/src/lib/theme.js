@@ -1,7 +1,7 @@
 // Colour scheme: "light", "dark" or "system" (follow the device). Saved per browser.
 import { useSyncExternalStore } from 'react';
 
-const KEY = 'edusphere.theme';
+const KEY = 'discenda.theme';
 const subscribers = new Set();
 const media = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 

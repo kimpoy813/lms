@@ -39,7 +39,7 @@ describe('Academic workflows & Web Push API', () => {
     const res = await student.get(`/api/calendar/export.ics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/calendar');
-    expect(res.headers['content-disposition']).toContain('edusphere-calendar.ics');
+    expect(res.headers['content-disposition']).toContain('discenda-calendar.ics');
     expect(res.text).toContain('BEGIN:VCALENDAR');
     expect(res.text).toContain('Published Lab');
     expect(res.text).toContain('Foundation Day');
@@ -193,7 +193,7 @@ describe('Academic workflows & Web Push API', () => {
       configured: true,
       publicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U',
       privateKey: 'UUxI4O8-FbRouAevSmBQ6o18hgE4nSG3qwvJTfKc-ls',
-      subject: 'mailto:test@edusphere.local',
+      subject: 'mailto:test@discenda.local',
     });
 
     try {
@@ -275,7 +275,7 @@ describe('Academic workflows & Web Push API', () => {
       configured: true,
       publicKey: keys.publicKey,
       privateKey: keys.privateKey,
-      subject: 'https://edusphere.example.edu',
+      subject: 'https://discenda.example.edu',
     });
     const endpoint = `https://push.example.com/sub/${uid('dm')}`;
     await student.post('/api/notifications/push/subscribe', {

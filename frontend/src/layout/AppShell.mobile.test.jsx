@@ -12,7 +12,7 @@ Element.prototype.scrollIntoView ??= () => {};
 const { authState, mockFetchBadges, mockApiGet } = vi.hoisted(() => ({
   authState: {
     user: { id: 'u1', role: 'STUDENT', name: 'Ana Reyes', email: 'ana@school.edu' },
-    settings: { 'institution.name': 'EduSphere Demo' },
+    settings: { 'institution.name': 'Discenda Demo' },
     runtime: { realtime: false },
     logout: vi.fn(),
   },

@@ -1,4 +1,4 @@
-// The first days of a school on EduSphere: what an administrator, a teacher and a student meet
+// The first days of a school on Discenda: what an administrator, a teacher and a student meet
 // before any routine exists. Every test here stands for something that went wrong, or was
 // missing, when a new installation was walked through by hand.
 import { expect, test } from '@playwright/test';
@@ -22,7 +22,7 @@ test('the administrator is guided through the set-up, and a step ticks itself wh
   const before = (await admin.get('/admin/settings')).values['institution.name'];
   try {
     // The demo school has teachers, classes and students. What it lacks is a name of its own.
-    await admin.patch('/admin/settings', { values: { 'institution.name': 'EduSphere University' } });
+    await admin.patch('/admin/settings', { values: { 'institution.name': 'Discenda University' } });
     await signIn(page, 'admin');
     const guide = page.getByRole('region', { name: 'Getting your school started' });
     await expect(guide).toContainText('6 of 7 steps done');

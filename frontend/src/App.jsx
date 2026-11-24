@@ -90,7 +90,7 @@ function Protected() {
   if (status === 'error') {
     return (
       <div className="grid min-h-dvh place-items-center">
-        <EmptyState title="Could not reach EduSphere" description={error?.message ?? 'Check your connection and try again.'} action={<Button onClick={refresh}>Try again</Button>} />
+        <EmptyState title="Could not reach Discenda" description={error?.message ?? 'Check your connection and try again.'} action={<Button onClick={refresh}>Try again</Button>} />
       </div>
     );
   }

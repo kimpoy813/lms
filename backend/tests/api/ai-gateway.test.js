@@ -44,7 +44,7 @@ vi.hoisted(() => {
   process.env.VERCEL_ENV = 'production';
   process.env.VERCEL_REGION = 'sin1';
   process.env.VERCEL_PROJECT_ID = 'prj_site';
-  process.env.VERCEL_PROJECT_PRODUCTION_URL = 'edusphere.example';
+  process.env.VERCEL_PROJECT_PRODUCTION_URL = 'discenda.example';
   process.env.AI_PROVIDER = 'vercel-ai-gateway';
   // Long enough for a second try after a short wait, short enough for the test of a service that never answers.
   process.env.AI_TIMEOUT_MS = '13000';

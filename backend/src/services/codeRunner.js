@@ -1,6 +1,6 @@
 // Code execution for programming exercises.
 //
-// EduSphere NEVER runs student code inside its own API process. Three backends are supported
+// Discenda NEVER runs student code inside its own API process. Three backends are supported
 // (CODE_RUNNER_PROVIDER):
 //   - "vercel-sandbox": a throw-away virtual machine per submission on the Vercel account the site
 //     is deployed to (services/judge/vercelSandbox.js). Nothing to host.

@@ -228,7 +228,7 @@ function PromptHelp() {
   const toggle = (type) => change({ types: options.types.includes(type) ? options.types.filter((t) => t !== type) : [...options.types, type] });
   return (
     <>
-      <p>Use any chat assistant you have, such as ChatGPT, Gemini, Copilot or Claude. EduSphere sends nothing to it: you copy a request, give it to the assistant together with your lesson, and paste what it answers into the box above.</p>
+      <p>Use any chat assistant you have, such as ChatGPT, Gemini, Copilot or Claude. Discenda sends nothing to it: you copy a request, give it to the assistant together with your lesson, and paste what it answers into the box above.</p>
       <div className="grid gap-3 sm:grid-cols-[8rem_10rem_1fr]">
         <Field label="How many"><Input type="number" min="1" max="100" value={options.count} onChange={(e) => change({ count: e.target.value })} onBlur={() => change({ count: questionCount(options.count) })} /></Field>
         <Field label="Difficulty"><Select value={options.difficulty} onChange={(e) => change({ difficulty: e.target.value })}>{DIFFICULTY_CHOICES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}</Select></Field>

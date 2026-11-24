@@ -3,10 +3,10 @@ import { expect, request } from '@playwright/test';
 
 export const PASSWORD = process.env.E2E_PASSWORD ?? 'Demo-Pass-2026';
 export const ACCOUNTS = {
-  admin: 'admin@edusphere.demo',
-  teacher: 'teacher@edusphere.demo',
-  student: 'student@edusphere.demo',
-  student2: 'student2@edusphere.demo',
+  admin: 'admin@discenda.demo',
+  teacher: 'teacher@discenda.demo',
+  student: 'student@discenda.demo',
+  student2: 'student2@discenda.demo',
 };
 /** The classroom used by the attendance tests (Angeles City). */
 export const CLASSROOM = { latitude: 15.145, longitude: 120.5887 };

@@ -232,7 +232,7 @@ async function announce(assignment, cls) {
   await notify(await enrolledStudentIds(cls.id), {
     type: 'assignment.published',
     title: `New assignment in ${classLabel(cls)}: ${assignment.title}`,
-    body: desc ? `${parts.join(' · ')} — ${desc}` : `${parts.join(' · ')}. Open EduSphere to view instructions and submit.`,
+    body: desc ? `${parts.join(' · ')} — ${desc}` : `${parts.join(' · ')}. Open Discenda to view instructions and submit.`,
     link: `/classes/${cls.id}/assignments/${assignment.id}`,
     classId: cls.id,
   });

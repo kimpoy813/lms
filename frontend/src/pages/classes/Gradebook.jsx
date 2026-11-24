@@ -485,7 +485,7 @@ function ItemDialog({ item, period, structure, invalidate, onDelete, onClose }) 
           ? 'Linked to an assignment in this class.'
           : isQuiz
             ? 'Linked to a quiz in this class.'
-            : 'For work scored outside EduSphere — recitation, a paper quiz, a project defence.'
+            : 'For work scored outside Discenda — recitation, a paper quiz, a project defence.'
       }
       footer={(
         <div className="flex w-full flex-wrap items-center gap-2">

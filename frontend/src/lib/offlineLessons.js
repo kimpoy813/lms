@@ -3,8 +3,8 @@
 // CacheStorage bucket without relaxing sw.js's network-only guard for /api/* requests.
 import { fileUrl } from './api.js';
 
-const OFFLINE_CACHE = 'edusphere-offline-lessons-v1';
-const STORAGE_PREFIX = 'edusphere.offlineLessons';
+const OFFLINE_CACHE = 'discenda-offline-lessons-v1';
+const STORAGE_PREFIX = 'discenda.offlineLessons';
 const MAX_CACHE_FILE_BYTES = 15 * 1024 * 1024;
 
 function storageKey(userId) {

@@ -25,7 +25,7 @@ describe('migrations', () => {
 
   beforeAll(async () => {
     // These tests run SQL of their own: only ever against the throw-away database of this run.
-    expect(new URL(url).pathname).toMatch(/^\/edusphere_test_/);
+    expect(new URL(url).pathname).toMatch(/^\/discenda_test_/);
     client = new pg.Client(pgOptionsFromUrl(url));
     await client.connect();
     await client.query(`CREATE SCHEMA "${schema}"`);

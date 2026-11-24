@@ -100,6 +100,6 @@ export async function buildDocumentDocx({ title, subtitle, blocks, footer }) {
     }
   }
   if (footer) children.push(new Paragraph({ children: [new TextRun({ text: footer, color: '888888', size: 17 })], alignment: AlignmentType.CENTER, spacing: { before: 400 } }));
-  const doc = new Document({ creator: 'EduSphere', title, styles: { default: { document: { run: { font: 'Calibri', size: 22 } } } }, sections: [{ children }] });
+  const doc = new Document({ creator: 'Discenda', title, styles: { default: { document: { run: { font: 'Calibri', size: 22 } } } }, sections: [{ children }] });
   return Packer.toBuffer(doc);
 }

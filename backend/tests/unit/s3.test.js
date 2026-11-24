@@ -8,7 +8,7 @@ describe('S3 / Cloudflare R2 SigV4 helpers', () => {
     globalThis.fetch = originalFetch;
   });
   const r2 = {
-    bucket: 'edusphere-uploads',
+    bucket: 'discenda-uploads',
     region: 'auto',
     endpoint: 'https://acct123.r2.cloudflarestorage.com',
     accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
@@ -20,7 +20,7 @@ describe('S3 / Cloudflare R2 SigV4 helpers', () => {
   it('builds path-style URLs for Cloudflare R2 and virtual-hosted URLs for AWS S3', () => {
     expect(objectKeyWithPrefix('school-1', 'files/ab/cd')).toBe('school-1/files/ab/cd');
     expect(buildS3Url(r2, 'files/ab/abcd').toString()).toBe(
-      'https://acct123.r2.cloudflarestorage.com/edusphere-uploads/school-1/files/ab/abcd',
+      'https://acct123.r2.cloudflarestorage.com/discenda-uploads/school-1/files/ab/abcd',
     );
 
     const aws = {
@@ -59,7 +59,7 @@ describe('S3 / Cloudflare R2 SigV4 helpers', () => {
       }),
     );
 
-    expect(signedUrl.pathname).toBe('/edusphere-uploads/school-1/files/aa/sample.pdf');
+    expect(signedUrl.pathname).toBe('/discenda-uploads/school-1/files/aa/sample.pdf');
     expect(signedUrl.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
     expect(signedUrl.searchParams.get('X-Amz-Expires')).toBe('600');
     expect(signedUrl.searchParams.get('X-Amz-SignedHeaders')).toBe('content-type;host');

@@ -112,7 +112,7 @@ function Form({ existing, onSaved, onCancel }) {
       <fieldset className="space-y-4 rounded-xl border border-line p-4">
         <legend className="px-1 text-sm font-medium text-ink">What students hand in</legend>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Switch checked={v.allowText} onChange={(on) => set('allowText', on)} label="Typed answer" description="Students write directly in EduSphere." />
+          <Switch checked={v.allowText} onChange={(on) => set('allowText', on)} label="Typed answer" description="Students write directly in Discenda." />
           <Switch checked={v.allowFiles} onChange={(on) => set('allowFiles', on)} label="File uploads" description="Documents, pictures or a ZIP file." />
         </div>
         {!v.allowText && !v.allowFiles && <p className="text-[13px] text-warn">With both switched off, students cannot hand in anything online — use this for work collected in class.</p>}

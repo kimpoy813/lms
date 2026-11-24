@@ -61,7 +61,7 @@ const COMMON_PASSWORDS = new Set([
   'password', 'password1', 'password12', 'password123', 'password1234', 'passw0rd', 'p@ssw0rd', 'p@ssword1',
   '1234567890', '12345678910', '0123456789', '9876543210', 'qwertyuiop', 'qwerty12345', 'qwerty123456',
   '1q2w3e4r5t', '1qaz2wsx3edc', 'iloveyou123', 'administrator', 'letmein12345', 'welcome12345',
-  'changeme123', 'abcdefghij', 'abc1234567', 'aaaaaaaaaa', '1111111111', '0000000000', 'edusphere123',
+  'changeme123', 'abcdefghij', 'abc1234567', 'aaaaaaaaaa', '1111111111', '0000000000', 'discenda123',
 ]);
 
 /**

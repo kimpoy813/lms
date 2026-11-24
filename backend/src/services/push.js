@@ -22,23 +22,23 @@ const HIGH_URGENCY_TYPES = new Set([
 ]);
 
 const EMPTY_BODY_FALLBACKS = {
-  'module.published': 'A new learning module is ready to read in EduSphere.',
-  'assignment.published': 'Open EduSphere to review the assignment details and submit.',
-  'assignment.updated': 'Open EduSphere to view the updated assignment deadline.',
-  'assignment.returned': 'Open EduSphere to view your score and feedback.',
-  'quiz.published': 'Open EduSphere to view quiz instructions and availability.',
-  'quiz.results': 'Open EduSphere to check your quiz score and review.',
-  'grades.published': 'Open EduSphere to view your posted grades.',
-  'grades.finalized': 'Open EduSphere to view your final grade breakdown.',
-  'grade.appeal': 'Open EduSphere to review the student grade inquiry.',
-  'grade.appeal.resolved': 'Open EduSphere to view your teacher’s response.',
-  'enrollment.approved': 'Open EduSphere to access your class modules and coursework.',
-  'enrollment.joined': 'Open EduSphere to view the updated class roster.',
-  'enrollment.requested': 'Open EduSphere to review the pending enrollment request.',
-  'enrollment.transferred': 'Open EduSphere to view your updated class enrollment.',
-  'enrollment.dropped': 'Open EduSphere to view your class enrollment details.',
-  'enrollment.removed': 'Open EduSphere to view your class enrollment details.',
-  'message.new': 'Open EduSphere to read the message.',
+  'module.published': 'A new learning module is ready to read in Discenda.',
+  'assignment.published': 'Open Discenda to review the assignment details and submit.',
+  'assignment.updated': 'Open Discenda to view the updated assignment deadline.',
+  'assignment.returned': 'Open Discenda to view your score and feedback.',
+  'quiz.published': 'Open Discenda to view quiz instructions and availability.',
+  'quiz.results': 'Open Discenda to check your quiz score and review.',
+  'grades.published': 'Open Discenda to view your posted grades.',
+  'grades.finalized': 'Open Discenda to view your final grade breakdown.',
+  'grade.appeal': 'Open Discenda to review the student grade inquiry.',
+  'grade.appeal.resolved': 'Open Discenda to view your teacher’s response.',
+  'enrollment.approved': 'Open Discenda to access your class modules and coursework.',
+  'enrollment.joined': 'Open Discenda to view the updated class roster.',
+  'enrollment.requested': 'Open Discenda to review the pending enrollment request.',
+  'enrollment.transferred': 'Open Discenda to view your updated class enrollment.',
+  'enrollment.dropped': 'Open Discenda to view your class enrollment details.',
+  'enrollment.removed': 'Open Discenda to view your class enrollment details.',
+  'message.new': 'Open Discenda to read the message.',
 };
 
 export function pushConfigured() {
@@ -61,18 +61,18 @@ function ensureVapid() {
 }
 
 export function buildPushPayload(notification = {}) {
-  const title = String(notification.title ?? 'EduSphere').trim().slice(0, 120) || 'EduSphere';
+  const title = String(notification.title ?? 'Discenda').trim().slice(0, 120) || 'Discenda';
   const rawBody = notification.body ? String(notification.body).trim().slice(0, 300) : '';
-  const body = rawBody || EMPTY_BODY_FALLBACKS[notification.type] || 'Open EduSphere to view details.';
+  const body = rawBody || EMPTY_BODY_FALLBACKS[notification.type] || 'Open Discenda to view details.';
   const tag = notification.tag
     ? String(notification.tag).slice(0, 80)
-    : `${notification.type ?? 'edusphere'}-${notification.id ?? randomUUID().slice(0, 8)}`;
+    : `${notification.type ?? 'discenda'}-${notification.id ?? randomUUID().slice(0, 8)}`;
 
   return JSON.stringify({
     title,
     body,
     link: notification.link ?? '/notifications',
-    type: notification.type ?? 'edusphere-notification',
+    type: notification.type ?? 'discenda-notification',
     tag,
     timestamp: Date.now(),
   });

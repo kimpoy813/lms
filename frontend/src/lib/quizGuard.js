@@ -17,7 +17,7 @@
 import { api } from './api.js';
 
 // ── Reports that the server has not answered yet ─────────────────────────────
-const STORE_KEY = 'edusphere.quiz.reports.v1';
+const STORE_KEY = 'discenda.quiz.reports.v1';
 let memory = {}; // used when the browser offers no storage (some private windows)
 
 function readAll() {

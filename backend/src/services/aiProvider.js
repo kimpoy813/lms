@@ -31,7 +31,7 @@ export const VERCEL_FREE_TIER_MODELS = 'https://vercel.com/ai-gateway/models?fre
  * the likely models, and "Check now" under Administration → Settings says whether this one answers.
  */
 export const DEFAULT_GATEWAY_MODEL = 'meta/muse-ember';
-export const BUILTIN_MODEL = 'edusphere-builtin-v1';
+export const BUILTIN_MODEL = 'discenda-builtin-v1';
 
 const OPENAI_URL = 'https://api.openai.com/v1';
 const OPENAI_MODEL = 'gpt-4o-mini';

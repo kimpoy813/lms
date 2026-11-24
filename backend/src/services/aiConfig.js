@@ -21,7 +21,7 @@ export function invalidateAiConfigCache() {
 }
 
 function deriveKey(material) {
-  return createHmac('sha256', String(material)).update('edusphere:ai-config:v1').digest();
+  return createHmac('sha256', String(material)).update('discenda:ai-config:v1').digest();
 }
 
 function candidateKeys() {

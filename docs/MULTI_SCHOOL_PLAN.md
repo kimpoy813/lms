@@ -1,6 +1,6 @@
 # Multi-School SaaS, PayMongo Billing & Superadmin Blueprint
 
-This document is the concrete architecture and rollout blueprint for evolving **EduSphere** from its
+This document is the concrete architecture and rollout blueprint for evolving **Discenda** from its
 current **single-institution deployment** into a **multi-school SaaS platform** tailored for
 Philippine schools, colleges, and review centers — supporting:
 
@@ -28,7 +28,7 @@ Philippine schools, colleges, and review centers — supporting:
 
 ## 2. Philippine Plan Tiers, Seat Caps & Storage Quotas
 
-These tiers are sized to cover EduSphere's real infrastructure costs (**Vercel Serverless**, **Neon
+These tiers are sized to cover Discenda's real infrastructure costs (**Vercel Serverless**, **Neon
 PostgreSQL**, **Cloudflare R2 / S3**, **Vercel Sandbox**, and optional **AI keys**) while offering an
 accessible free entry tier for small Philippine schools and pilot departments.
 
@@ -41,19 +41,19 @@ accessible free entry tier for small Philippine schools and pilot departments.
 | **Active Classes** | Up to **15** *(archived allowed)* | Up to **80** | **Unlimited** |
 | **File Storage Quota** | **250 MB** *(fits PostgreSQL `FileBlob`)* | **5 GB** *(Cloudflare R2 / S3)* | **25 GB** *(Cloudflare R2 / S3)* |
 | **Max Upload per File** | **4 MB** | **15 MB** *(presigned R2 upload)* | **25 MB** *(presigned R2 upload)* |
-| **AI Studio & Study Coach** | Built-in zero-key AI (`edusphere-builtin-v1`), **15 req/teacher/day** | Built-in AI (**50 req/teacher/day**) + **School-owned BYO LLM key** | Built-in AI (**150 req/teacher/day**) + **School-owned BYO LLM key** |
+| **AI Studio & Study Coach** | Built-in zero-key AI (`discenda-builtin-v1`), **15 req/teacher/day** | Built-in AI (**50 req/teacher/day**) + **School-owned BYO LLM key** | Built-in AI (**150 req/teacher/day**) + **School-owned BYO LLM key** |
 | **Browser Python (Pyodide)** | Included (runs on student device) | Included | Included |
 | **Server Code Sandbox (`C/C++/Java/JS/Py`)** | Disabled or **50 runs/day/school** | **1,000 runs/day/school** | **5,000 runs/day/school** |
-| **School Address** | Shared path `/s/<slug>` | Shared path or `<slug>.edusphere.ph` | Custom domain (`lms.yourschool.edu.ph`) |
+| **School Address** | Shared path `/s/<slug>` | Shared path or `<slug>.discenda.ph` | Custom domain (`lms.yourschool.edu.ph`) |
 | **Support & Onboarding** | Self-service + docs | Email support + Superadmin setup | Priority onboarding + CSV bulk setup + PO/Cheque invoicing |
 
 ### Why These Storage & Compute Limits Matter
-1. **Why `FREE` caps storage at 250 MB:** EduSphere currently supports `STORAGE_DRIVER=database`
+1. **Why `FREE` caps storage at 250 MB:** Discenda currently supports `STORAGE_DRIVER=database`
    (`FileBlob` bytea rows in PostgreSQL). Keeping free schools under 250 MB prevents 50 free schools
    from exhausting Neon database storage. Moving `PRO` and `CAMPUS` files to **Cloudflare R2 / S3**
    (a third backend in `backend/src/services/storage.js`) brings object storage cost down to ~₱1/GB/mo
    with zero egress fees and bypasses Vercel's 4.5 MB function payload limit via presigned uploads.
-2. **Why `FREE` uses built-in AI + browser Pyodide:** Neither `edusphere-builtin-v1` nor browser-side
+2. **Why `FREE` uses built-in AI + browser Pyodide:** Neither `discenda-builtin-v1` nor browser-side
    Pyodide costs external API tokens or Sandbox VM minutes, letting you offer a genuinely useful free
    tier at near-zero marginal cost.
 3. **Seat counting rule:** Count `User` rows where `schoolId = X AND status IN ('ACTIVE', 'PENDING') AND anonymizedAt IS NULL`. Deactivated/graduated accounts should not block next year's incoming freshmen.
@@ -62,7 +62,7 @@ accessible free entry tier for small Philippine schools and pilot departments.
 
 ## 3. PayMongo Integration & Self-Service School Signup Flow
 
-EduSphere already defaults to `Asia/Manila` and follows **RA 10173 (Philippine Data Privacy Act)**.
+Discenda already defaults to `Asia/Manila` and follows **RA 10173 (Philippine Data Privacy Act)**.
 **PayMongo** is the ideal Philippine payment gateway because it supports zero monthly fees (pay-as-you-go),
 **QR Ph** (~1.34% + VAT), **Maya** (~1.79% + VAT), **GCash** (~2.23% + VAT), **Online Banking**
 (BDO, BPI, UnionBank, Metrobank, Landbank), and **Visa/Mastercard** (~3.125% + ₱13.39 + VAT).
@@ -155,7 +155,7 @@ When signed in as `SUPER_ADMIN`, the sidebar displays a dedicated platform conso
 * **Schools Directory:** Plan badge, seat meters (`312 / 600 students`), storage meter (`1.2 / 5 GB`),
   status pill (`ACTIVE`, `TRIAL`, `PAST_DUE`, `SUSPENDED`), and quick actions.
 * **"Create School & Admin" Wizard:** One screen returning:
-  * School login URL: `https://edusphere-sigma-two.vercel.app/s/<slug>/login`
+  * School login URL: `https://discenda-sigma-two.vercel.app/s/<slug>/login`
   * Admin email + invite status (or copyable one-time temporary password if SMTP is disabled).
 * **Billing & Subscriptions:** View PayMongo transactions + log manual bank/PO payments.
 
@@ -265,7 +265,7 @@ model BillingEvent {
 }
 ```
 
-### 5.2 Scoping Existing EduSphere Models by `schoolId`
+### 5.2 Scoping Existing Discenda Models by `schoolId`
 Add `schoolId` (nullable only on `User` and `AuditLog` for `SUPER_ADMIN`, non-null after backfill
 on all school-owned models):
 * **Identity & Settings:**
@@ -282,7 +282,7 @@ on all school-owned models):
   * `ClassroomLocation`, `QuestionBank`, `Rubric`, `AIGenerationUsage`, `AuditLog`.
 * **Email Uniqueness Design Choice (Recommended):**
   * **Keep `User.email` globally unique (`@unique`) in Phase 1**, while still offering branded
-    school URLs (`/s/:schoolSlug/login`) and hostname routing (`ispsc.edusphere.ph`).
+    school URLs (`/s/:schoolSlug/login`) and hostname routing (`ispsc.discenda.ph`).
   * Why: users logging in at `/` only type their email and password without needing to remember a
     school code — the backend resolves `user.schoolId` automatically after login!
 

@@ -17,7 +17,7 @@ export default function AuthLayout({ title, subtitle, children, footer }) {
         <div className="pointer-events-none absolute -bottom-32 right-0 size-[28rem] rounded-full bg-[#0ea5e9]/25 blur-3xl" />
         <div className="relative flex items-center gap-3">
           <img src="/favicon.svg" alt="" className="size-10 rounded-xl ring-1 ring-white/20" />
-          <span className="text-xl font-bold tracking-tight">EduSphere</span>
+          <span className="text-xl font-bold tracking-tight">Discenda</span>
         </div>
         <div className="relative max-w-md">
           <h2 className="text-[2rem] font-bold leading-tight tracking-tight text-balance">One place for classes, attendance and grades.</h2>
@@ -38,7 +38,7 @@ export default function AuthLayout({ title, subtitle, children, footer }) {
 
       <main className="flex min-h-dvh flex-col justify-center px-5 py-10 sm:px-10">
         <div className="mx-auto w-full max-w-[26rem]">
-          <Link to="/login" className="mb-8 inline-block lg:hidden" aria-label="EduSphere"><Logo /></Link>
+          <Link to="/login" className="mb-8 inline-block lg:hidden" aria-label="Discenda"><Logo /></Link>
           <h1 className="text-[1.7rem] font-bold tracking-tight text-ink">{title}</h1>
           {subtitle && <p className="mt-1.5 text-sm leading-relaxed text-soft">{subtitle}</p>}
           <div className="mt-7">{children}</div>

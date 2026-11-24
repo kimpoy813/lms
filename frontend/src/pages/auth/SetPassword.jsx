@@ -38,7 +38,7 @@ export default function SetPassword({ mode }) {
     );
   }
   return (
-    <AuthLayout title={invite ? 'Set up your account' : 'Choose a new password'} subtitle={invite ? 'Choose a password to finish creating your EduSphere account.' : 'After saving, every device signed in to your account is signed out.'} footer={<Link to="/login" className="font-semibold text-brand hover:underline">Back to sign in</Link>}>
+    <AuthLayout title={invite ? 'Set up your account' : 'Choose a new password'} subtitle={invite ? 'Choose a password to finish creating your Discenda account.' : 'After saving, every device signed in to your account is signed out.'} footer={<Link to="/login" className="font-semibold text-brand hover:underline">Back to sign in</Link>}>
       <form onSubmit={submit} className="space-y-4" noValidate>
         {(errors.form || errors.token) && (
           <Alert tone="bad" title={errors.form ?? errors.token}>

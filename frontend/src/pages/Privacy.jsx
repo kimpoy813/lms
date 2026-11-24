@@ -61,7 +61,7 @@ export default function Privacy() {
       </header>
       <main className="mx-auto max-w-3xl px-5 py-10">
         <h1 className="text-3xl font-bold tracking-tight text-ink">Privacy notice</h1>
-        <p className="mt-2 text-soft">How EduSphere handles personal data on behalf of your school.</p>
+        <p className="mt-2 text-soft">How Discenda handles personal data on behalf of your school.</p>
         <div className="mt-8 space-y-8">
           {SECTIONS.map(([heading, items]) => (
             <section key={heading}>

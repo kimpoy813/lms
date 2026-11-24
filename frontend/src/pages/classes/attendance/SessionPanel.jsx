@@ -187,7 +187,7 @@ function QrImage({ qr, className }) {
   if (qr.error && !qr.dataUrl) return <div className={cn('grid place-items-center rounded-2xl bg-raised p-6 text-center text-sm text-bad', className)}>{qr.error}</div>;
   if (!qr.dataUrl) return <div className={cn('animate-pulse rounded-2xl bg-raised', className)} />;
   // The code is always dark-on-white so that phone cameras read it in both colour themes.
-  return <img src={qr.dataUrl} alt="QR code for attendance. Students scan it with the EduSphere check-in page or their phone camera." className={cn('rounded-2xl bg-white p-2', className)} />;
+  return <img src={qr.dataUrl} alt="QR code for attendance. Students scan it with the Discenda check-in page or their phone camera." className={cn('rounded-2xl bg-white p-2', className)} />;
 }
 
 function Rotation({ qr }) {
@@ -210,7 +210,7 @@ function QrCard({ session, onProject }) {
       </div>
       <QrImage qr={qr} className="aspect-square w-full max-w-[19rem]" />
       <div className="mt-4 flex w-full flex-col items-center gap-2"><Rotation qr={qr} /></div>
-      <p className="mt-3 text-[13px] text-soft">Students open <strong className="font-semibold text-ink">Check in</strong> in EduSphere, or point their phone camera at the code.</p>
+      <p className="mt-3 text-[13px] text-soft">Students open <strong className="font-semibold text-ink">Check in</strong> in Discenda, or point their phone camera at the code.</p>
     </Card>
   );
 }

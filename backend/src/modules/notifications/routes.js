@@ -81,7 +81,7 @@ notificationsRouter.post('/push/test', async (req, res) => {
   if (!pushConfigured()) throw badRequest('Web Push notifications are not configured on this server.', 'PUSH_NOT_CONFIGURED');
   const result = await sendPushToUsers([req.user.id], {
     type: 'push.test',
-    title: 'EduSphere alerts are active',
+    title: 'Discenda alerts are active',
     body: 'You will receive grade, deadline, announcement, and attendance notifications on this device.',
     link: '/notifications',
   });

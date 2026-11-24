@@ -1,4 +1,4 @@
-// edusphere-judge-vm-runner
+// discenda-judge-vm-runner
 //
 // The program that compiles and runs ONE student's program inside a throw-away virtual machine.
 //
@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const RUNNER_VERSION = 1;
-export const RUNNER_MARKER = 'edusphere-judge-vm-runner';
+export const RUNNER_MARKER = 'discenda-judge-vm-runner';
 
 const SELF = fileURLToPath(import.meta.url);
 let ownText = null;
@@ -41,9 +41,9 @@ const COMPILE_MS = 20_000;
 const COMPILE_MEMORY = 1024 * MB;
 const RUN_USER = 'judge-run';
 /** Written by the image recipe when everything was installed (see services/judge/image.js). */
-export const IMAGE_MARKER_FILE = '/etc/edusphere-judge-image';
-export const REPORT_PREFIX = 'EDUSPHERE-JUDGE-REPORT ';
-const NOT_CONFINED = 'edusphere-judge: the program could not be placed inside its limits';
+export const IMAGE_MARKER_FILE = '/etc/discenda-judge-image';
+export const REPORT_PREFIX = 'DISCENDA-JUDGE-REPORT ';
+const NOT_CONFINED = 'discenda-judge: the program could not be placed inside its limits';
 const SAFE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 const megabytes = (bytes) => Math.max(16, Math.ceil(bytes / MB));
@@ -213,7 +213,7 @@ function setUpCgroup(box) {
         // The machine keeps its own processes in the top group, and the kernel does not hand
         // limits to child groups while that is so. Give those processes a group of their own
         // first, which is what container runtimes do in the same situation.
-        const home = path.join(root, 'edusphere-system');
+        const home = path.join(root, 'discenda-system');
         fs.mkdirSync(home, { recursive: true });
         for (let round = 0; round < 5; round += 1) {
           const pids = fs.readFileSync(path.join(root, 'cgroup.procs'), 'utf8').split('\n').filter(Boolean);
@@ -223,7 +223,7 @@ function setUpCgroup(box) {
         fs.writeFileSync(control, '+memory +pids');
       }
     }
-    const base = path.join(root, 'edusphere-judge');
+    const base = path.join(root, 'discenda-judge');
     for (const stale of quiet(() => fs.readdirSync(base, { withFileTypes: true })) ?? []) if (stale.isDirectory()) quiet(() => fs.rmdirSync(path.join(base, stale.name)));
     fs.mkdirSync(base, { recursive: true });
     fs.writeFileSync(path.join(base, 'cgroup.subtree_control'), '+memory +pids');

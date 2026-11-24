@@ -1,4 +1,4 @@
-name: EduSphere scheduled cron
+name: Discenda scheduled cron
 
 on:
   schedule:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: edusphere-cron
+  group: discenda-cron
   cancel-in-progress: false
 
 jobs:
@@ -19,10 +19,10 @@ jobs:
     name: Run /api/internal/cron
     runs-on: ubuntu-latest
     steps:
-      - name: Call EduSphere cron endpoint
+      - name: Call Discenda cron endpoint
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          APP_URL: ${{ vars.EDUSPHERE_APP_URL || 'https://edusphere-sigma-two.vercel.app' }}
+          APP_URL: ${{ vars.DISCENDA_APP_URL || 'https://discenda-sigma-two.vercel.app' }}
         run: |
           if [ -z "$CRON_SECRET" ]; then
             echo "Skipping: add CRON_SECRET under GitHub Settings -> Secrets and variables -> Actions to enable scheduled cron runs."

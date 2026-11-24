@@ -393,7 +393,7 @@ describe('the Vercel entry point', () => {
       expect(visitor.status).toBe(503);
       expect(visitor.headers['cache-control']).toBe('no-store');
       expect(visitor.body).toEqual({ error: { code: 'STARTUP_FAILED', message: 'The application could not start. The reason is in the function log.' } });
-      expect(logged).toHaveBeenCalledWith('EduSphere could not start:', failure);
+      expect(logged).toHaveBeenCalledWith('Discenda could not start:', failure);
 
       // A guess, and the secret itself, unlock nothing.
       for (const guess of ['x', 'the-cron-secret']) {

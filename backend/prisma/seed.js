@@ -21,7 +21,7 @@ const { syncPermissionCatalog } = await import('../src/services/permissions.js')
 const { ensureStorage } = await import('../src/services/storage.js');
 
 const DEMO_PASSWORD = 'Demo-Pass-2026';
-const DEMO_DOMAIN = 'edusphere.demo';
+const DEMO_DOMAIN = 'discenda.demo';
 const warnings = [];
 const log = (msg) => console.log(`  ${msg}`);
 

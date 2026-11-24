@@ -62,10 +62,10 @@ export async function sendVerificationEmail(user) {
   const token = await issueAuthToken(user.id, 'EMAIL_VERIFICATION');
   await sendMail({
     to: user.email,
-    subject: 'Verify your EduSphere e-mail address',
+    subject: 'Verify your Discenda e-mail address',
     title: 'Confirm your e-mail address',
-    text: `Hello ${user.firstName}, please confirm your e-mail address to finish setting up your EduSphere account.`,
-    paragraphs: [`Hello ${user.firstName},`, 'Please confirm your e-mail address to finish setting up your EduSphere account. The link is valid for 48 hours.'],
+    text: `Hello ${user.firstName}, please confirm your e-mail address to finish setting up your Discenda account.`,
+    paragraphs: [`Hello ${user.firstName},`, 'Please confirm your e-mail address to finish setting up your Discenda account. The link is valid for 48 hours.'],
     action: { label: 'Verify e-mail address', url: `${env.appUrl}/verify-email?token=${token}` },
   });
 }
@@ -74,10 +74,10 @@ export async function sendInviteEmail(user, invitedByName) {
   const token = await issueAuthToken(user.id, 'ACCOUNT_INVITE');
   await sendMail({
     to: user.email,
-    subject: 'Your EduSphere account is ready',
-    title: 'Set up your EduSphere account',
-    text: `Hello ${user.firstName}, an EduSphere account was created for you${invitedByName ? ` by ${invitedByName}` : ''}. Choose a password to start using it.`,
-    paragraphs: [`Hello ${user.firstName},`, `An EduSphere account was created for you${invitedByName ? ` by ${invitedByName}` : ''}. Choose a password to start using it. The link is valid for 7 days.`],
+    subject: 'Your Discenda account is ready',
+    title: 'Set up your Discenda account',
+    text: `Hello ${user.firstName}, an Discenda account was created for you${invitedByName ? ` by ${invitedByName}` : ''}. Choose a password to start using it.`,
+    paragraphs: [`Hello ${user.firstName},`, `An Discenda account was created for you${invitedByName ? ` by ${invitedByName}` : ''}. Choose a password to start using it. The link is valid for 7 days.`],
     action: { label: 'Choose a password', url: `${env.appUrl}/accept-invite?token=${token}` },
   });
   return token;
@@ -316,10 +316,10 @@ authRouter.post('/forgot-password', authLimiter, validate({ body: z.object({ ema
     const token = await issueAuthToken(user.id, 'PASSWORD_RESET');
     await sendMail({
       to: user.email,
-      subject: 'Reset your EduSphere password',
+      subject: 'Reset your Discenda password',
       title: 'Reset your password',
-      text: `Hello ${user.firstName}, we received a request to reset your EduSphere password. If you did not ask for this you can ignore this message.`,
-      paragraphs: [`Hello ${user.firstName},`, 'We received a request to reset your EduSphere password. The link below is valid for one hour and can be used once.', 'If you did not ask for this, you can safely ignore this message — your password stays the same.'],
+      text: `Hello ${user.firstName}, we received a request to reset your Discenda password. If you did not ask for this you can ignore this message.`,
+      paragraphs: [`Hello ${user.firstName},`, 'We received a request to reset your Discenda password. The link below is valid for one hour and can be used once.', 'If you did not ask for this, you can safely ignore this message — your password stays the same.'],
       action: { label: 'Choose a new password', url: `${env.appUrl}/reset-password?token=${token}` },
     });
     await audit({ user: null, ip: req.ip }, { action: 'auth.password_reset_requested', entityType: 'User', entityId: user.id, summary: 'Password reset requested' });

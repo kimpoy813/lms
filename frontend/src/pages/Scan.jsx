@@ -136,7 +136,7 @@ export default function Scan() {
             <Tabs className="mb-5" value={method} onChange={setMethod} tabs={[{ value: 'qr', label: 'Scan QR code', icon: QrCode }, { value: 'code', label: 'Type the code', icon: Hash }]} />
             {method === 'qr' ? (
               <Suspense fallback={<Skeleton className="aspect-square w-full rounded-2xl" />}>
-                <QrScanner onResult={(text) => { const token = tokenFrom(text); if (token) run({ token }); else setState({ stage: 'failed', code: 'QR_INVALID', message: 'That is not an EduSphere attendance code. Scan the code on your teacher’s screen.', retry: null }); }} />
+                <QrScanner onResult={(text) => { const token = tokenFrom(text); if (token) run({ token }); else setState({ stage: 'failed', code: 'QR_INVALID', message: 'That is not an Discenda attendance code. Scan the code on your teacher’s screen.', retry: null }); }} />
               </Suspense>
             ) : (
               <form onSubmit={(e) => { e.preventDefault(); if (code.length >= 4) run({ code }); }} className="space-y-4">

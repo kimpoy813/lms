@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// A quick check of a running EduSphere site in production mode: is the web app served, does the
+// A quick check of a running Discenda site in production mode: is the web app served, does the
 // API answer and reach the database, are the doors that must be closed really closed.
 //
 //   npm run smoke -- https://your-site.example
@@ -174,7 +174,7 @@ if (!email || !password) {
     if (session.json?.data && !session.json.data.user.mustChangePassword) {
       csrf = session.json.data.csrfToken;
       // A file: stored, read back whole and in part, removed.
-      const bytes = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(300_000, 'edusphere ')]);
+      const bytes = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(300_000, 'discenda ')]);
       const form = new FormData();
       form.append('files', new Blob([bytes], { type: 'application/pdf' }), 'smoke-check.pdf');
       const upload = await call('POST', '/api/files', { form });

@@ -72,7 +72,7 @@ The whole suite can be pointed at another way of running:
 
 The AI provider and the code judge are replaced by fakes inside the tests
 (`setAiTransport`, `setCodeRunnerTransport`, `setSandboxSdk`, and in `ai-gateway.test.js` a
-pretend service on the same computer), so those tests prove how EduSphere handles the answers —
+pretend service on the same computer), so those tests prove how Discenda handles the answers —
 not that a real provider or judge works. For the Vercel Sandbox judge that proof is a separate
 run against a real account ([below](#the-code-runner-against-a-real-account)); for the AI
 assistant there is none yet ([below](#the-ai-assistant-against-a-real-account)). Rate limits are off in tests unless a test
@@ -305,7 +305,7 @@ missing or invalid identity and answered `403` here, so the project's identity w
 valid way of asking; and what the gateway answers to an account without a card is known.
 
 **What has not been run:** a single request that a model answered. Everything about answers —
-that the drafts are usable, how long they take, what they cost, whether the model EduSphere asks
+that the drafts are usable, how long they take, what they cost, whether the model Discenda asks
 by default is covered by the free credit when the request is made — is tested against pretend
 services only. After a card is added, or a key of another service is set, "Check now" under
 Administration → Settings and the build log say whether the assistant answers.
