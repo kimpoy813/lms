@@ -67,8 +67,8 @@ export default function AiStudio() {
       {status.data && !ready && (
         <Alert tone="warn" className="mb-5" title="AI assistance is not set up on this server">
           {isAdmin
-            ? <>Enable the built-in free assistant or add a free Gemini / Groq API key in <Link className="font-medium underline" to="/admin/settings">Administration → Settings</Link> (no credit card or redeploy required).</>
-            : 'An administrator can enable the built-in free assistant or connect a free AI service under Settings. The forms below show what will be available once enabled.'}
+            ? <>Enable the built-in free assistant or add a free Gemini / Groq API key in <Link className="font-medium underline" to="/admin/settings">Administration → Settings</Link> (no credit card or redeploy required). You can still use the Module tool’s external AI prompt flow below without any AI service setup.</>
+            : 'An administrator can enable the built-in free assistant or connect a free AI service under Settings. You can still use the Module tool’s “Get prompt for external AI” option below without any AI service setup.'}
         </Alert>
       )}
       {ready && isBuiltin && (
@@ -85,7 +85,7 @@ export default function AiStudio() {
       {tool === 'rubric' && <RubricTool ready={ready} onDone={refreshQuota} />}
       {tool === 'programming' && <ProgrammingTool ready={ready} onDone={refreshQuota} />}
       {tool === 'assistant' && <AssistantTool ready={ready} onDone={refreshQuota} />}
-      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Only what you type, attach or choose here is sent to the AI service (for a module you choose: the text of its lessons) — never student names, scores or submissions.</p>
+      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Direct AI generation sends only what you type, attach or choose here to the configured AI service; the external AI prompt flow gives you a prompt to paste into an AI platform yourself. Never include student names, scores or submissions.</p>
     </>
   );
 }
@@ -100,19 +100,40 @@ function ModuleTool({ ready, onDone, onOpen }) {
   const requests = useQuery({ queryKey: ['ai', 'requests'], queryFn: () => api.get('/ai/requests') });
   const [v, setV] = useState({ topic: '', title: '', classId: '', subtopics: '', objectives: '', yearLevel: '', difficulty: 'INTERMEDIATE', durationMinutes: '', language: 'ENGLISH', contentLength: 'STANDARD', teachingApproach: '', instructions: '', includeAssessment: true, files: [] });
   const [error, setError] = useState(null);
+  const [externalPrompt, setExternalPrompt] = useState('');
+  const [pastedResponse, setPastedResponse] = useState('');
+  const [externalError, setExternalError] = useState(null);
   // One id per filled-in form: pressing the button twice returns the same draft instead of two.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const set = (name) => (e) => setV((s) => ({ ...s, [name]: e.target.value }));
-  const generate = useAction(() => api.post('/ai/modules/generate', {
-    clientRequestId: requestId, topic: v.topic.trim(), title: v.title.trim() || null, classId: v.classId || null,
+  const modulePayload = () => ({
+    topic: v.topic.trim(), title: v.title.trim() || null, classId: v.classId || null,
     subtopics: lines(v.subtopics).slice(0, 15), objectives: lines(v.objectives).slice(0, 12), yearLevel: v.yearLevel.trim() || null, difficulty: v.difficulty,
     durationMinutes: v.durationMinutes ? Number(v.durationMinutes) : null, language: v.language, contentLength: v.contentLength,
     teachingApproach: v.teachingApproach.trim() || null, instructions: v.instructions.trim() || null, includeAssessment: v.includeAssessment, referenceFileIds: v.files.map((f) => f.id),
-  }), {
+  });
+  const generate = useAction(() => api.post('/ai/modules/generate', { clientRequestId: requestId, ...modulePayload() }), {
     invalidate: [['ai', 'requests']],
     onSuccess: (request) => { onDone(); setRequestId(crypto.randomUUID()); if (request.generated) { toast.success('Draft ready. Review it before using it.'); onOpen(request.generated.id); } },
     onError: (err) => { if (err.code !== 'AI_IN_PROGRESS') setRequestId(crypto.randomUUID()); return aiError(err, setError); },
   });
+  const buildPrompt = useAction(() => api.post('/ai/modules/prompt', modulePayload()), {
+    onSuccess: (res) => { setExternalPrompt(res.prompt); setExternalError(null); setPastedResponse(''); toast.success('Prompt ready. Copy it into any AI platform.'); },
+    onError: (err) => { setExternalError(err.message || 'Could not generate the prompt.'); return true; },
+  });
+  const importDraft = useAction(() => api.post('/ai/modules/import', { clientRequestId: requestId, pastedResponse: pastedResponse.trim(), ...modulePayload() }), {
+    invalidate: [['ai', 'requests']],
+    onSuccess: (request) => { onDone(); setRequestId(crypto.randomUUID()); setPastedResponse(''); if (request.generated) { toast.success('Draft created from the AI response. Review it before using it.'); onOpen(request.generated.id); } },
+    onError: (err) => { if (err.code !== 'AI_IN_PROGRESS') setRequestId(crypto.randomUUID()); setExternalError(err.fields?.pastedResponse ?? err.message ?? 'Could not read the pasted response.'); return true; },
+  });
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(externalPrompt);
+      toast.success('Prompt copied.');
+    } catch {
+      toast.error('Could not copy automatically. Select the prompt and copy it manually.');
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -144,14 +165,42 @@ function ModuleTool({ ready, onDone, onOpen }) {
           <Field label="Other instructions" optional><Textarea rows={2} value={v.instructions} onChange={set('instructions')} maxLength={2000} placeholder="Anything the draft should include or avoid." /></Field>
           <div>
             <p className="mb-1.5 text-sm font-medium text-ink">Reference material <span className="text-xs font-normal text-faint">optional — the draft is based on it</span></p>
-            <FileUpload value={v.files} onChange={(files) => setV((s) => ({ ...s, files }))} max={5} accept=".pdf,.docx,.txt,.md" label="Attach a syllabus or handout" hint="PDF, Word or text, up to 5 files. Their text is sent to the AI service." compact />
+            <FileUpload value={v.files} onChange={(files) => setV((s) => ({ ...s, files }))} max={5} accept=".pdf,.docx,.txt,.md" label="Attach a syllabus or handout" hint="PDF, Word or text, up to 5 files. Their text is sent to the AI service or included in the external AI prompt." compact />
           </div>
           <Switch checked={v.includeAssessment} onChange={(on) => setV((s) => ({ ...s, includeAssessment: on }))} label="Include assessment questions" description="6 to 10 questions of mixed types that you can save to a question bank." />
           <div className="flex flex-wrap items-center justify-end gap-3">
             {generate.isPending && <span className="text-sm text-soft" role="status">Writing the draft — this can take up to a minute…</span>}
+            <Button type="button" variant="secondary" icon={Copy} loading={buildPrompt.isPending} disabled={v.topic.trim().length < 3} onClick={() => { setExternalError(null); buildPrompt.mutate(); }}>Get prompt for external AI</Button>
             <Button type="submit" icon={Sparkles} loading={generate.isPending} disabled={!ready || v.topic.trim().length < 3}>Generate draft</Button>
           </div>
         </form>
+
+        <div className="mt-6 border-t border-line pt-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">Use any external AI</p>
+              <p className="text-sm text-faint">Generate a prompt, paste it into ChatGPT, Claude, Gemini, or another AI, then paste the response back here to create a draft.</p>
+            </div>
+            {externalPrompt && <Button size="sm" variant="secondary" icon={Copy} onClick={copyPrompt}>Copy prompt</Button>}
+          </div>
+          {externalError && <Alert tone="bad" className="mt-3">{externalError}</Alert>}
+          {externalPrompt ? (
+            <div className="mt-4 space-y-4">
+              <Field label="Prompt for your AI" hint="Copy this prompt into an external AI platform. Review the content before sharing it.">
+                <Textarea rows={10} value={externalPrompt} readOnly className="font-mono text-xs" />
+              </Field>
+              <Field label="Paste the AI response" hint="Paste the full JSON response from the AI. The system will convert it into a module draft you can review.">
+                <Textarea rows={10} value={pastedResponse} onChange={(e) => setPastedResponse(e.target.value)} placeholder="Paste the AI's JSON response here..." />
+              </Field>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {importDraft.isPending && <span className="text-sm text-soft" role="status">Creating draft from the pasted response…</span>}
+                <Button type="button" icon={Sparkles} loading={importDraft.isPending} disabled={pastedResponse.trim().length < 20 || v.topic.trim().length < 3} onClick={() => { setExternalError(null); importDraft.mutate(); }}>Create draft from response</Button>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-faint">Fill in the module details above, then click <span className="font-medium text-ink">Get prompt for external AI</span>.</p>
+          )}
+        </div>
       </Card>
 
       <Card className="min-w-0 xl:self-start">
