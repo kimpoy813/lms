@@ -1,8 +1,8 @@
 // One module: chapter-by-chapter reading or full-module "book view".
 // Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, Clock, Download, FilePlus2, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
@@ -67,7 +67,7 @@ function formatDuration(minutes) {
   return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
-function ReaderControls({ prefs, onChange }) {
+function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
   return (
     <div className="no-print flex flex-wrap items-center gap-1.5" role="group" aria-label="Reading display options">
       <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5 text-xs">
@@ -119,6 +119,16 @@ function ReaderControls({ prefs, onChange }) {
       >
         {prefs.focus ? 'Show contents' : 'Focus mode'}
       </Button>
+      <Button
+        variant={isFullscreen ? 'soft' : 'ghost'}
+        size="sm"
+        icon={isFullscreen ? Shrink : Fullscreen}
+        aria-pressed={isFullscreen}
+        onClick={onToggleFullscreen}
+        title={isFullscreen ? 'Exit full screen (or press Escape)' : 'View lesson full screen'}
+      >
+        {isFullscreen ? 'Exit full screen' : 'Full screen'}
+      </Button>
     </div>
   );
 }
@@ -129,6 +139,8 @@ export default function ModuleView() {
   const { moduleId } = useParams();
   const [params, setParams] = useSearchParams();
   const [prefs, updatePrefs] = useReaderPrefs();
+  const readerRef = useRef(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const query = useQuery({ queryKey: ['class', cls.id, 'modules', moduleId], queryFn: () => api.get(`/modules/${moduleId}`) });
   const creating = canManage && params.get('new') === '1';
   const viewMode = !creating && params.get('view') === 'book' ? 'book' : 'chapter';
@@ -137,6 +149,43 @@ export default function ModuleView() {
   const effectiveQuery = query.isError && query.error?.code === 'NETWORK' && offlineFallback?.mod?.id === moduleId
     ? { ...query, isError: false, isSuccess: true, data: offlineFallback.mod }
     : query;
+
+  useEffect(() => {
+    const syncFullscreen = () => {
+      const current = document.fullscreenElement ?? document.webkitFullscreenElement ?? null;
+      setIsFullscreen(current === readerRef.current);
+    };
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    document.addEventListener('webkitfullscreenchange', syncFullscreen);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreen);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    const reader = readerRef.current;
+    if (!reader) return;
+    const current = document.fullscreenElement ?? document.webkitFullscreenElement ?? null;
+    const exit = document.exitFullscreen ?? document.webkitExitFullscreen;
+    const request = reader.requestFullscreen ?? reader.webkitRequestFullscreen;
+    try {
+      if (current === reader) {
+        if (exit) await exit.call(document);
+        return;
+      }
+      if (current && exit) await exit.call(document);
+      if (!request) {
+        updatePrefs({ focus: true });
+        toast.info('This browser does not support full screen for lessons. Focus mode has been enabled instead.');
+        return;
+      }
+      await request.call(reader);
+    } catch {
+      updatePrefs({ focus: true });
+      toast.info('The browser could not open full screen. Focus mode has been enabled instead.');
+    }
+  };
 
   // In chapter view, automatically open the first unfinished unlocked chapter (unless already in book view).
   useEffect(() => {
@@ -159,7 +208,11 @@ export default function ModuleView() {
   return (
     <QueryState query={effectiveQuery}>
       {(mod) => (
-        <>
+        <div
+          ref={readerRef}
+          data-module-reader
+          className={cn(isFullscreen && 'min-h-dvh overflow-y-auto bg-canvas p-3 sm:p-6')}
+        >
           <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 flex-1 basis-56 items-center gap-2.5">
               <Link to={`${base}/modules`} className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-soft hover:text-brand"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
@@ -178,7 +231,7 @@ export default function ModuleView() {
                     { value: 'book', label: 'Read as book', icon: BookOpen },
                   ]}
                 />
-                <ReaderControls prefs={prefs} onChange={updatePrefs} />
+                <ReaderControls prefs={prefs} onChange={updatePrefs} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} />
               </div>
             )}
           </div>
@@ -198,7 +251,7 @@ export default function ModuleView() {
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </QueryState>
   );

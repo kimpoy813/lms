@@ -371,6 +371,7 @@ describe('AI-assisted authoring', () => {
     const mod = await prisma.learningModule.findUnique({ where: { id: approved.body.data.moduleId }, include: { lessons: { orderBy: { position: 'asc' } } } });
     expect(mod).toMatchObject({ title: 'Photosynthesis (edited)', status: 'DRAFT', source: 'AI' });
     expect(mod.lessons.map((l) => l.title)).toEqual(['What is photosynthesis?', 'Summary', 'Extra', 'Practice activities']);
+    expect((await teacher.get(`/api/ai/generated/${generated.id}`)).body.data).toMatchObject({ moduleId: mod.id, moduleClassId: cls.id });
     // Still a draft module: students do not see it until the teacher publishes it.
     expect((await students[0].get(`/api/classes/${cls.id}/modules`)).body.data).toHaveLength(0);
     expect((await teacher.post(`/api/ai/generated/${generated.id}/approve`, { classId: cls.id, confirmReviewed: true })).status).toBe(409);
