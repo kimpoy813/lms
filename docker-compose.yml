@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: discenda
+      POSTGRES_USER: discenda
+      POSTGRES_PASSWORD: discenda_change_me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U discenda -d discenda"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_URL: postgresql://discenda:discenda_change_me@db:5432/discenda
+      APP_URL: http://localhost:4000
+      TRUST_PROXY: "true"
+      SERVE_FRONTEND: "true"
+      STORAGE_DRIVER: disk
+      STORAGE_DIR: /app/storage
+      SESSION_TTL_HOURS: 168
+      COOKIE_SECURE: auto
+      PASSWORD_HASH_COST: 15
+      # Set these for the first administrator bootstrap, then remove them.
+      # SEED_ADMIN_EMAIL: admin@example.edu
+      # SEED_ADMIN_PASSWORD: ChangeMeNow123!
+    volumes:
+      - app_storage:/app/storage
+
+volumes:
+  postgres_data:
+  app_storage:

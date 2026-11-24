@@ -1,0 +1,47 @@
+# Dependencies
+node_modules
+backend/node_modules
+frontend/node_modules
+
+# Build output
+frontend/dist
+backend/storage
+
+# Environment and secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Git and editor
+.git
+.github
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Tests and local artifacts
+coverage
+e2e/test-results
+e2e/playwright-report
+playwright-report
+test-results
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Misc
+docs
+README.md
+vercel.json
+api
