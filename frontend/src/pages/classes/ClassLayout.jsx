@@ -1,6 +1,6 @@
 // The frame around every page of one class: its header and the tabs.
 import { useQuery } from '@tanstack/react-query';
-import { Archive, BarChart3, BookOpen, CalendarDays, ChevronLeft, ClipboardList, FileQuestion, FolderOpen, GraduationCap, LayoutGrid, MapPin, Megaphone, MessagesSquare, Settings, UserCheck, Users } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarDays, ChevronLeft, ClipboardList, FileQuestion, FolderOpen, GraduationCap, LayoutGrid, MapPin, Megaphone, MessagesSquare, Settings, UserCheck, Users } from 'lucide-react';
 import { Suspense } from 'react';
 import { Link, Outlet, useLocation, useParams } from 'react-router';
 import { Alert, Avatar, cn, PageLoader, QueryState, Tabs } from '../../components/ui.jsx';
@@ -61,7 +61,7 @@ export default function ClassLayout() {
             </div>
             {cls.status === 'ARCHIVED' && (
               <Alert tone="warn" title="This class is archived" className="mb-5">
-                <span className="inline-flex items-center gap-1.5"><Archive className="size-4" aria-hidden="true" />Records are kept and can be viewed, but nothing can be changed.{canManage ? ' Restore the class in Settings to make changes.' : ''}</span>
+                Records are kept and can be viewed, but nothing can be changed.{canManage ? (segment === 'settings' ? ' Use “Restore class” at the bottom of this page to edit settings.' : ' Restore the class in Settings to make changes.') : ''}
               </Alert>
             )}
             <Suspense fallback={<PageLoader />}>

@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
-import { Alert, Button, Card, CardHeader, ConfirmDialog, EmptyState, Field, Input, Switch, Textarea } from '../../components/ui.jsx';
+import { Button, Card, CardHeader, ConfirmDialog, EmptyState, Field, Input, Switch, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { useAction } from '../../lib/query.js';
 import { ColorPicker, CopyClassDialog, ScheduleEditor } from './Classes.jsx';
@@ -60,7 +60,6 @@ export default function ClassSettings() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      {archived && <Alert tone="warn" title="This class is archived">Restore it below before changing its settings.</Alert>}
       <fieldset disabled={archived} className="space-y-5">
         <Card>
           <CardHeader title="Details" />

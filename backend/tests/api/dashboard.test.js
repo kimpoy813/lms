@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { actor, anonymous, categoryId, classroom, createUser, defaultScale, loginAs, minutesFromNow, prepare, prisma } from '../helpers/index.js';
+import { addDays, atTime, dateKey, dateKeyToDb, weekdayOf } from '../../src/lib/time.js';
+import { getTimeZone } from '../../src/services/settings.js';
 
 beforeAll(async () => {
   await prepare();
@@ -59,8 +61,57 @@ describe('student dashboard', () => {
 });
 
 describe('teacher dashboard', () => {
+  it('matches the calendar semester boundaries for today and the in-session class count', async () => {
+    const tz = await getTimeZone();
+    const today = dateKey(new Date(), tz);
+    const { teacher, cls, students } = await classroom(1, {
+      schedules: { create: [{ dayOfWeek: weekdayOf(today), startTime: '09:00', endTime: '10:00' }] },
+    });
+    const from = atTime(today, '00:00', tz).toISOString();
+    const to = atTime(addDays(today, 1), '00:00', tz).toISOString();
+    const range = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    const setSemester = (startDate, endDate) => prisma.semester.update({
+      where: { id: cls.semesterId },
+      data: { startDate: dateKeyToDb(startDate), endDate: dateKeyToDb(endDate) },
+    });
+    const readDashboard = async (session) => {
+      const res = await session.get('/api/dashboard');
+      expect(res.status).toBe(200);
+      return res.body.data;
+    };
+    const readCalendarMeetings = async (session) => {
+      const res = await session.get(`/api/calendar?${range}`);
+      expect(res.status).toBe(200);
+      return res.body.data.filter((item) => item.kind === 'CLASS_MEETING').map((item) => item.classId);
+    };
+    const expectClassVisibility = async (expectedClassIds) => {
+      const [teacherDashboard, studentDashboard, teacherCalendar, studentCalendar] = await Promise.all([
+        readDashboard(teacher), readDashboard(students[0]), readCalendarMeetings(teacher), readCalendarMeetings(students[0]),
+      ]);
+      expect(teacherDashboard.today.map((item) => item.classId)).toEqual(expectedClassIds);
+      expect(studentDashboard.today.map((item) => item.classId)).toEqual(expectedClassIds);
+      expect(teacherCalendar).toEqual(expectedClassIds);
+      expect(studentCalendar).toEqual(expectedClassIds);
+      expect(teacherDashboard.stats).toMatchObject({ classes: expectedClassIds.length, students: expectedClassIds.length });
+    };
+
+    // An active class can be prepared before term, but it should not appear as in session or meet today.
+    await setSemester(addDays(today, 1), addDays(today, 30));
+    await expectClassVisibility([]);
+
+    // Semester dates are inclusive, matching the calendar's recurring-meeting expansion.
+    await setSemester(today, today);
+    await expectClassVisibility([cls.id]);
+
+    // Nor should the class appear in today's schedule after its semester has ended.
+    await setSemester(addDays(today, -30), addDays(today, -1));
+    await expectClassVisibility([]);
+  });
+
   it('counts work to grade, requests and at-risk students of own classes only', async () => {
     const { teacher, cls, students } = await classroom(3);
+    const today = dateKey(new Date(), await getTimeZone());
+    await prisma.semester.update({ where: { id: cls.semesterId }, data: { startDate: dateKeyToDb(today), endDate: dateKeyToDb(today) } });
     const other = await classroom(1);
     const { due } = await seedWork(teacher, cls);
     await seedWork(other.teacher, other.cls);
