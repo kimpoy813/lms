@@ -132,7 +132,7 @@ function Comments({ announcementId, readOnly }) {
       </QueryState>
       {!readOnly && (
         <form onSubmit={(e) => { e.preventDefault(); if (body.trim()) add.mutate(); }} className="mt-3 flex items-end gap-2">
-          <Textarea rows={1} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write a comment…" maxLength={2000} aria-label="Write a comment" className="min-h-10 resize-none" onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (body.trim()) add.mutate(); } }} />
+          <Textarea rows={1} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write a comment…" maxLength={2000} aria-label="Write a comment" className="min-h-10 min-w-0 flex-1 resize-none" onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (body.trim()) add.mutate(); } }} />
           <Button type="submit" icon={Send} loading={add.isPending} disabled={!body.trim()} aria-label="Post comment" />
         </form>
       )}

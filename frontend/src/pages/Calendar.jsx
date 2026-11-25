@@ -487,10 +487,12 @@ function Tasks() {
   return (
     <Card>
       <CardHeader icon={Check} title="My to-do list" description="Private reminders. Only you can see them." />
-      <form onSubmit={(e) => { e.preventDefault(); if (title.trim()) add.mutate(); }} className="mb-3 flex flex-wrap gap-2">
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Add a reminder…" aria-label="New reminder" maxLength={200} className="min-w-0 flex-1 basis-40" />
-        <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date (optional)" className="min-w-0 flex-1 sm:w-36 sm:flex-none" />
-        <Button type="submit" icon={Plus} loading={add.isPending} disabled={!title.trim()} aria-label="Add reminder" />
+      <form onSubmit={(e) => { e.preventDefault(); if (title.trim()) add.mutate(); }} className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Add a reminder…" aria-label="New reminder" maxLength={200} className="col-span-2 min-w-0 w-full" />
+        <Field label="Due date" optional className="min-w-0">
+          <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="min-w-0 w-full" />
+        </Field>
+        <Button type="submit" icon={Plus} loading={add.isPending} disabled={!title.trim()} aria-label="Add reminder" className="self-end sm:flex-none" />
       </form>
       {query.isPending ? <Spinner /> : tasks.length === 0 ? <p className="py-3 text-center text-sm text-faint">Nothing on your list.</p> : (
         <ul className="space-y-1">
@@ -500,7 +502,7 @@ function Tasks() {
               <li key={t.id} className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-raised">
                 <input type="checkbox" checked={Boolean(t.completedAt)} onChange={() => toggle.mutate(t)} aria-label={`Mark “${t.title}” as ${t.completedAt ? 'not done' : 'done'}`} className="size-[18px] shrink-0 rounded accent-[var(--brand-fill)]" />
                 <span className="min-w-0 flex-1">
-                  <span className={cn('block truncate text-sm', t.completedAt ? 'text-faint line-through' : 'text-ink')}>{t.title}</span>
+                  <span className={cn('block break-words text-sm leading-snug', t.completedAt ? 'text-faint line-through' : 'text-ink')}>{t.title}</span>
                   {t.dueAt && !t.completedAt && <span className={cn('text-xs', overdue ? 'font-medium text-bad' : 'text-faint')}>{overdue ? 'Was due' : 'Due'} {formatDateKey(dateKeyOf(t.dueAt))}</span>}
                 </span>
                 <button type="button" onClick={() => remove.mutate(t.id)} className="rounded p-1 text-faint max-sm:opacity-70 sm:opacity-0 hover:text-bad focus:opacity-100 sm:group-hover:opacity-100" aria-label={`Delete “${t.title}”`}><Trash2 className="size-4" /></button>

@@ -16,7 +16,7 @@
   --line-strong: #cdd2e0;
   --ink: #161929;
   --soft: #4a5170;
-  --faint: #7c84a0;
+  --faint: #626a82; /* Muted copy still meets AA contrast on light semantic surfaces. */
   --brand: #4f46e5;
   --brand-fill: #4f46e5;
   --brand-fill-hover: #4338ca;
@@ -41,7 +41,7 @@
   --line-strong: #3a4060;
   --ink: #eceef7;
   --soft: #aeb5cd;
-  --faint: #7d86a6;
+  --faint: #8893b4; /* Muted copy still meets AA contrast on dark semantic surfaces. */
   --brand: #a5b4fc;
   --brand-fill: #5850ec;
   --brand-fill-hover: #6b64f2;
