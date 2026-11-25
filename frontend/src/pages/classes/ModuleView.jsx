@@ -7,6 +7,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
+import { LearningFeaturesEditor, LearningVisual, QuickCheck } from '../../components/LearningFeatures.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
@@ -655,6 +656,8 @@ function BookReader({ modSummary, prefs }) {
                           className={bookTextClasses(prefs)}
                           empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
                         />
+                        {ch.visual && <LearningVisual visual={ch.visual} />}
+                        {ch.selfCheck && <QuickCheck check={ch.selfCheck} />}
 
                         {(book.aiStudyCoachEnabled || canManage) && Boolean(ch.contentHtml?.trim()) && (
                           <StudyCoachPanel lessonId={ch.id} lessonTitle={ch.title} canManage={canManage} enabledForStudents={book.aiStudyCoachEnabled} />
@@ -901,6 +904,8 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
               </header>
 
               <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
+              {lesson.visual && <LearningVisual visual={lesson.visual} />}
+              {lesson.selfCheck && <QuickCheck check={lesson.selfCheck} />}
 
               {(lesson.aiStudyCoachEnabled || canManage) && Boolean(lesson.contentHtml?.trim()) && (
                 <StudyCoachPanel lessonId={lesson.id} lessonTitle={lesson.title} canManage={canManage} enabledForStudents={lesson.aiStudyCoachEnabled} />
@@ -995,11 +1000,13 @@ function LessonEditor({ mod, lesson, onDone }) {
   const [values, setValues] = useState({
     title: lesson?.title ?? '', kind: lesson?.kind ?? 'LESSON', estimatedMinutes: lesson?.estimatedMinutes ?? '', status: lesson?.status ?? 'PUBLISHED',
     prerequisiteLessonId: lesson?.prerequisiteLessonId ?? '', objectives: (lesson?.objectives ?? []).join('\n'), contentHtml: lesson?.contentHtml ?? '',
+    visual: lesson?.visual ?? null, selfCheck: lesson?.selfCheck ?? null,
   });
   const [targetClassIds, setTargetClassIds] = useState([]);
   const [errors, setErrors] = useState({});
   const [dirty, setDirty] = useState(false);
   const set = (name, value) => { setValues((v) => ({ ...v, [name]: value })); setDirty(true); };
+  const setLearningFeatures = (patch) => { setValues((v) => ({ ...v, ...patch })); setDirty(true); };
 
   // Do not lose a half-written lesson to an accidental tab close.
   useEffect(() => {
@@ -1012,6 +1019,7 @@ function LessonEditor({ mod, lesson, onDone }) {
   const save = useAction(() => {
     const body = {
       title: values.title.trim(), kind: values.kind, status: values.status, contentHtml: values.contentHtml,
+      visual: values.visual, selfCheck: values.selfCheck,
       estimatedMinutes: values.estimatedMinutes === '' ? null : Number(values.estimatedMinutes),
       prerequisiteLessonId: values.prerequisiteLessonId || null,
       objectives: values.objectives.split('\n').map((o) => o.trim()).filter(Boolean),
@@ -1062,6 +1070,7 @@ function LessonEditor({ mod, lesson, onDone }) {
         <Field label="Content" error={errors.contentHtml}>
           <LazyEditor value={values.contentHtml} onChange={(html) => set('contentHtml', html)} placeholder="Write the lesson. Use headings to organise it, and add pictures, videos or tables from the toolbar." minHeight={360} ariaLabel="Lesson content" />
         </Field>
+        <LearningFeaturesEditor visual={values.visual} selfCheck={values.selfCheck} onChange={setLearningFeatures} />
         <Field label="Learning objectives" optional hint="One per line." error={errors.objectives}><Textarea rows={3} value={values.objectives} onChange={(e) => set('objectives', e.target.value)} /></Field>
         <Field label="Visibility">
           <Segmented label="Lesson visibility" value={values.status} onChange={(s) => set('status', s)} options={[{ value: 'DRAFT', label: 'Draft' }, { value: 'PUBLISHED', label: 'Published' }]} />

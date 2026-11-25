@@ -38,6 +38,44 @@ describe('learning modules', () => {
     expect((await teacher.patch(`/api/announcements/${a.body.data.id}`, { title: 'Still pinned' })).body.data).toMatchObject({ title: 'Still pinned', priority: 'URGENT', isPinned: true, allowComments: true, status: 'PUBLISHED' });
   });
 
+  it('stores, edits, serves, and copies safe structured visual guides and interactive self-checks', async () => {
+    const { teacher, cls, students } = await classroom(1);
+    const mod = await mk(teacher, cls);
+    const visual = {
+      title: 'A process pathway',
+      description: 'Three stages of the lesson.',
+      steps: ['Identify the input', 'Apply the rule', 'Verify the result'],
+    };
+    const selfCheck = {
+      prompt: 'Which step verifies the result?',
+      options: ['Identify the input', 'Apply the rule', 'Verify the result'],
+      correctIndex: 2,
+      explanation: 'A final check compares the result with the expected conditions.',
+    };
+    const created = await teacher.post(`/api/modules/${mod.id}/lessons`, {
+      title: 'Guided practice',
+      contentHtml: '<p>Work through the pathway.</p>',
+      visual,
+      selfCheck,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({ visual, selfCheck });
+    expect((await students[0].get(`/api/lessons/${created.body.data.id}`)).body.data).toMatchObject({ visual, selfCheck });
+
+    const updatedVisual = { ...visual, title: 'Updated pathway' };
+    const updated = await teacher.patch(`/api/lessons/${created.body.data.id}`, { visual: updatedVisual });
+    expect(updated.body.data).toMatchObject({ visual: updatedVisual, selfCheck });
+    expect((await teacher.post(`/api/modules/${mod.id}/lessons`, {
+      title: 'Bad check',
+      selfCheck: { ...selfCheck, correctIndex: 5 },
+    })).status).toBe(422);
+
+    const copied = await teacher.post(`/api/modules/${mod.id}/copy`, {});
+    expect(copied.status).toBe(201);
+    const copiedLesson = await prisma.lesson.findFirst({ where: { moduleId: copied.body.data.id, title: 'Guided practice' } });
+    expect(copiedLesson).toMatchObject({ visual: updatedVisual, selfCheck });
+  });
+
   it('publishes scheduled modules when their time comes', async () => {
     const { teacher, cls, students } = await classroom(1);
     const noDate = await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Later', status: 'SCHEDULED' });

@@ -117,10 +117,19 @@ describe('hybrid AI assistant (built-in zero-key + encrypted DB config)', () => 
     const genId = genRes.body.data.generated.id;
     expect(genRes.body.data.generated.content.lessons.length).toBeGreaterThanOrEqual(3);
     expect(genRes.body.data.generated.content.assessment.length).toBeGreaterThanOrEqual(4);
+    for (const lesson of genRes.body.data.generated.content.lessons) {
+      expect(lesson.visual.steps.length).toBeGreaterThanOrEqual(2);
+      expect(lesson.visual.steps.length).toBeLessThanOrEqual(5);
+      expect(lesson.selfCheck.options.length).toBeGreaterThanOrEqual(2);
+      expect(lesson.selfCheck.correctIndex).toBeGreaterThanOrEqual(0);
+      expect(lesson.selfCheck.correctIndex).toBeLessThan(lesson.selfCheck.options.length);
+    }
 
     const rewritten = await teacher.post(`/api/ai/generated/${genId}/lessons/0/rewrite`, { instruction: 'Make it shorter with bullet takeaways' });
     expect(rewritten.status).toBe(200);
     expect(rewritten.body.data.lesson.contentHtml).toContain('<li>');
+    expect(rewritten.body.data.lesson.visual.steps.length).toBeGreaterThanOrEqual(2);
+    expect(rewritten.body.data.lesson.selfCheck.options.length).toBeGreaterThanOrEqual(2);
 
     const approved = await teacher.post(`/api/ai/generated/${genId}/approve`, { classId: cls.id, confirmReviewed: true });
     expect(approved.status).toBe(201);

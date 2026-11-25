@@ -19,14 +19,16 @@ export async function notify(userIds, notification, options = {}) {
   const ids = [...new Set(userIds)].filter((id) => id && id !== options.excludeUserId);
   if (ids.length === 0) return;
   const db = options.tx ?? prisma;
-  const data = ids.map((userId) => ({
-    userId,
+  // Normalize the visible content once so the notification centre, real-time event, e-mail,
+  // and Web Push all start from the same title, body, and destination.
+  const visible = {
     type: notification.type,
-    title: String(notification.title).slice(0, 200),
-    body: notification.body ? String(notification.body).slice(0, 500) : null,
+    title: String(notification.title).trim().slice(0, 200),
+    body: notification.body ? String(notification.body).trim().slice(0, 500) : null,
     link: notification.link ?? null,
     classId: notification.classId ?? null,
-  }));
+  };
+  const data = ids.map((userId) => ({ userId, ...visible }));
   try {
     await db.notification.createMany({ data });
   } catch (err) {
@@ -35,12 +37,7 @@ export async function notify(userIds, notification, options = {}) {
     return;
   }
   for (const userId of ids) {
-    emitToUser(userId, 'notification:new', {
-      type: notification.type,
-      title: notification.title,
-      body: notification.body ?? null,
-      link: notification.link ?? null,
-    });
+    emitToUser(userId, 'notification:new', visible);
   }
   // E-mail copies and Web Push alerts are optional and never block or fail the calling request.
   // Inside a transaction they wait a tick, so that the rows are usually committed by the time
@@ -49,8 +46,8 @@ export async function notify(userIds, notification, options = {}) {
     runInBackground(async () => {
       if (options.tx) await new Promise((resolve) => setImmediate(resolve));
       await Promise.all([
-        mailConfigured() ? sendEmailCopies(ids, notification) : Promise.resolve(),
-        pushConfigured() ? sendPushToUsers(ids, notification) : Promise.resolve(),
+        mailConfigured() ? sendEmailCopies(ids, visible) : Promise.resolve(),
+        pushConfigured() ? sendPushToUsers(ids, visible) : Promise.resolve(),
       ]);
     }, 'delivering notification copies');
   }

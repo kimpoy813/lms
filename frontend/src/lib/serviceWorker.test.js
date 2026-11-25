@@ -16,13 +16,20 @@ let asked; // what went to the network
   let shownNotifications;
   let openedWindows;
   let windowClients;
+  let rejectNotificationOnce;
 
   const self = {
     location: { origin: ORIGIN },
     addEventListener: (name, fn) => { listeners[name] = fn; },
     skipWaiting: async () => { skipCalls += 1; },
     registration: {
-      showNotification: async (title, options) => { shownNotifications.push({ title, options }); },
+      showNotification: async (title, options) => {
+        if (rejectNotificationOnce) {
+          rejectNotificationOnce = false;
+          throw new Error('Browser rejected an optional notification option');
+        }
+        shownNotifications.push({ title, options });
+      },
     },
     clients: {
       claim: async () => {},
@@ -40,6 +47,7 @@ async function start() {
   shownNotifications = [];
   openedWindows = [];
   windowClients = [];
+  rejectNotificationOnce = false;
   const cache = {
     addAll: async (paths) => { for (const path of paths) stored.set(path, `shell:${path}`); },
     put: async (key, response) => { stored.set(typeof key === 'string' ? key : new URL(key.url).pathname, response.body); },
@@ -176,20 +184,26 @@ describe('the service worker', () => {
       },
     ]);
 
-    // Empty, null, plain-text, and nested payloads never throw or produce blank bodies
+    // Empty, null, plain-text, and nested payloads never throw or produce blank bodies.
+    // If a sender omits its title, the event detail becomes the visible title instead of the app name.
     shownNotifications.length = 0;
+    const longDetails = 'Important course details. '.repeat(20);
     for (const payload of [
       null,
       { json: () => null },
       { json: () => { throw new Error('not json'); }, text: () => 'Quiz opens in 10 minutes' },
       { json: () => ({ notification: { title: 'Notice', message: 'Class moved to Room 302', url: '/calendar' } }) },
       { json: () => ({ title: 'New module in CS 101' }) },
+      { json: () => ({ data: { notification: { title: 'Nested grade', body: 'Biology final · 92%', tag: 'nested' }, link: '/grades' } }) },
+      { json: () => ({ body: 'Attendance is open until 9:30 AM', link: '/attendance' }) },
+      { json: () => ({ title: 'EduSphere', body: 'Your Biology final grade is ready.' }) },
+      { json: () => ({ title: 'Course update', body: longDetails, link: '/notifications' }) },
     ]) {
       let wait;
       listeners.push({ data: payload, waitUntil: (p) => { wait = p; } });
       await wait;
     }
-    expect(shownNotifications).toHaveLength(5);
+    expect(shownNotifications).toHaveLength(9);
     for (const shown of shownNotifications) {
       expect(typeof shown.title).toBe('string');
       expect(shown.title.trim().length).toBeGreaterThan(0);
@@ -200,6 +214,21 @@ describe('the service worker', () => {
     expect(shownNotifications[3].title).toBe('Notice');
     expect(shownNotifications[3].options.body).toBe('Class moved to Room 302');
     expect(shownNotifications[3].options.data.url).toBe('/calendar');
+    expect(shownNotifications[5]).toMatchObject({ title: 'Nested grade', options: { body: 'Biology final · 92%', tag: 'nested', data: { url: '/grades' } } });
+    expect(shownNotifications[6]).toMatchObject({ title: 'Attendance is open until 9:30 AM', options: { body: 'Attendance is open until 9:30 AM', data: { url: '/attendance' } } });
+    expect(shownNotifications[7]).toMatchObject({ title: 'Your Biology final grade is ready.', options: { body: 'Your Biology final grade is ready.' } });
+    expect(shownNotifications[8]).toMatchObject({ title: 'Course update', options: { body: longDetails.slice(0, 500), data: { url: '/notifications' } } });
+
+    // Even when a browser rejects an optional option, the fallback keeps the event title and body.
+    shownNotifications.length = 0;
+    rejectNotificationOnce = true;
+    let fallbackWait;
+    listeners.push({
+      data: { json: () => ({ title: 'Assignment returned', body: 'Lab 2: feedback is ready' }) },
+      waitUntil: (p) => { fallbackWait = p; },
+    });
+    await fallbackWait;
+    expect(shownNotifications[0]).toMatchObject({ title: 'Assignment returned', options: { body: 'Lab 2: feedback is ready' } });
 
     let clickWait;
     listeners.notificationclick({

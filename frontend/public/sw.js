@@ -5,9 +5,10 @@
 // grades, attendance, and messages are private and must always come from the server.
 // What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
 // page has to come from the server with its own security headers, and is not the app's page.
-const VERSION = 'discenda-v4';
+const VERSION = 'discenda-v5';
 const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png'];
 const SHELL_SET = new Set(SHELL);
+const GENERIC_PUSH_TITLES = new Set(['discenda', 'edusphere', 'notification', 'new notification', 'new message']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -96,49 +97,64 @@ self.addEventListener('fetch', (event) => {
 });
 
 function parsePushPayload(event) {
-  let raw = null;
+  const initial = [];
   if (event.data) {
     try {
-      raw = typeof event.data.json === 'function' ? event.data.json() : JSON.parse(event.data.text());
+      initial.push(typeof event.data.json === 'function' ? event.data.json() : JSON.parse(event.data.text()));
     } catch {
       try {
-        const text = typeof event.data.text === 'function' ? event.data.text() : '';
-        if (text && text.trim()) {
+        const text = typeof event.data.text === 'function' ? event.data.text().trim() : '';
+        if (text) {
           try {
-            raw = JSON.parse(text);
+            initial.push(JSON.parse(text));
           } catch {
-            raw = { body: text.trim() };
+            initial.push({ body: text });
           }
         }
       } catch {
-        raw = {};
+        // Fall through to a non-empty, useful notification below.
       }
     }
   }
-  if (typeof raw === 'string') {
-    raw = raw.trim() ? { body: raw.trim() } : {};
-  }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    raw = {};
-  }
-  if (!raw.title && !raw.body && !raw.message) {
-    if (raw.notification && typeof raw.notification === 'object') raw = raw.notification;
-    else if (raw.data && typeof raw.data === 'object') raw = raw.data;
-  }
 
-  const pick = (...vals) => {
-    for (const val of vals) {
-      if (typeof val === 'string' && val.trim()) return val.trim();
+  // Web Push providers use both flat payloads and wrappers such as { notification: {...} }
+  // or { data: { notification: {...} } }. Walk those wrappers without assuming one shape.
+  const records = [];
+  const queue = [...initial];
+  const seen = new Set();
+  while (queue.length > 0 && records.length < 12) {
+    const value = queue.shift();
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) continue;
+      try {
+        queue.push(JSON.parse(text));
+      } catch {
+        records.push({ body: text });
+      }
+      continue;
     }
-    return '';
-  };
+    if (!value || typeof value !== 'object' || Array.isArray(value) || seen.has(value)) continue;
+    seen.add(value);
+    records.push(value);
+    for (const key of ['notification', 'data', 'payload']) {
+      if (value[key] && (typeof value[key] === 'object' || typeof value[key] === 'string')) queue.push(value[key]);
+    }
+  }
 
-  const title = pick(raw.title, raw.heading, raw.subject) || 'Discenda';
-  const bodyText = pick(raw.body, raw.message, raw.summary, raw.description, raw.text);
-  const body = bodyText || (title === 'Discenda' ? 'You have a new notification. Open Discenda to view details.' : 'Open Discenda to view details.');
-  const link = pick(raw.link, raw.url) || '/notifications';
-  const tag = pick(raw.tag) || `discenda-${Date.now()}`;
-  const timestamp = typeof raw.timestamp === 'number' && Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now();
+  const pick = (...values) => values.find((value) => typeof value === 'string' && value.trim())?.trim() ?? '';
+  const fromRecords = (keys) => pick(...records.flatMap((record) => keys.map((key) => record[key])));
+  const bodyText = fromRecords(['body', 'message', 'summary', 'description', 'text']);
+  const suppliedTitle = fromRecords(['title', 'heading', 'subject', 'notificationTitle']);
+  const specificTitle = GENERIC_PUSH_TITLES.has(suppliedTitle.toLowerCase()) ? '' : suppliedTitle;
+  // Put the event detail in the visible title when senders omit one or supply only the app name.
+  const bodyTitle = bodyText.length > 200 ? `${bodyText.slice(0, 199).trimEnd()}…` : bodyText;
+  const title = (specificTitle || bodyTitle || 'New notification').slice(0, 200);
+  const body = (bodyText || 'You have a new notification. Open Discenda to view details.').slice(0, 500);
+  const link = fromRecords(['link', 'url']) || '/notifications';
+  const tag = fromRecords(['tag']) || `discenda-${Date.now()}`;
+  const rawTimestamp = records.find((record) => typeof record.timestamp === 'number' && Number.isFinite(record.timestamp))?.timestamp;
+  const timestamp = rawTimestamp ?? Date.now();
 
   return {
     title,
@@ -158,10 +174,12 @@ self.addEventListener('push', (event) => {
   const { title, options } = parsePushPayload(event);
   event.waitUntil(
     self.registration.showNotification(title, options).catch(() =>
-      self.registration.showNotification('Discenda', {
-        body: 'You have a new notification. Open Discenda to view details.',
-        icon: '/icons/icon-192.png',
-        data: { url: '/notifications' },
+      // Retain the actual event text if optional visual options are rejected by a browser.
+      self.registration.showNotification(title, {
+        body: options.body,
+        tag: options.tag,
+        timestamp: options.timestamp,
+        data: options.data,
       }),
     ),
   );

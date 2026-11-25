@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as webpushNs from 'web-push';
 import { actor, createClass, createUser, enroll, loginAs, prepare, prisma, uid } from '../helpers/index.js';
 import { buildPushPayload, sendPushToUsers, setPushSenderForTest } from '../../src/services/push.js';
+import { notify } from '../../src/services/notifications.js';
 import { env } from '../../src/config/env.js';
 
 beforeAll(prepare);
@@ -236,6 +237,13 @@ describe('Academic workflows & Web Push API', () => {
 
       const fallbackParsed = JSON.parse(buildPushPayload({ type: 'grades.published', title: 'Midterm grades' }));
       expect(fallbackParsed.body).toContain('posted grades');
+      const bodyOnly = JSON.parse(buildPushPayload({ type: 'grades.published', body: 'Your Biology final grade is ready.' }));
+      expect(bodyOnly).toMatchObject({ title: 'Your Biology final grade is ready.', body: 'Your Biology final grade is ready.' });
+      const brandedOnly = JSON.parse(buildPushPayload({ type: 'grades.published', title: 'EduSphere', body: 'Your Biology final grade is ready.' }));
+      expect(brandedOnly).toMatchObject({ title: 'Your Biology final grade is ready.', body: 'Your Biology final grade is ready.' });
+      const emptyNotice = JSON.parse(buildPushPayload({ type: 'grades.published' }));
+      expect(emptyNotice.title).not.toBe('Discenda');
+      expect(emptyNotice.body).toContain('posted grades');
 
       const unsub = await student.post('/api/notifications/push/unsubscribe', { endpoint });
       expect(unsub.status).toBe(200);
@@ -245,7 +253,7 @@ describe('Academic workflows & Web Push API', () => {
     }
   });
 
-  it('populates informative notification bodies for modules and assignments', async () => {
+  it('mirrors in-app notification details to Web Push for modules and other notices', async () => {
     const teacher = await actor('TEACHER');
     const student = await actor('STUDENT');
     const cls = await createClass(teacher.user);
@@ -282,15 +290,50 @@ describe('Academic workflows & Web Push API', () => {
       endpoint,
       keys: { p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' },
     });
-    const senderSpy = vi.fn().mockResolvedValueOnce({ statusCode: 201 });
+    const senderSpy = vi.fn().mockResolvedValue({ statusCode: 201 });
     setPushSenderForTest(senderSpy);
     try {
+      // A regular in-app notification must reach push with the same visible content and link.
+      const pushedModule = await teacher.post(`/api/classes/${cls.id}/modules`, {
+        title: 'Week 2: Functions',
+        description: 'Practice defining and calling functions.',
+        status: 'PUBLISHED',
+      });
+      expect(pushedModule.status).toBe(201);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(senderSpy).toHaveBeenCalledTimes(1);
+      const inAppNotifications = (await student.get('/api/notifications')).body.data;
+      const inAppModuleNotice = inAppNotifications.find((notice) => notice.body?.includes('Practice defining and calling functions.'));
+      const pushModuleNotice = JSON.parse(senderSpy.mock.calls[0][1]);
+      expect(inAppModuleNotice).toBeDefined();
+      expect(pushModuleNotice).toMatchObject({
+        title: inAppModuleNotice.title,
+        body: inAppModuleNotice.body,
+        link: inAppModuleNotice.link,
+      });
+
+      // Longer notification bodies stay aligned with the in-app record up to its 500-character cap.
+      const longBody = 'Important course details. '.repeat(20);
+      await notify([student.user.id], {
+        type: 'course.update',
+        title: 'Course update',
+        body: longBody,
+        link: '/notifications',
+        classId: cls.id,
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(senderSpy).toHaveBeenCalledTimes(2);
+      const longInAppNotice = (await student.get('/api/notifications')).body.data.find((notice) => notice.title === 'Course update');
+      const longPushNotice = JSON.parse(senderSpy.mock.calls[1][1]);
+      expect(longInAppNotice.body).toHaveLength(500);
+      expect(longPushNotice).toMatchObject({ title: longInAppNotice.title, body: longInAppNotice.body, link: longInAppNotice.link });
+
       const conv = await teacher.post('/api/messages/conversations', { userId: student.user.id });
       const msg = await teacher.post(`/api/messages/conversations/${conv.body.data.id}/messages`, { body: 'Please check Module 1 before tomorrow.' });
       expect(msg.status).toBe(201);
       await new Promise((r) => setTimeout(r, 30));
-      expect(senderSpy).toHaveBeenCalledTimes(1);
-      const dmPayload = JSON.parse(senderSpy.mock.calls[0][1]);
+      expect(senderSpy).toHaveBeenCalledTimes(3);
+      const dmPayload = JSON.parse(senderSpy.mock.calls[2][1]);
       expect(dmPayload.title).toContain('Message from');
       expect(dmPayload.body).toBe('Please check Module 1 before tomorrow.');
       expect(dmPayload.link).toBe(`/messages?c=${conv.body.data.id}`);
