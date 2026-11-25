@@ -7,72 +7,76 @@ import Calendar from './Calendar.jsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const { mockGet, mockPost } = vi.hoisted(() => ({
-  mockPost: vi.fn().mockResolvedValue({ id: 'ev-new', notifiedStudents: 30 }),
-  mockGet: vi.fn((path) => {
-    if (path === '/calendar/overlapping-classes') {
-      return Promise.resolve({
-        timeZone: 'Asia/Manila',
-        totalOverlappingClasses: 2,
-        totalAffectedStudents: 30,
-        overlapping: [
-          {
-            classId: 'c1',
-            label: 'CS 101 · A',
-            title: 'Intro to CS',
-            color: 'blue',
-            studentCount: 20,
-            hits: [{ date: '2026-12-15', startTime: '09:00', endTime: '10:30' }],
-          },
-          {
-            classId: 'c2',
-            label: 'IT 201 · B',
-            title: 'Systems',
-            color: 'emerald',
-            studentCount: 15,
-            hits: [{ date: '2026-12-15', startTime: '13:00', endTime: '14:30' }],
-          },
-        ],
-        otherClasses: [
-          {
-            classId: 'c3',
-            label: 'CS 103 · C',
-            title: 'Algorithms',
-            color: 'amber',
-            studentCount: 12,
-            hits: [],
-          },
-        ],
-      });
-    }
-    if (path === '/calendar') {
-      return Promise.resolve([
-        {
-          id: 'event:ev-future',
-          eventId: 'ev-future',
-          kind: 'EVENT',
-          type: 'TEACHER_LEAVE',
-          scope: 'CLASSES',
-          title: 'Regional faculty conference',
-          description: 'Async reading posted',
-          startAt: '2026-12-15T00:00:00.000Z',
-          endAt: '2026-12-15T15:59:00.000Z',
-          allDay: true,
-          classLabel: 'CS 101 · A, IT 201 · B',
-          affectedClasses: [
-            { id: 'c1', label: 'CS 101 · A', color: 'blue' },
-            { id: 'c2', label: 'IT 201 · B', color: 'emerald' },
+const { mockGet, mockPost, mockTasks } = vi.hoisted(() => {
+  const mockTasks = [];
+  return {
+    mockTasks,
+    mockPost: vi.fn().mockResolvedValue({ id: 'ev-new', notifiedStudents: 30 }),
+    mockGet: vi.fn((path) => {
+      if (path === '/calendar/overlapping-classes') {
+        return Promise.resolve({
+          timeZone: 'Asia/Manila',
+          totalOverlappingClasses: 2,
+          totalAffectedStudents: 30,
+          overlapping: [
+            {
+              classId: 'c1',
+              label: 'CS 101 · A',
+              title: 'Intro to CS',
+              color: 'blue',
+              studentCount: 20,
+              hits: [{ date: '2026-12-15', startTime: '09:00', endTime: '10:30' }],
+            },
+            {
+              classId: 'c2',
+              label: 'IT 201 · B',
+              title: 'Systems',
+              color: 'emerald',
+              studentCount: 15,
+              hits: [{ date: '2026-12-15', startTime: '13:00', endTime: '14:30' }],
+            },
           ],
-          affectedClassIds: ['c1', 'c2'],
-          canEdit: true,
-        },
-      ]);
-    }
-    if (path === '/tasks') return Promise.resolve([]);
-    if (path === '/classes') return Promise.resolve([]);
-    return Promise.resolve([]);
-  }),
-}));
+          otherClasses: [
+            {
+              classId: 'c3',
+              label: 'CS 103 · C',
+              title: 'Algorithms',
+              color: 'amber',
+              studentCount: 12,
+              hits: [],
+            },
+          ],
+        });
+      }
+      if (path === '/calendar') {
+        return Promise.resolve([
+          {
+            id: 'event:ev-future',
+            eventId: 'ev-future',
+            kind: 'EVENT',
+            type: 'TEACHER_LEAVE',
+            scope: 'CLASSES',
+            title: 'Regional faculty conference',
+            description: 'Async reading posted',
+            startAt: '2026-12-15T00:00:00.000Z',
+            endAt: '2026-12-15T15:59:00.000Z',
+            allDay: true,
+            classLabel: 'CS 101 · A, IT 201 · B',
+            affectedClasses: [
+              { id: 'c1', label: 'CS 101 · A', color: 'blue' },
+              { id: 'c2', label: 'IT 201 · B', color: 'emerald' },
+            ],
+            affectedClassIds: ['c1', 'c2'],
+            canEdit: true,
+          },
+        ]);
+      }
+      if (path === '/tasks') return Promise.resolve(mockTasks);
+      if (path === '/classes') return Promise.resolve([]);
+      return Promise.resolve([]);
+    }),
+  };
+});
 
 vi.mock('../auth/AuthContext.jsx', () => ({
   useAuth: () => ({
@@ -125,6 +129,32 @@ function setInputValue(input, value) {
   setter.call(input, value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
+
+describe('Calendar reminder layout', () => {
+  it('gives reminder titles room on phones, labels the optional date, and wraps saved reminders', async () => {
+    const reminder = 'Prepare the full assessment outline for the third-year students before next Monday';
+    mockTasks.splice(0, mockTasks.length, { id: 'task-long', title: reminder, dueAt: null, completedAt: null });
+    const { container, cleanup } = await renderCalendar('/calendar');
+    try {
+      const titleInput = container.querySelector('input[aria-label="New reminder"]');
+      expect(titleInput.className).toContain('col-span-2');
+      expect(titleInput.className).toContain('w-full');
+
+      const dueInput = container.querySelector('input[type="date"]');
+      const dueLabel = [...container.querySelectorAll('label')].find((label) => label.htmlFor === dueInput.id);
+      expect(dueLabel.textContent).toContain('Due date');
+      expect(dueLabel.textContent).toContain('optional');
+      expect(container.querySelector('button[aria-label="Add reminder"]')).toBeTruthy();
+
+      const title = [...container.querySelectorAll('li span.block')].find((span) => span.textContent === reminder);
+      expect(title.className).toContain('break-words');
+      expect(title.className).not.toContain('truncate');
+    } finally {
+      cleanup();
+      mockTasks.splice(0, mockTasks.length);
+    }
+  });
+});
 
 describe('Calendar teacher leave and overlapping classes', () => {
   it('shows Leave / Notice modal, previews overlapping classes & students, and posts scope CLASSES', async () => {
