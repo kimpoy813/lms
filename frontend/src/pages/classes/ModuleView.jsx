@@ -1,7 +1,7 @@
 // One module: chapter-by-chapter reading or full-module "book view".
 // Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, FileQuestion, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, FileQuestion, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -10,7 +10,7 @@ import LazyEditor from '../../components/LazyEditor.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, Input, PageLoader, ProgressBar, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, PageLoader, ProgressBar, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
 import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
@@ -72,8 +72,8 @@ function formatDuration(minutes) {
 
 function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
   return (
-    <div className="no-print flex flex-wrap items-center gap-1.5" role="group" aria-label="Reading display options">
-      <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5 text-xs">
+    <div className="no-print grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-1.5" role="group" aria-label="Reading display options">
+      <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
         <button
           type="button"
           onClick={() => onChange({ font: 'serif' })}
@@ -93,7 +93,7 @@ function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
           Sans
         </button>
       </div>
-      <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5 text-xs">
+      <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
         <span className="px-1.5 text-faint" aria-hidden="true"><Type className="size-3.5" /></span>
         {[
           ['sm', 'S', 'Smaller text'],
@@ -129,6 +129,7 @@ function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
         aria-pressed={isFullscreen}
         onClick={onToggleFullscreen}
         title={isFullscreen ? 'Exit full screen (or press Escape)' : 'View lesson full screen'}
+        className="col-span-2 w-full justify-center sm:col-span-1 sm:w-auto"
       >
         {isFullscreen ? 'Exit full screen' : 'Full screen'}
       </Button>
@@ -214,21 +215,22 @@ export default function ModuleView() {
         <div
           ref={readerRef}
           data-module-reader
-          className={cn(isFullscreen && 'min-h-dvh overflow-y-auto bg-canvas p-3 sm:p-6')}
+          className={cn('min-w-0', isFullscreen && 'min-h-dvh overflow-y-auto bg-canvas p-3 sm:p-6')}
         >
-          <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-1 basis-56 items-center gap-2.5">
-              <Link to={`${base}/modules`} className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-soft hover:text-brand"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
-              <span className="text-line-strong" aria-hidden="true">/</span>
-              <h2 className="min-w-0 truncate text-base font-semibold text-ink sm:text-lg">{mod.title}</h2>
-              {canManage && <StatusBadge status={mod.status} publishAt={mod.publishAt} />}
+          <div className="no-print mb-4 space-y-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Link to={`${base}/modules`} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-soft hover:text-brand sm:text-sm"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
+              <span className="shrink-0 text-line-strong" aria-hidden="true">/</span>
+              <h2 className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-ink sm:truncate sm:text-lg">{mod.title}</h2>
+              {canManage && <span className="shrink-0"><StatusBadge status={mod.status} publishAt={mod.publishAt} /></span>}
             </div>
             {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid gap-2.5 border-b border-line pb-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
                 <Segmented
                   label="Module reading mode"
                   value={viewMode}
                   onChange={(next) => switchView(next, mod)}
+                  className="w-full sm:w-auto"
                   options={[
                     { value: 'chapter', label: 'Chapter view', icon: BookText },
                     { value: 'book', label: 'Read as book', icon: BookOpen },
@@ -263,14 +265,33 @@ export default function ModuleView() {
 function LessonList({ mod, activeId, focus = false }) {
   const { canManage, base } = useClass();
   const [, setParams] = useSearchParams();
+  const activeIndex = mod.lessons.findIndex((l) => l.id === activeId);
+  const completedCount = mod.lessons.filter((l) => l.completed).length;
   return (
     <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', focus && 'lg:hidden')}>
       {/* A compact picker on phones, the full table of contents on larger screens. */}
       <div className="lg:hidden">
-        <Select aria-label="Choose a chapter" value={activeId ?? ''} onChange={(e) => setParams({ lesson: e.target.value })}>
-          {!activeId && <option value="">Choose a chapter…</option>}
-          {mod.lessons.map((l, i) => <option key={l.id} value={l.id} disabled={!canManage && l.locked}>Ch. {i + 1}: {l.title}{!canManage && l.completed ? ' (done)' : ''}</option>)}
-        </Select>
+        <Card padded={false} className="overflow-hidden">
+          <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand">Chapters</p>
+              <p className="mt-0.5 text-xs text-faint">{activeIndex >= 0 ? `Chapter ${activeIndex + 1} of ${mod.lessons.length}` : `${mod.lessons.length} chapters`}</p>
+            </div>
+            {!canManage && <span className="shrink-0 text-xs font-medium tabular-nums text-soft">{completedCount}/{mod.lessons.length} complete</span>}
+          </div>
+          <div className="p-3">
+            <Select aria-label="Choose a chapter" value={activeId ?? ''} onChange={(e) => setParams({ lesson: e.target.value })}>
+              {!activeId && <option value="">Choose a chapter…</option>}
+              {mod.lessons.map((l, i) => <option key={l.id} value={l.id} disabled={!canManage && l.locked}>Ch. {i + 1}: {l.title}{!canManage && l.completed ? ' (done)' : ''}</option>)}
+            </Select>
+            {!canManage && mod.lessonCount > 0 && (
+              <div className="mt-3 flex items-center gap-2.5 text-xs text-faint">
+                <ProgressBar value={mod.progressPercent} tone={mod.progressPercent === 100 ? 'ok' : 'brand'} label="Module reading progress" className="h-1.5" />
+                <span className="shrink-0 tabular-nums">{mod.progressPercent}%</span>
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
       <Card padded={false} className="hidden lg:block">
         {(mod.description || mod.objectives.length > 0) && (
@@ -377,24 +398,41 @@ function BookReader({ modSummary, prefs }) {
         const progressPercent = chapters.length ? Math.round((completedCount / chapters.length) * 100) : 0;
 
         return (
-          <div className={cn('grid grid-cols-1 gap-6', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
+          <div className={cn('grid min-w-0 grid-cols-1 gap-4 sm:gap-6', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
             <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', prefs.focus && 'lg:hidden')}>
               <div className="lg:hidden">
-                <Select
-                  aria-label="Jump to chapter"
-                  defaultValue=""
-                  onChange={(e) => {
-                    scrollToChapter(e.target.value);
-                    e.target.value = '';
-                  }}
-                >
-                  <option value="" disabled>Jump to chapter ({chapters.length})…</option>
-                  {chapters.map((ch) => (
-                    <option key={ch.id} value={ch.id}>
-                      Ch. {ch.chapterNumber}: {ch.title}{!canManage && ch.completed ? ' (done)' : ch.locked ? ' (locked)' : ''}
-                    </option>
-                  ))}
-                </Select>
+                <Card padded={false} className="overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-brand">Table of contents</p>
+                      {totalReadTime && <p className="mt-0.5 flex items-center gap-1 text-xs text-faint"><Clock className="size-3.5" aria-hidden="true" />About {totalReadTime} total</p>}
+                    </div>
+                    <span className="shrink-0 text-xs font-medium tabular-nums text-soft">{canManage ? `${chapters.length} chapters` : `${completedCount}/${chapters.length} complete`}</span>
+                  </div>
+                  {!canManage && chapters.length > 0 && (
+                    <div className="flex items-center gap-2.5 px-3.5 pt-3 text-xs text-faint">
+                      <ProgressBar value={progressPercent} tone={progressPercent === 100 ? 'ok' : 'brand'} label="Module reading progress" className="h-1.5" />
+                      <span className="shrink-0 tabular-nums">{progressPercent}%</span>
+                    </div>
+                  )}
+                  <div className="p-3">
+                    <Select
+                      aria-label="Jump to chapter"
+                      defaultValue=""
+                      onChange={(e) => {
+                        scrollToChapter(e.target.value);
+                        e.target.value = '';
+                      }}
+                    >
+                      <option value="" disabled>Jump to chapter…</option>
+                      {chapters.map((ch) => (
+                        <option key={ch.id} value={ch.id}>
+                          Ch. {ch.chapterNumber}: {ch.title}{!canManage && ch.completed ? ' (done)' : !canManage && ch.locked ? ' (locked)' : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </Card>
               </div>
               <Card padded={false} className="hidden lg:block">
                 <div className="border-b border-line p-4">
@@ -455,7 +493,7 @@ function BookReader({ modSummary, prefs }) {
               )}
 
               {/* Module Title / Front-Matter Page */}
-              <Card className="overflow-hidden border-t-4 border-t-brand print:border-0 print:shadow-none">
+              <Card className="overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none">
                 <div className="mx-auto max-w-[68ch]">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
@@ -498,13 +536,13 @@ function BookReader({ modSummary, prefs }) {
                               e.preventDefault();
                               scrollToChapter(ch.id);
                             }}
-                            className="flex items-center gap-3 px-3.5 py-2.5 text-sm transition-colors hover:bg-raised"
+                            className="flex items-start gap-3 px-3 py-3 text-sm transition-colors hover:bg-raised sm:px-3.5"
                           >
                             <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand-soft text-xs font-bold tabular-nums text-brand">
                               {ch.chapterNumber}
                             </span>
                             <span className="min-w-0 flex-1">
-                              <span className={cn('block truncate font-medium', !canManage && ch.locked ? 'text-faint' : 'text-ink')}>{ch.title}</span>
+                              <span className={cn('block line-clamp-2 break-words font-medium leading-snug', !canManage && ch.locked ? 'text-faint' : 'text-ink')}>{ch.title}</span>
                               <span className="block text-xs text-faint">
                                 {LESSON_KINDS[ch.kind] ?? 'Lesson'}{ch.estimatedMinutes ? ` · ${ch.estimatedMinutes} min` : ''}
                               </span>
@@ -539,7 +577,7 @@ function BookReader({ modSummary, prefs }) {
                 if (locked) {
                   return (
                     <article key={ch.id} id={`chapter-${ch.id}`} className="book-chapter scroll-mt-24">
-                      <Card className="border-dashed bg-raised/35">
+                      <Card className="border-dashed bg-raised/35 p-4 sm:p-6">
                         <div className="mx-auto flex max-w-[68ch] items-start gap-3">
                           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-raised text-faint"><Lock className="size-4" aria-hidden="true" /></span>
                           <div className="min-w-0 flex-1">
@@ -555,7 +593,7 @@ function BookReader({ modSummary, prefs }) {
 
                 return (
                   <article key={ch.id} id={`chapter-${ch.id}`} className="book-chapter scroll-mt-24">
-                    <Card className="print:border-0 print:shadow-none">
+                    <Card className="p-4 sm:p-6 print:border-0 print:shadow-none">
                       <div className="mx-auto max-w-[68ch]">
                         <header className="mb-6 border-b border-line pb-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -569,7 +607,7 @@ function BookReader({ modSummary, prefs }) {
                               </p>
                               <h2 className="mt-2.5 text-2xl font-bold tracking-tight text-ink sm:text-[1.65rem] text-balance">{ch.title}</h2>
                             </div>
-                            <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5">
+                            <div className="no-print flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:shrink-0">
                               <Button
                                 variant={offlineMap[ch.id] ? 'soft' : 'ghost'}
                                 size="sm"
@@ -683,7 +721,7 @@ function BookReader({ modSummary, prefs }) {
               })}
 
               {/* End-of-Module Epilogue */}
-              <Card className="no-print bg-raised/40">
+              <Card className="no-print bg-raised/40 p-4 sm:p-6">
                 <div className="mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-ink">
@@ -795,7 +833,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
               You are offline. Reading copy saved on this device {relativeTime(offlineEntry.savedAt)}.
             </Alert>
           )}
-          <Card className="print:border-0 print:shadow-none">
+          <Card className="p-4 sm:p-6 print:border-0 print:shadow-none">
             <div className="mx-auto max-w-[68ch]">
               <header className="mb-6 border-b border-line pb-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -809,7 +847,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                     </p>
                     <h1 className="mt-2.5 text-2xl font-bold tracking-tight text-ink sm:text-[1.7rem] text-balance">{lesson.title}</h1>
                   </div>
-                  <div className="no-print flex shrink-0 flex-wrap items-center gap-1.5">
+                  <div className="no-print hidden max-w-full flex-wrap items-center gap-1.5 sm:flex sm:w-full sm:justify-end lg:w-auto">
                     <Button
                       variant={savedOffline ? 'soft' : 'ghost'}
                       size="sm"
@@ -830,6 +868,30 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                     {canManage && !readOnly && <Button variant="secondary" size="sm" icon={Pencil} onClick={() => setEditing(true)}>Edit</Button>}
                     {canManage && !readOnly && <Button variant="dangerGhost" size="sm" icon={Trash2} onClick={() => setDialog('delete')} aria-label="Delete this lesson" />}
                   </div>
+                  {canManage ? (
+                    <div className="no-print flex w-full items-center gap-2 sm:hidden">
+                      {!readOnly && <Button variant="secondary" icon={Pencil} onClick={() => setEditing(true)} className="min-w-0 flex-1">Edit lesson</Button>}
+                      <Menu trigger={({ toggle, props }) => <IconButton icon={MoreHorizontal} label="More lesson actions" onClick={toggle} {...props} />}>
+                        <MenuItem icon={Download} onClick={() => toggleOffline(lesson)}>{savedOffline ? 'Remove offline copy' : 'Save offline'}</MenuItem>
+                        <MenuItem icon={Printer} onClick={() => window.print()}>Print lesson</MenuItem>
+                        <MenuItem icon={Share2} onClick={() => setDialog('post')}>Post to classes</MenuItem>
+                        {!readOnly && <MenuItem icon={FilePlus2} onClick={() => setDialog('new-assignment')}>New assignment</MenuItem>}
+                        {!readOnly && <MenuItem icon={ClipboardList} onClick={() => { setAssignmentNotice(null); setDialog('assignment'); }}>Create assignment draft</MenuItem>}
+                        {!readOnly && <MenuItem icon={FileQuestion} onClick={() => setDialog('quiz')}>Create quiz</MenuItem>}
+                        {!readOnly && <MenuItem icon={Trash2} tone="danger" onClick={() => setDialog('delete')}>Delete lesson</MenuItem>}
+                      </Menu>
+                    </div>
+                  ) : (
+                    <div className="no-print grid w-full grid-cols-2 gap-1.5 sm:hidden">
+                      <Button variant={savedOffline ? 'soft' : 'ghost'} size="sm" icon={savedOffline ? Check : Download} loading={savingOffline} aria-pressed={savedOffline} className={cn('w-full', savedOffline && 'text-ok')} onClick={() => toggleOffline(lesson)}>
+                        {savedOffline ? 'Offline ready' : 'Save offline'}
+                      </Button>
+                      <Button variant="ghost" size="sm" icon={lesson.bookmarked ? BookmarkCheck : Bookmark} aria-pressed={lesson.bookmarked} className={cn('w-full', lesson.bookmarked && 'text-brand')} onClick={() => bookmark.mutate(!lesson.bookmarked)}>
+                        {lesson.bookmarked ? 'Saved' : 'Save'}
+                      </Button>
+                      <Button variant="ghost" size="sm" icon={Printer} onClick={() => window.print()} className="col-span-2 w-full">Print lesson</Button>
+                    </div>
+                  )}
                 </div>
                 {lesson.objectives.length > 0 && (
                   <ul className="mt-3.5 space-y-1 text-sm text-soft">

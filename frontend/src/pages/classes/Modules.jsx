@@ -33,10 +33,10 @@ export default function Modules() {
   return (
     <>
       {canManage && (
-        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-          <Button variant="secondary" icon={Users} onClick={() => setDialog({ type: 'progress' })}>Student progress</Button>
-          <Button variant="secondary" icon={Sparkles} to="/ai">Draft with AI</Button>
-          <Button icon={FolderPlus} onClick={() => setDialog({ type: 'module' })} disabled={readOnly}>New module</Button>
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:items-center sm:justify-end">
+          <Button variant="secondary" icon={Users} onClick={() => setDialog({ type: 'progress' })} className="w-full justify-center sm:w-auto">Student progress</Button>
+          <Button variant="secondary" icon={Sparkles} to="/ai" className="w-full justify-center sm:w-auto">Draft with AI</Button>
+          <Button icon={FolderPlus} onClick={() => setDialog({ type: 'module' })} disabled={readOnly} className="col-span-2 w-full justify-center sm:col-span-1 sm:w-auto">New module</Button>
         </div>
       )}
       <QueryState query={query}>
@@ -87,13 +87,13 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
 
   return (
     <Card padded={false} className={cn(locked && 'opacity-80')}>
-      <div className="flex flex-wrap items-start gap-3 p-4 sm:flex-nowrap sm:p-5">
+      <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3 gap-y-3 p-4 sm:flex sm:items-start sm:gap-3 sm:p-5">
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={open ? 'Collapse module' : 'Expand module'} className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg text-soft hover:bg-raised">
           <ChevronDown className={cn('size-5 transition-transform', !open && '-rotate-90')} aria-hidden="true" />
         </button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 sm:flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-base font-semibold text-ink">
+            <h2 className="min-w-0 break-words text-base font-semibold text-ink">
               {canOpenBook ? (
                 <Link to={`${base}/modules/${m.id}?view=book`} className="hover:text-brand hover:underline">
                   {m.title}
@@ -105,9 +105,9 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
             {locked && <Badge icon={Lock}>Locked</Badge>}
             {!canManage && !locked && m.lessonCount > 0 && m.progressPercent === 100 && <Badge tone="ok" icon={CheckCircle2}>Completed</Badge>}
           </div>
-          {m.description && <p className="mt-1 line-clamp-2 max-w-4xl text-sm text-soft">{m.description}</p>}
+          {m.description && <p className="mt-1 line-clamp-2 max-w-4xl break-words text-sm text-soft">{m.description}</p>}
           {locked && <p className="mt-1 text-[13px] text-warn">{m.lockedReason}</p>}
-          <p className="mt-1.5 text-xs text-faint">
+          <p className="mt-1.5 text-xs leading-relaxed text-faint">
             {plural(m.lessonCount, 'chapter')}{totalMinutes > 0 ? ` · ~${totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60 ? `${totalMinutes % 60}m` : ''}`.trim() : `${totalMinutes} min`}` : ''}{m.resources.length > 0 ? ` · ${plural(m.resources.length, 'resource')}` : ''}{m.availableUntil ? ` · available until ${formatDateTime(m.availableUntil)}` : ''}
           </p>
           {!canManage && !locked && m.lessonCount > 0 && (
@@ -117,9 +117,9 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 max-sm:ml-11">
+        <div className={cn('col-span-2 flex min-w-0 items-center gap-2 pl-11 sm:ml-auto sm:shrink-0 sm:pl-0', !canOpenBook && !canManage && 'hidden')}>
           {canOpenBook && (
-            <Button size="sm" variant={canManage ? 'ghost' : 'secondary'} icon={BookOpen} to={`${base}/modules/${m.id}?view=book`}>
+            <Button size="sm" variant={canManage ? 'ghost' : 'secondary'} icon={BookOpen} to={`${base}/modules/${m.id}?view=book`} className="min-w-0 flex-1 justify-center sm:flex-none">
               Read as book
             </Button>
           )}
@@ -154,8 +154,8 @@ function ModuleCard({ module: m, modules, index, onMove, onEdit, onAddResource, 
                       : l.completed ? <CheckCircle2 className="size-5 shrink-0 text-ok" aria-label="Completed" />
                         : lessonLocked ? <Lock className="size-5 shrink-0 text-faint" aria-label="Locked" /> : <Circle className="size-5 shrink-0 text-line-strong" aria-label="Not completed yet" />}
                     <span className="min-w-0 flex-1">
-                      <span className={cn('block truncate text-sm font-medium', lessonLocked ? 'text-faint' : 'text-ink')}>{l.title}</span>
-                      <span className="block text-xs text-faint">{LESSON_KINDS[l.kind] ?? 'Lesson'}{l.estimatedMinutes ? ` · ${l.estimatedMinutes} min` : ''}{lessonLocked ? ' · finish the previous lesson first' : ''}</span>
+                      <span className={cn('block line-clamp-2 break-words text-sm font-medium leading-snug', lessonLocked ? 'text-faint' : 'text-ink')}>{l.title}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-faint">{LESSON_KINDS[l.kind] ?? 'Lesson'}{l.estimatedMinutes ? ` · ${l.estimatedMinutes} min` : ''}{lessonLocked ? ' · finish the previous lesson first' : ''}</span>
                     </span>
                     {canManage && l.status === 'DRAFT' && <Badge tone="warn">Draft</Badge>}
                     {isLessonSavedOffline(user?.id, l.id) && <Badge tone="ok" icon={Download}>Offline</Badge>}
@@ -295,29 +295,40 @@ function ProgressDialog({ onClose }) {
     <Modal open onClose={onClose} title="Student progress" description="Lessons each student has marked as completed (published modules only)." size="xl">
       <QueryState query={query}>
         {(data) => data.students.length === 0 || data.totalLessons === 0 ? <EmptyState compact icon={Users} title={data.totalLessons === 0 ? 'No published lessons yet' : 'No students yet'} /> : (
-          <Table className="shadow-none">
-            <thead>
-              <tr>
-                <Th>Student</Th>
-                <Th className="w-48">Overall</Th>
-                {data.modules.map((m) => <Th key={m.id} className="max-w-[10rem] truncate text-center" title={m.title}>{m.title.split(/[—:-]/)[0].trim().slice(0, 14)}</Th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {data.students.map((s) => (
-                <Tr key={s.id}>
-                  <Td className="font-medium">{s.name}</Td>
-                  <Td>
-                    <div className="flex items-center gap-2.5">
-                      <ProgressBar value={s.percent} tone={s.percent === 100 ? 'ok' : s.percent < 34 ? 'warn' : 'brand'} label={`${s.name} overall progress`} className="h-1.5" />
-                      <span className="w-9 shrink-0 text-right text-xs tabular-nums text-soft">{s.percent}%</span>
-                    </div>
-                  </Td>
-                  {data.modules.map((m) => <Td key={m.id} className="text-center tabular-nums text-soft">{s.modules[m.id] ?? 0}/{m.lessonCount}</Td>)}
-                </Tr>
-              ))}
-            </tbody>
-          </Table>
+          <>
+            <p className="mb-2 text-xs text-faint sm:hidden">Scroll sideways to see each module. Student names stay in view.</p>
+            <Table
+              className="max-h-[65dvh] overflow-y-auto overscroll-contain shadow-none"
+              tableClassName="min-w-[44rem]"
+              scrollLabel="Student progress by module. Scroll horizontally to see all modules."
+            >
+              <thead className="sticky top-0 z-20">
+                <tr>
+                  <Th className="sticky left-0 z-30 min-w-[12rem]">Student</Th>
+                  <Th className="min-w-[14rem]">Overall</Th>
+                  {data.modules.map((m) => (
+                    <Th key={m.id} className="min-w-[8rem] max-w-[11rem] text-center" title={m.title}>
+                      <span className="block line-clamp-2 whitespace-normal break-words leading-tight" title={m.title}>{m.title}</span>
+                    </Th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.students.map((s) => (
+                  <Tr key={s.id} className="group">
+                    <Td className="sticky left-0 z-10 min-w-[12rem] bg-surface font-medium group-hover:bg-raised/40">{s.name}</Td>
+                    <Td>
+                      <div className="flex min-w-[11rem] items-center gap-2.5">
+                        <ProgressBar value={s.percent} tone={s.percent === 100 ? 'ok' : s.percent < 34 ? 'warn' : 'brand'} label={`${s.name} overall progress`} className="h-1.5" />
+                        <span className="w-9 shrink-0 text-right text-xs tabular-nums text-soft">{s.percent}%</span>
+                      </div>
+                    </Td>
+                    {data.modules.map((m) => <Td key={m.id} className="min-w-[8rem] text-center tabular-nums text-soft">{s.modules[m.id] ?? 0}/{m.lessonCount}</Td>)}
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </>
         )}
       </QueryState>
     </Modal>

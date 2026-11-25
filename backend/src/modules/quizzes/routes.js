@@ -1202,6 +1202,10 @@ async function teacherAttemptView(attempt) {
     terminated: attempt.terminatedAt ? { at: attempt.terminatedAt, kind: attempt.terminationKind, text: violationText(attempt.terminationKind), secondsLeft: secondsLeftWhenEnded(attempt) } : null,
     // Reopened by a teacher. While `resumeSeconds` is set the student has not continued yet.
     reopened: attempt.reopenedAt ? { at: attempt.reopenedAt, resumeSeconds: attempt.resumeSeconds } : null,
+    ...(attempt.status === 'IN_PROGRESS' ? {
+      progress: { answered: answers.filter((answer) => isAnswered(answer.response)).length, total: answers.length },
+      lastSavedAt: attempt.lastSavedAt,
+    } : {}),
     serverTime: new Date(),
     parts: attempt.status === 'IN_PROGRESS' ? [] : parts,
     questions: attempt.status === 'IN_PROGRESS' ? null : answers.map((a, i) => reviewAnswer(a, files, { reveal: true, scores: true, part: partOf[i] })),
@@ -1496,6 +1500,20 @@ async function resultRows(quiz) {
     }),
     prisma.quizAttempt.findMany({ where: { quizId: quiz.id }, orderBy: { attemptNumber: 'asc' } }),
   ]);
+  const inProgressIds = attempts.filter((attempt) => attempt.status === 'IN_PROGRESS').map((attempt) => attempt.id);
+  const liveProgress = new Map();
+  if (inProgressIds.length > 0) {
+    const answers = await prisma.studentAnswer.findMany({
+      where: { attemptId: { in: inProgressIds } },
+      select: { attemptId: true, response: true },
+    });
+    for (const answer of answers) {
+      const progress = liveProgress.get(answer.attemptId) ?? { answered: 0, total: 0 };
+      progress.total += 1;
+      if (isAnswered(answer.response)) progress.answered += 1;
+      liveProgress.set(answer.attemptId, progress);
+    }
+  }
   const total = totalPoints(quiz);
   const now = new Date();
   return enrollments.map(({ status: enrollmentStatus, droppedAt, student }) => {
@@ -1518,6 +1536,11 @@ async function resultRows(quiz) {
       status: mine.some((a) => a.status === 'IN_PROGRESS') ? 'IN_PROGRESS' : mine.some((a) => a.terminatedAt) ? 'TERMINATED' : finished.length > 0 ? (finished.some((a) => a.needsManualGrading) ? 'NEEDS_GRADING' : 'GRADED') : missingDue ? 'MISSING' : 'NOT_STARTED',
       attempts: mine.map((a) => ({
         id: a.id, attemptNumber: a.attemptNumber, status: a.status, startedAt: a.startedAt, submittedAt: a.submittedAt, totalScore: a.totalScore, maxScore: a.maxScore, needsManualGrading: a.needsManualGrading,
+        ...(a.status === 'IN_PROGRESS' ? {
+          progress: liveProgress.get(a.id) ?? { answered: 0, total: 0 },
+          lastSavedAt: a.lastSavedAt,
+          deadlineAt: a.deadlineAt,
+        } : {}),
         terminated: a.terminatedAt ? { at: a.terminatedAt, kind: a.terminationKind, text: violationText(a.terminationKind) } : null,
         // Reopened by a teacher; `waiting` until the student continues.
         reopened: a.reopenedAt ? { at: a.reopenedAt, waiting: a.status === 'IN_PROGRESS' && a.resumeSeconds !== null } : null,
@@ -1573,6 +1596,7 @@ quizzesRouter.get('/:quizId/results', validate({ params: quizParams }), async (r
     students: rows,
     stats: {
       submitted: rows.filter((r) => r.attempts.some((a) => FINISHED.includes(a.status))).length,
+      inProgress: rows.filter((r) => r.status === 'IN_PROGRESS').length,
       needsGrading: rows.filter((r) => r.status === 'NEEDS_GRADING').length,
       canBeMarked: again.filter((a) => markedAgain(a) !== null).length,
       // Students with an attempt that was ended for a rule violation and not yet decided on.

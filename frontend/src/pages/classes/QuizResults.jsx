@@ -1,11 +1,11 @@
 // Quiz results for the teacher: who took it, what needs grading, how each question performed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, BarChart3, CheckCircle2, ChevronLeft, Download, Eye, EyeOff, FileQuestion, History, MonitorOff, RotateCcw, ShieldAlert, Trash2, Users } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, CheckCircle2, ChevronLeft, Download, Eye, EyeOff, FileQuestion, History, MonitorOff, RotateCcw, ShieldAlert, Trash2, Users } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Avatar, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, Input, Menu, MenuItem, Modal, ProgressBar, QueryState, StatCard, Table, Tabs, Td, Textarea, Th, Tr } from '../../components/ui.jsx';
+import { Alert, Avatar, Badge, Button, Card, CardHeader, cn, ConfirmDialog, EmptyState, Field, Input, Menu, MenuItem, Modal, ProgressBar, QueryState, StatCard, Table, Tabs, Td, Textarea, Th, Tr } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDateTime, formatPercent, formatScore, formatSpan, formatTime, formatTimeExact, fromLocalInput, plural, titleCase, toLocalInput } from '../../lib/format.js';
 import { useAction } from '../../lib/query.js';
@@ -33,7 +33,12 @@ export default function QuizResults() {
   const tab = params.get('tab') ?? 'students';
   const attemptId = params.get('attempt');
   const key = ['class', cls.id, 'quiz', quizId, 'results'];
-  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/quizzes/${quizId}/results`), enabled: canManage, refetchInterval: 30_000 });
+  const query = useQuery({
+    queryKey: key,
+    queryFn: () => api.get(`/quizzes/${quizId}/results`),
+    enabled: canManage,
+    refetchInterval: (q) => (q.state.data?.stats?.inProgress > 0 ? 5_000 : 15_000),
+  });
   const invalidate = [key, ['class', cls.id, 'quizzes'], ['class', cls.id, 'quiz', quizId], ['class', cls.id, 'gradebook'], ['dashboard']];
 
   const release = useAction((confirmPending) => api.post(`/quizzes/${quizId}/results/publish`, { confirmPending }), {
@@ -60,6 +65,7 @@ export default function QuizResults() {
     <QueryState query={query}>
       {(data) => {
         const { quiz, stats, students } = data;
+        const liveStudents = students.filter((student) => student.status === 'IN_PROGRESS');
         const manual = quiz.resultVisibility === 'MANUAL';
         return (
           <>
@@ -102,12 +108,15 @@ export default function QuizResults() {
               </Alert>
             )}
 
-            <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-5">
               <StatCard label="Submitted" value={`${stats.submitted}/${students.length}`} icon={Users} />
+              <StatCard label="Taking now" value={liveStudents.length} icon={Activity} tone={liveStudents.length > 0 ? 'warn' : 'brand'} hint={liveStudents.length > 0 ? 'Live progress available below' : 'No active attempts'} />
               <StatCard label="Needs grading" value={stats.needsGrading} icon={FileQuestion} tone={stats.needsGrading > 0 ? 'info' : 'ok'} hint={stats.needsGrading > 0 ? 'Waiting for your grade' : 'Nothing waiting'} />
               <StatCard label="Class average" value={stats.average === null ? '—' : formatPercent(stats.average)} icon={BarChart3} hint={stats.highest !== null ? `Highest ${formatPercent(stats.highest, 0)} · lowest ${formatPercent(stats.lowest, 0)}` : 'No scores yet'} />
               <StatCard label="Passed" value={quiz.passingPercent == null ? '—' : stats.passed} icon={CheckCircle2} tone="ok" hint={quiz.passingPercent == null ? 'No passing score set' : `Passing score ${quiz.passingPercent}%`} />
             </div>
+
+            {liveStudents.length > 0 && <LiveMonitoring students={liveStudents} onFollow={(id) => setParams({ attempt: id })} />}
 
             <Tabs className="mb-4" value={tab} onChange={(t) => setParams(t === 'students' ? {} : { tab: t })} tabs={[{ value: 'students', label: 'Students', icon: Users }, { value: 'analysis', label: 'Question analysis', icon: BarChart3 }]} />
 
@@ -167,6 +176,47 @@ export default function QuizResults() {
         );
       }}
     </QueryState>
+  );
+}
+
+function LiveMonitoring({ students, onFollow }) {
+  return (
+    <Card className="mb-5 border-warn/30">
+      <CardHeader
+        icon={Activity}
+        title="Live monitoring"
+        description="Progress refreshes every five seconds while students are taking this quiz or exam."
+        action={<Badge tone="warn">{plural(students.length, 'student')} taking it now</Badge>}
+      />
+      <ul className="divide-y divide-line">
+        {students.map((student) => {
+          const attempt = student.attempts.find((item) => item.status === 'IN_PROGRESS');
+          if (!attempt) return null;
+          const progress = attempt.progress ?? { answered: 0, total: 0 };
+          const waiting = attempt.reopened?.waiting;
+          return (
+            <li key={student.student.id} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-3">
+                <Avatar name={student.student.name} size={36} />
+                <div className="min-w-0 flex-1 basis-40">
+                  <p className="truncate text-sm font-semibold text-ink">{student.student.lastName}, {student.student.firstName}</p>
+                  <p className="text-xs text-faint">Attempt {attempt.attemptNumber} · {waiting ? 'Reopened, waiting to continue' : 'In progress'}</p>
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => onFollow(attempt.id)}>Follow</Button>
+              </div>
+              <div className="mt-3 sm:ml-12">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+                  <span className="font-semibold tabular-nums text-ink">{progress.answered} of {progress.total} questions answered</span>
+                  <span className="text-faint">{attempt.lastSavedAt ? `Last saved ${formatDateTime(attempt.lastSavedAt)}` : 'No answers saved yet'}</span>
+                </div>
+                <ProgressBar value={progress.answered} max={progress.total} label={`${student.student.name}'s quiz progress`} className="mt-1.5" />
+                {attempt.deadlineAt && <p className="mt-1 text-xs text-faint">Deadline {formatDateTime(attempt.deadlineAt)}</p>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }
 
@@ -279,7 +329,7 @@ function AttemptDialog({ attemptId, invalidate, onClose }) {
   const { cls } = useClass();
   const key = ['attempt', attemptId, 'teacher'];
   // An attempt that is being answered is followed live.
-  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/attempts/${attemptId}`), refetchInterval: (q) => (q.state.data?.status === 'IN_PROGRESS' ? 10_000 : false) });
+  const query = useQuery({ queryKey: key, queryFn: () => api.get(`/attempts/${attemptId}`), refetchInterval: (q) => (q.state.data?.status === 'IN_PROGRESS' ? 5_000 : false) });
   const [dialog, setDialog] = useState(null); // 'remove' | 'reopen' | 'count'
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState(null);
@@ -326,11 +376,21 @@ function AttemptDialog({ attemptId, invalidate, onClose }) {
             {!ended && (
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl bg-raised px-4 py-3">
                 {running ? (
-                  <p className="text-sm text-soft">
-                    {waiting ? <>Reopened {formatDateTime(attempt.reopened.at)}. The student has <strong className="text-ink">{formatSpan(attempt.reopened.resumeSeconds)}</strong> from the moment they continue{attempt.deadlineAt ? <>, and must continue by <strong className="text-ink">{formatDateTime(attempt.deadlineAt)}</strong></> : null}.</>
-                      : <>The student is answering now{attempt.deadlineAt ? <>, until <strong className="text-ink">{formatDateTime(attempt.deadlineAt)}</strong> at the latest</> : null}. The answers appear here once the attempt is handed in.</>}
-                    {attempt.underRules && attempt.quiz.strictMode && !waiting ? <> Violations so far: <strong className="text-ink">{attempt.violationCount}</strong> of {attempt.quiz.violationWarnings} that only draw a warning.</> : null}
-                  </p>
+                  <>
+                    <div className="min-w-[12rem] flex-1">
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="font-medium text-soft">Progress</span>
+                        <span className="font-semibold tabular-nums text-ink">{attempt.progress?.answered ?? 0} of {attempt.progress?.total ?? 0} answered</span>
+                      </div>
+                      <ProgressBar value={attempt.progress?.answered ?? 0} max={attempt.progress?.total ?? 0} label={`${attempt.student.name}'s quiz progress`} className="mt-2" />
+                      <p className="mt-1 text-xs text-faint">{attempt.lastSavedAt ? `Last saved ${formatDateTime(attempt.lastSavedAt)}` : 'No answers saved yet'}</p>
+                    </div>
+                    <p className="min-w-[12rem] flex-1 text-sm text-soft">
+                      {waiting ? <>Reopened {formatDateTime(attempt.reopened.at)}. The student has <strong className="text-ink">{formatSpan(attempt.reopened.resumeSeconds)}</strong> from the moment they continue{attempt.deadlineAt ? <>, and must continue by <strong className="text-ink">{formatDateTime(attempt.deadlineAt)}</strong></> : null}.</>
+                        : <>The student is answering now{attempt.deadlineAt ? <>, until <strong className="text-ink">{formatDateTime(attempt.deadlineAt)}</strong> at the latest</> : null}. The answers appear here once the attempt is handed in.</>}
+                      {attempt.underRules && attempt.quiz.strictMode && !waiting ? <> Violations so far: <strong className="text-ink">{attempt.violationCount}</strong> of {attempt.quiz.violationWarnings} that only draw a warning.</> : null}
+                    </p>
+                  </>
                 ) : (
                   <>
                     <div><p className="text-xs font-medium text-faint">Score</p><p className="text-2xl font-bold tabular-nums text-ink">{formatScore(attempt.totalScore)}<span className="text-base font-semibold text-faint"> / {formatScore(attempt.maxScore)}</span></p></div>
