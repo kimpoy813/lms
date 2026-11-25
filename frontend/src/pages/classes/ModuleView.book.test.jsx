@@ -43,6 +43,8 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
         chapterNumber: 1,
         objectives: ['Distinguish cohesion from coupling'],
         contentHtml: '<h3>1. Introduction</h3><p>Modularity breaks a system into understandable parts.</p><blockquote><p><strong>Key Concept:</strong> High cohesion keeps related logic together.</p></blockquote><table><caption>Key terms</caption><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td>Cohesion</td><td>How closely related the responsibilities of a module are.</td></tr></tbody></table>',
+        visual: { title: 'From components to systems', description: 'Build the design in three steps.', steps: ['Group related responsibilities', 'Connect modules with clear interfaces', 'Verify the full system'] },
+        selfCheck: { prompt: 'What supports high cohesion?', options: ['Related responsibilities in one module', 'Unrelated code in one module', 'Hidden dependencies'], correctIndex: 0, explanation: 'A module should keep closely related work together.' },
         resources: [],
         bookmarked: false,
         locked: false,
@@ -71,6 +73,8 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
     estimatedMinutes: 30,
     objectives: ['Distinguish cohesion from coupling'],
     contentHtml: '<h3>1. Introduction</h3><p>Modularity breaks a system into understandable parts.</p>',
+    visual: { title: 'From components to systems', description: 'Build the design in three steps.', steps: ['Group related responsibilities', 'Connect modules with clear interfaces', 'Verify the full system'] },
+    selfCheck: { prompt: 'What supports high cohesion?', options: ['Related responsibilities in one module', 'Unrelated code in one module', 'Hidden dependencies'], correctIndex: 0, explanation: 'A module should keep closely related work together.' },
     resources: [],
     previous: null,
     next: { id: 'les-2', title: 'Dependency Rules & Pitfalls', locked: true },
@@ -339,6 +343,10 @@ describe('Module book-like reader & outline CTA', () => {
     expect(container.textContent).toContain('Chapter 1 of 2');
     expect(container.textContent).toContain('Foundations of Modularity');
     expect(container.textContent).toContain('Modularity breaks a system into understandable parts.');
+    expect(container.textContent).toContain('From components to systems');
+    expect(container.textContent).toContain('Quick check');
+    expect(container.querySelectorAll('svg[role="img"]')).toHaveLength(1);
+    expect(container.textContent).toContain('What supports high cohesion?');
     const rich = container.querySelector('.rich-book');
     expect(rich).not.toBeNull();
     expect(rich.className).toContain('rich-book-serif');

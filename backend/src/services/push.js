@@ -20,6 +20,7 @@ const HIGH_URGENCY_TYPES = new Set([
   'quiz.closing_soon',
   'push.test',
 ]);
+const GENERIC_PUSH_TITLES = new Set(['discenda', 'edusphere', 'notification', 'new notification', 'new message']);
 
 const EMPTY_BODY_FALLBACKS = {
   'module.published': 'A new learning module is ready to read in Discenda.',
@@ -61,9 +62,14 @@ function ensureVapid() {
 }
 
 export function buildPushPayload(notification = {}) {
-  const title = String(notification.title ?? 'Discenda').trim().slice(0, 120) || 'Discenda';
-  const rawBody = notification.body ? String(notification.body).trim().slice(0, 300) : '';
+  const rawBody = notification.body ? String(notification.body).trim().slice(0, 500) : '';
   const body = rawBody || EMPTY_BODY_FALLBACKS[notification.type] || 'Open Discenda to view details.';
+  const suppliedTitle = String(notification.title ?? '').trim().slice(0, 200);
+  const specificTitle = GENERIC_PUSH_TITLES.has(suppliedTitle.toLowerCase()) ? '' : suppliedTitle;
+  // If an upstream event omitted its title (or supplied only the app name), use the event detail.
+  // This keeps useful information visible on notification surfaces that collapse the body.
+  const bodyTitle = body.length > 200 ? `${body.slice(0, 199).trimEnd()}…` : body;
+  const title = specificTitle || bodyTitle || 'New notification';
   const tag = notification.tag
     ? String(notification.tag).slice(0, 80)
     : `${notification.type ?? 'discenda'}-${notification.id ?? randomUUID().slice(0, 8)}`;

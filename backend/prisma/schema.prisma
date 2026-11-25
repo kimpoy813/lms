@@ -1019,6 +1019,9 @@ model Lesson {
   /// Sanitised HTML produced by the rich-text editor.
   contentHtml          String        @default("")
   objectives           Json          @default("[]")
+  /// Optional, validated learning aids rendered by the app (never executable HTML).
+  visual               Json?
+  selfCheck            Json?
   /// Free-form label used to group AI-generated sections (e.g. "Introduction", "Activities").
   kind                 String        @default("LESSON")
   position             Int           @default(0)

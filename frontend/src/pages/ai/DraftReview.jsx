@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AlsoPostToClasses } from '../../components/ClassTargets.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
+import { LearningFeaturesEditor, LearningVisual, QuickCheck } from '../../components/LearningFeatures.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
 import { Alert, Badge, Button, Card, CardHeader, Checkbox, cn, ConfirmDialog, Field, IconButton, Input, Modal, PageHeader, PageLoader, Select, Textarea } from '../../components/ui.jsx';
@@ -124,7 +125,13 @@ function Review({ draft, onBack, configured }) {
                 </div>
                 {open === i && (
                   <div className="space-y-4 border-t border-line p-4">
-                    {locked ? <RichText html={l.contentHtml} /> : (
+                    {locked ? (
+                      <>
+                        <RichText html={l.contentHtml} />
+                        {l.visual && <LearningVisual visual={l.visual} />}
+                        {l.selfCheck && <QuickCheck check={l.selfCheck} />}
+                      </>
+                    ) : (
                       <>
                         <div className="grid gap-4 sm:grid-cols-[1fr_11rem_8rem]">
                           <Field label="Title"><Input value={l.title} onChange={(e) => setLesson(i, { title: e.target.value })} maxLength={200} /></Field>
@@ -132,6 +139,7 @@ function Review({ draft, onBack, configured }) {
                           <Field label="Minutes"><Input type="number" min="1" max="600" value={l.estimatedMinutes ?? ''} onChange={(e) => setLesson(i, { estimatedMinutes: e.target.value ? Number(e.target.value) : null })} /></Field>
                         </div>
                         <LazyEditor key={`${i}-${l.rewriteKey ?? 0}`} value={l.contentHtml} onChange={(html) => setLesson(i, { contentHtml: html })} minHeight={260} ariaLabel={`Content of lesson ${i + 1}`} />
+                        <LearningFeaturesEditor visual={l.visual} selfCheck={l.selfCheck} onChange={(patch) => setLesson(i, patch)} />
                         <div className="flex justify-end"><Button size="sm" variant="secondary" icon={Wand2} disabled={!configured} title={configured ? undefined : 'AI is not set up on this server'} onClick={() => setDialog({ rewrite: i })}>Rewrite with AI…</Button></div>
                       </>
                     )}

@@ -326,6 +326,8 @@ contentRouter.get('/modules/:moduleId/book', validate({ params: idParams('module
       updatedAt: full?.updatedAt ?? null,
       objectives: locked ? [] : (full?.objectives ?? []),
       contentHtml: locked ? null : (full?.contentHtml ?? ''),
+      visual: locked ? null : (full?.visual ?? null),
+      selfCheck: locked ? null : (full?.selfCheck ?? null),
       resources: locked ? [] : (resourcesByLesson.get(summary.id) ?? []),
       lockedReason: locked
         ? (prereq ? `Complete Chapter ${view.lessons.indexOf(prereq) + 1} (“${prereq.title}”) to unlock this chapter.` : 'Complete the previous required chapter first.')
@@ -430,7 +432,7 @@ export async function copyModule(tx, mod, targetClassId, userId, position, { sta
     const made = await tx.lesson.create({
       data: {
         moduleId: copy.id, title: lesson.title, contentHtml: lesson.contentHtml, objectives: lesson.objectives, kind: lesson.kind, position: lesson.position,
-        estimatedMinutes: lesson.estimatedMinutes, status: lesson.status,
+        estimatedMinutes: lesson.estimatedMinutes, visual: lesson.visual, selfCheck: lesson.selfCheck, status: lesson.status,
       },
     });
     lessonMap.set(lesson.id, made.id);
@@ -488,12 +490,31 @@ contentRouter.post('/modules/:moduleId/copy', validate({ params: idParams('modul
 });
 
 // ── Lessons ──────────────────────────────────────────────────────────────────
+const featureText = (limit) => z.string().trim().min(1).max(limit * 4).transform((value) => plainText(value, limit)).pipe(z.string().min(1).max(limit));
+const lessonVisualBody = z.object({
+  title: featureText(120),
+  description: featureText(300),
+  steps: z.array(featureText(180)).min(2).max(5),
+}).nullable().optional();
+const lessonSelfCheckBody = z.object({
+  prompt: featureText(500),
+  options: z.array(featureText(240)).min(2).max(5),
+  correctIndex: z.number().int().min(0).max(4),
+  explanation: featureText(700),
+}).superRefine((value, ctx) => {
+  if (value.correctIndex >= value.options.length) {
+    ctx.addIssue({ code: 'custom', path: ['correctIndex'], message: 'Choose one of the answer options.' });
+  }
+}).nullable().optional();
+
 const lessonBody = z.object({
   title: zTitle,
   contentHtml: zHtml.default(''),
   objectives: objectives.optional(),
   kind: z.enum(LESSON_KINDS).default('LESSON'),
   estimatedMinutes: z.number().int().min(1).max(600).nullable().optional(),
+  visual: lessonVisualBody,
+  selfCheck: lessonSelfCheckBody,
   status: z.enum(['DRAFT', 'PUBLISHED']).default('PUBLISHED'),
   prerequisiteLessonId: zId.nullable().optional(),
 });
@@ -553,6 +574,8 @@ contentRouter.post('/modules/:moduleId/lessons', validate({ params: idParams('mo
         objectives: cleanObjectives,
         kind: body.kind,
         estimatedMinutes: body.estimatedMinutes ?? null,
+        visual: body.visual ?? null,
+        selfCheck: body.selfCheck ?? null,
         status: body.status,
         prerequisiteLessonId: body.prerequisiteLessonId ?? null,
         position: (last._max.position ?? -1) + 1,
@@ -576,6 +599,8 @@ contentRouter.post('/modules/:moduleId/lessons', validate({ params: idParams('mo
           objectives: cleanObjectives,
           kind: body.kind,
           estimatedMinutes: body.estimatedMinutes ?? null,
+          visual: body.visual ?? null,
+          selfCheck: body.selfCheck ?? null,
           status: body.status,
           prerequisiteLessonId: null,
           position: (tLast._max.position ?? -1) + 1,
@@ -654,6 +679,8 @@ contentRouter.post('/lessons/:lessonId/copy', validate({ params: idParams('lesso
           objectives: source.objectives,
           kind: source.kind,
           estimatedMinutes: source.estimatedMinutes,
+          visual: source.visual,
+          selfCheck: source.selfCheck,
           status: body.status ?? (sameModule ? 'DRAFT' : source.status),
           prerequisiteLessonId: null,
           position: (last._max.position ?? -1) + 1,
@@ -741,6 +768,8 @@ async function lessonDetail(user, lessonId, { markViewed = false } = {}) {
     title: lesson.title,
     contentHtml: lesson.contentHtml,
     objectives: lesson.objectives,
+    visual: lesson.visual ?? null,
+    selfCheck: lesson.selfCheck ?? null,
     kind: lesson.kind,
     estimatedMinutes: lesson.estimatedMinutes,
     prerequisiteLessonId: lesson.prerequisiteLessonId,
@@ -819,6 +848,8 @@ contentRouter.patch('/lessons/:lessonId', validate({ params: idParams('lessonId'
       ...(body.title !== undefined ? { title: plainText(body.title, 200) } : {}),
       ...(body.contentHtml !== undefined ? { contentHtml: sanitizeRichText(body.contentHtml) } : {}),
       ...(body.objectives !== undefined ? { objectives: cleanList(body.objectives) } : {}),
+      ...(body.visual !== undefined ? { visual: body.visual } : {}),
+      ...(body.selfCheck !== undefined ? { selfCheck: body.selfCheck } : {}),
       ...(body.kind !== undefined ? { kind: body.kind } : {}),
       ...(body.estimatedMinutes !== undefined ? { estimatedMinutes: body.estimatedMinutes } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),

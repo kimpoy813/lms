@@ -66,11 +66,29 @@ aiRouter.get('/status', async (req, res) => {
 
 // ── Shapes of AI output (validated and sanitised before anything is stored) ───
 const list = (max, len) => z.array(z.string().max(len * 4)).max(max * 3).default([]).transform((items) => items.map((i) => plainText(i, len)).filter(Boolean).slice(0, max));
+const plainAiText = (max) => z.string().max(max * 4).transform((value) => plainText(value, max)).pipe(z.string().min(1).max(max));
+const visualShape = z.object({
+  title: plainAiText(120),
+  description: plainAiText(300),
+  steps: z.array(plainAiText(180)).min(2).max(5),
+}).nullable().optional().transform((value) => value ?? null);
+const selfCheckShape = z.object({
+  prompt: plainAiText(500),
+  options: z.array(plainAiText(240)).min(2).max(5),
+  correctIndex: z.number().int().min(0).max(4),
+  explanation: plainAiText(700),
+}).superRefine((value, ctx) => {
+  if (value.correctIndex >= value.options.length) {
+    ctx.addIssue({ code: 'custom', path: ['correctIndex'], message: 'Choose one of the answer options.' });
+  }
+}).nullable().optional().transform((value) => value ?? null);
 const lessonShape = z.object({
   title: z.string().min(1).max(600).transform((t) => plainText(t, 200)),
   kind: z.string().optional().transform((k) => (LESSON_KINDS.includes(String(k).toUpperCase()) ? String(k).toUpperCase() : 'LESSON')),
   estimatedMinutes: z.coerce.number().optional().transform((n) => (Number.isFinite(n) && n >= 1 ? Math.min(600, Math.round(n)) : null)),
   contentHtml: z.string().max(200_000).default('').transform((h) => sanitizeRichText(h)),
+  visual: visualShape,
+  selfCheck: selfCheckShape,
 });
 const moduleShape = z.object({
   title: z.string().min(1).max(600).transform((t) => plainText(t, 200)),
@@ -178,11 +196,14 @@ function modulePrompt(b, cls, references) {
     '',
     'Answer with one JSON object and nothing else:',
     `{ "title": string, "overview": string (3-5 engaging sentences introducing the module as a cohesive course reader), "objectives": [string] (4-6 measurable objectives),
-  "lessons": [{ "title": string, "kind": "LESSON" | "ACTIVITY" | "SUMMARY", "estimatedMinutes": number (realistic study time, typically 20-45), "contentHtml": string }],
+  "lessons": [{ "title": string, "kind": "LESSON" | "ACTIVITY" | "SUMMARY", "estimatedMinutes": number (realistic study time, typically 20-45), "contentHtml": string,
+    "visual": { "title": string, "description": string, "steps": [string] (2-5 short, topic-specific stages or connected concepts) },
+    "selfCheck": { "prompt": string, "options": [string] (2-5 choices), "correctIndex": number (zero-based), "explanation": string } }],
   "activities": [{ "title": string, "instructions": string }] (2-3 substantial practice activities),
   "assessment": ${b.includeAssessment ? '[question] (6-10 questions of mixed types)' : '[]'},
   "references": [string] }`,
     'Write each lesson so a student can read it smoothly like a chapter in a textbook—with connected narrative paragraphs, clear explanations of "why" and "how", intuitive analogies, and explicit transitions between ideas rather than sparse bullet fragments.',
+    'For every lesson, create a topic-specific visual pathway: use 2–5 short steps that show an actual process, causal chain, or relationship from that lesson—not generic study advice. Also create one ungraded multiple-choice self-check with 2–5 plausible choices, exactly one correct answer at correctIndex, and feedback that explains the reasoning. The answer is revealed only after a learner checks their choice.',
     'Inside every standard LESSON contentHtml, include structured sections with headings: (1) <h3>Introduction & Why It Matters</h3>, (2) <h3>Core Concepts & Explanation</h3> with <h4> subsections and a comparison <table> where contrasting ideas exist, (3) <h3>Worked Examples</h3> with step-by-step walkthroughs (<ol> and <pre><code> where code/math applies), (4) a <blockquote><p><strong>Key Concept:</strong> ...</p></blockquote> highlight box, (5) <h3>Common Pitfalls & Misconceptions</h3>, and (6) <h3>Check Your Understanding</h3> with 2-3 self-reflection prompts.',
     'contentHtml uses only these tags: <h3> <h4> <p> <ul> <ol> <li> <strong> <em> <blockquote> <pre> <code> <table> <tr> <th> <td>. End the module with a thorough SUMMARY lesson containing a synthesis narrative, vocabulary review table, and mastery checklist.',
     b.includeAssessment ? QUESTION_GUIDE : null,
@@ -428,8 +449,8 @@ aiRouter.post(
         `This lesson is part of the module "${content.title}".`,
         `Rewrite it following this instruction from the teacher: ${req.valid.body.instruction}`,
         'Write it so a student can read it smoothly like a textbook chapter (with clear section headings, explanatory paragraphs, examples, and a quick self-check), unless the teacher explicitly asks for a shorter summary or bullet points.',
-        'Answer with one JSON object: { "title": string, "kind": string, "estimatedMinutes": number, "contentHtml": string } using only these HTML tags: <h3> <h4> <p> <ul> <ol> <li> <strong> <em> <blockquote> <pre> <code> <table> <tr> <th> <td>.',
-        `<reference name="current lesson">\n${JSON.stringify({ title: lesson.title, contentHtml: lesson.contentHtml })}\n</reference>`,
+        'Answer with one JSON object containing title, kind, estimatedMinutes, contentHtml, visual, and selfCheck. Use only these contentHtml tags: <h3> <h4> <p> <ul> <ol> <li> <strong> <em> <blockquote> <pre> <code> <table> <tr> <th> <td>. The visual must be { title, description, steps } with 2–5 accurate short steps; selfCheck must be { prompt, options, correctIndex, explanation } with one correct multiple-choice answer. Preserve or improve the existing visual and self-check unless the teacher specifically asks to change them.',
+        `<reference name="current lesson">\n${JSON.stringify({ title: lesson.title, contentHtml: lesson.contentHtml, visual: lesson.visual, selfCheck: lesson.selfCheck })}\n</reference>`,
       ].join('\n'),
       task: {
         kind: 'lesson-rewrite',
@@ -439,8 +460,15 @@ aiRouter.post(
     await recordUsage(req.user.id, 'SECTION', out, g.generationRequestId);
     const parsed = lessonShape.safeParse(out.data);
     if (!parsed.success) throw new AppError(502, 'AI_FAILED', 'The AI service returned a lesson in an unexpected shape. Please try again.');
+    // Older and custom providers may still return only lesson prose. Keep the reviewed learning
+    // aids intact unless the provider explicitly returns replacements.
+    const suggestion = {
+      ...parsed.data,
+      visual: Object.hasOwn(out.data ?? {}, 'visual') ? parsed.data.visual : lesson.visual ?? null,
+      selfCheck: Object.hasOwn(out.data ?? {}, 'selfCheck') ? parsed.data.selfCheck : lesson.selfCheck ?? null,
+    };
     // Returned as a suggestion: the teacher decides whether to keep it (PUT saves the draft).
-    ok(res, { index: req.valid.params.index, lesson: parsed.data });
+    ok(res, { index: req.valid.params.index, lesson: suggestion });
   },
 );
 
@@ -466,6 +494,8 @@ aiRouter.post(
       contentHtml: sanitizeRichText(l.contentHtml ?? ''),
       kind: LESSON_KINDS.includes(l.kind) ? l.kind : 'LESSON',
       estimatedMinutes: l.estimatedMinutes ?? null,
+      visual: l.visual ?? null,
+      selfCheck: l.selfCheck ?? null,
       position,
       status: 'PUBLISHED',
     }));
@@ -541,6 +571,15 @@ aiRouter.get('/generated/:generatedId/export', validate({ params: idParams('gene
   for (const [i, lesson] of (c.lessons ?? []).entries()) {
     blocks.push({ type: 'h1', text: `${i + 1}. ${lesson.title}` });
     blocks.push(...htmlToBlocks(lesson.contentHtml));
+    if (lesson.visual) {
+      blocks.push({ type: 'h2', text: lesson.visual.title }, { type: 'p', text: lesson.visual.description });
+      for (const [stepIndex, step] of (lesson.visual.steps ?? []).entries()) blocks.push({ type: 'li', text: `${stepIndex + 1}. ${step}` });
+    }
+    if (lesson.selfCheck) {
+      blocks.push({ type: 'h2', text: 'Ungraded quick check' }, { type: 'p', text: lesson.selfCheck.prompt });
+      for (const [choiceIndex, choice] of (lesson.selfCheck.options ?? []).entries()) blocks.push({ type: 'li', text: `${String.fromCharCode(65 + choiceIndex)}. ${choice}` });
+      blocks.push({ type: 'p', text: `Answer: ${lesson.selfCheck.options?.[lesson.selfCheck.correctIndex] ?? ''}. ${lesson.selfCheck.explanation}` });
+    }
   }
   if ((c.activities ?? []).length) {
     blocks.push({ type: 'h1', text: 'Practice activities' });

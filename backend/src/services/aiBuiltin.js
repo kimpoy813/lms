@@ -1263,6 +1263,37 @@ function buildGenericChapterProse({
   return out;
 }
 
+function learningVisualForLesson(title, contentHtml, { isFilipino = false } = {}) {
+  const headings = [...String(contentHtml ?? '').matchAll(/<h[34]\b[^>]*>([\s\S]*?)<\/h[34]>/gi)]
+    .map((match) => cleanLine(stripHtmlKeepBreaks(match[1]), 100))
+    .filter((heading) => heading && !/check your understanding|self-check|sariling pag-unawa/i.test(heading));
+  const steps = uniqueStrings(headings).slice(0, 5);
+  const pathway = steps.length >= 2 ? steps : [
+    isFilipino ? `Unawain ang pangunahing ideya ng ${title}` : `Understand the key idea in ${title}`,
+    isFilipino ? 'Ilapat ito sa isang halimbawa' : 'Apply it to a worked example',
+    isFilipino ? 'Suriin ang sagot at pangangatwiran' : 'Check the result and reasoning',
+  ];
+  return {
+    title: isFilipino ? `Gabay Biswal: ${cleanLine(title, 90)}` : `${cleanLine(title, 90)}: concept pathway`,
+    description: isFilipino ? 'Sundan ang mga pangunahing hakbang at ideya ng kabanata.' : 'Follow the chapter’s main ideas in the order they build on one another.',
+    steps: pathway,
+  };
+}
+
+function selfCheckForLesson(title, contentHtml) {
+  const source = `Lesson 1: ${title}\n${stripHtmlKeepBreaks(contentHtml)}`;
+  const question = generateQuestions({ topic: title, source, count: 1, types: ['MULTIPLE_CHOICE'], difficulty: 'EASY', purpose: 'QUIZ' }).questions[0];
+  const choices = Array.isArray(question?.choices) ? question.choices.slice(0, 5) : [];
+  const correctIndex = choices.findIndex((choice) => choice.isCorrect);
+  if (choices.length < 2 || correctIndex < 0) return null;
+  return {
+    prompt: cleanLine(stripHtmlKeepBreaks(question.text), 500),
+    options: choices.map((choice) => cleanLine(stripHtmlKeepBreaks(choice.text), 240)),
+    correctIndex,
+    explanation: cleanLine(stripHtmlKeepBreaks(question.explanation || 'Review the lesson and compare the choices with the key idea.'), 700),
+  };
+}
+
 function generateModule(input = {}) {
   const topic = cleanLine(input.topic, 200) || 'Untitled Module';
   const title = cleanLine(input.title, 200) || topic;
@@ -1594,7 +1625,15 @@ function generateModule(input = {}) {
       }
     }
 
-    lessons.push({ title: lessonTitle, kind, estimatedMinutes: perMinutes, contentHtml: html.join('\n') });
+    const contentHtml = html.join('\n');
+    lessons.push({
+      title: lessonTitle,
+      kind,
+      estimatedMinutes: perMinutes,
+      contentHtml,
+      visual: learningVisualForLesson(lessonTitle, contentHtml, { isFilipino }),
+      selfCheck: selfCheckForLesson(lessonTitle, contentHtml),
+    });
   }
 
   const activities = [
@@ -1761,6 +1800,8 @@ function generateLessonRewrite(input = {}) {
     kind: lesson.kind || 'LESSON',
     estimatedMinutes: lesson.estimatedMinutes ?? 20,
     contentHtml: rewrittenHtml,
+    visual: lesson.visual ?? null,
+    selfCheck: lesson.selfCheck ?? null,
   };
 }
 

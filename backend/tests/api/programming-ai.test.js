@@ -294,7 +294,12 @@ const moduleAnswer = {
   overview: 'How plants turn light into chemical energy.',
   objectives: ['Explain the light-dependent reactions', 'Describe the Calvin cycle'],
   lessons: [
-    { title: 'What is photosynthesis?', kind: 'lesson', estimatedMinutes: 20, contentHtml: '<h3>Overview</h3><p>Plants make glucose.</p><script>alert(1)</script><img src=x onerror="steal()">' },
+    {
+      title: 'What is photosynthesis?', kind: 'lesson', estimatedMinutes: 20,
+      contentHtml: '<h3>Overview</h3><p>Plants make glucose.</p><script>alert(1)</script><img src=x onerror="steal()">',
+      visual: { title: 'From light to stored energy', description: 'Follow the transformation in a plant cell.', steps: ['Light is captured', 'Water and carbon dioxide are used', 'Glucose stores chemical energy'] },
+      selfCheck: { prompt: 'What is the main role of glucose in photosynthesis?', options: ['Store chemical energy', 'Release nitrogen', 'Absorb minerals'], correctIndex: 0, explanation: 'Photosynthesis stores captured light energy in the chemical bonds of glucose.' },
+    },
     { title: 'Summary', kind: 'SUMMARY', estimatedMinutes: '10', contentHtml: '<ul><li>Light</li><li>Water</li></ul>' },
   ],
   activities: [{ title: 'Leaf lab', instructions: 'Observe a leaf.\nRecord what you see.' }],
@@ -339,6 +344,10 @@ describe('AI-assisted authoring', () => {
     expect(generated.reviewStatus).toBe('DRAFT');
     expect(generated.content.lessons[0].contentHtml).toContain('<h3>Overview</h3>');
     expect(generated.content.lessons[0].contentHtml).not.toMatch(/script|onerror/);
+    expect(generated.content.lessons[0]).toMatchObject({
+      visual: { title: 'From light to stored energy', steps: ['Light is captured', 'Water and carbon dioxide are used', 'Glucose stores chemical energy'] },
+      selfCheck: { prompt: 'What is the main role of glucose in photosynthesis?', correctIndex: 0, options: ['Store chemical energy', 'Release nitrogen', 'Absorb minerals'] },
+    });
     expect(generated.content.lessons.map((l) => [l.kind, l.estimatedMinutes])).toEqual([['LESSON', 20], ['SUMMARY', 10]]);
     // The incomplete question is dropped, with a note for the teacher.
     expect(generated.content.assessment).toHaveLength(2);
@@ -371,12 +380,23 @@ describe('AI-assisted authoring', () => {
     const mod = await prisma.learningModule.findUnique({ where: { id: approved.body.data.moduleId }, include: { lessons: { orderBy: { position: 'asc' } } } });
     expect(mod).toMatchObject({ title: 'Photosynthesis (edited)', status: 'DRAFT', source: 'AI' });
     expect(mod.lessons.map((l) => l.title)).toEqual(['What is photosynthesis?', 'Summary', 'Extra', 'Practice activities']);
+    expect(mod.lessons[0]).toMatchObject({
+      visual: { title: 'From light to stored energy', steps: ['Light is captured', 'Water and carbon dioxide are used', 'Glucose stores chemical energy'] },
+      selfCheck: { prompt: 'What is the main role of glucose in photosynthesis?', correctIndex: 0 },
+    });
     expect((await teacher.get(`/api/ai/generated/${generated.id}`)).body.data).toMatchObject({ moduleId: mod.id, moduleClassId: cls.id });
     // Still a draft module: students do not see it until the teacher publishes it.
     expect((await students[0].get(`/api/classes/${cls.id}/modules`)).body.data).toHaveLength(0);
     expect((await teacher.post(`/api/ai/generated/${generated.id}/approve`, { classId: cls.id, confirmReviewed: true })).status).toBe(409);
     expect((await teacher.put(`/api/ai/generated/${generated.id}`, { content })).status).toBe(409);
     expect(await prisma.auditLog.count({ where: { action: 'ai.module.approve', entityId: mod.id } })).toBe(1);
+
+    await teacher.patch(`/api/modules/${mod.id}`, { status: 'PUBLISHED' });
+    const book = (await students[0].get(`/api/modules/${mod.id}/book`)).body.data;
+    expect(book.chapters[0]).toMatchObject({
+      visual: { title: 'From light to stored energy' },
+      selfCheck: { prompt: 'What is the main role of glucose in photosynthesis?', correctIndex: 0 },
+    });
   });
 
   it('imports a module from an external AI response and makes retries idempotent', async () => {
