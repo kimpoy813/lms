@@ -270,7 +270,7 @@ function TeacherDashboard({ data }) {
       ))}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Active classes" value={stats.classes} icon={BookOpen} to="/classes" hint={plural(stats.students, 'student')} />
+        <StatCard label="Classes in session" value={stats.classes} icon={BookOpen} to="/classes" hint={plural(stats.students, 'student')} />
         <StatCard label="To grade" value={stats.toGrade} icon={PenLine} tone={stats.toGrade > 0 ? 'info' : 'ok'} hint={stats.toGrade > 0 ? 'Submissions waiting' : 'All graded'} />
         <StatCard label="Pending requests" value={stats.pendingRequests} icon={Inbox} tone={stats.pendingRequests > 0 ? 'warn' : 'ok'} hint="Enrolment, corrections, appeals" />
         <StatCard label="Students at risk" value={stats.atRisk} icon={TrendingDown} tone={stats.atRisk > 0 ? 'bad' : 'ok'} hint={`Below ${thresholds.gradeBelow}% or ${thresholds.attendanceBelow}% attendance`} />

@@ -4,7 +4,7 @@ import { env } from '../../config/env.js';
 import { prisma } from '../../db/prisma.js';
 import { fullName, ok, round } from '../../lib/http.js';
 import { excerpt } from '../../lib/sanitize.js';
-import { addDays, atTime, dateKey, startOfDay, weekdayOf } from '../../lib/time.js';
+import { addDays, atTime, dateKey, dbToDateKey, startOfDay, weekdayOf } from '../../lib/time.js';
 import { publishedWhere, quizResultsVisible } from '../../lib/visibility.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { aiConfigured } from '../../services/ai.js';
@@ -22,16 +22,22 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const classInclude = {
   course: { select: { code: true, title: true } },
   section: { select: { name: true } },
-  semester: { select: { name: true } },
+  semester: { select: { name: true, startDate: true, endDate: true } },
   schedules: true,
   teacher: { select: { firstName: true, lastName: true } },
 };
+
+/** Whether a class's semester is in session on a local calendar date. */
+function semesterIncludesDay(cls, day) {
+  return day >= dbToDateKey(cls.semester.startDate) && day <= dbToDateKey(cls.semester.endDate);
+}
 
 /** Today's meetings of the given classes, in the institution's timezone, annotated with leave/holiday notices. */
 async function todaysSchedule(classes, tz, now) {
   const today = dateKey(now, tz);
   const weekday = weekdayOf(today);
   const meetings = classes
+    .filter((cls) => semesterIncludesDay(cls, today))
     .flatMap((cls) => cls.schedules.filter((s) => s.dayOfWeek === weekday).map((s) => ({ classId: cls.id, label: classLabel(cls), title: cls.course.title, color: cls.color, startTime: s.startTime, endTime: s.endTime, room: s.room ?? cls.room ?? null })))
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
   if (meetings.length === 0) return [];
@@ -257,12 +263,13 @@ async function teacherDashboard(user) {
   const appealsByClass = new Map(appealGroups.map((g) => [g.classId, g._count._all]));
   const corrections = correctionRows.length;
   const appeals = appealGroups.reduce((a, g) => a + g._count._all, 0);
-  const students = classes.reduce((a, c) => a + c._count.enrollments, 0);
+  const currentTermClasses = classes.filter((cls) => semesterIncludesDay(cls, dateKey(now, tz)));
+  const students = currentTermClasses.reduce((a, c) => a + c._count.enrollments, 0);
   return {
     role: 'TEACHER',
     date: dateKey(now, tz),
     stats: {
-      classes: classes.length, students, toGrade: toGrade.reduce((a, t) => a + t.count, 0),
+      classes: currentTermClasses.length, students, toGrade: toGrade.reduce((a, t) => a + t.count, 0),
       pendingRequests: [...pendingByClass.values()].reduce((a, b) => a + b, 0) + corrections + appeals, atRisk: atRisk.length,
     },
     today: await todaysSchedule(classes, tz, now),
