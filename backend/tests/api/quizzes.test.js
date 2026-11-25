@@ -342,6 +342,38 @@ describe('taking a quiz', () => {
 });
 
 describe('results and manual grading', () => {
+  it('reports live question progress to the teacher without exposing in-progress answers', async () => {
+    const room = await classroom(1);
+    const { teacher, students } = room;
+    const quiz = await quizWith(room, [MC, TF, ID]);
+    const attempt = await start(students[0], quiz.id);
+
+    let results = await teacher.get(`/api/quizzes/${quiz.id}/results`);
+    expect(results.body.data.stats.inProgress).toBe(1);
+    expect(results.body.data.students[0].attempts[0]).toMatchObject({
+      id: attempt.id,
+      status: 'IN_PROGRESS',
+      progress: { answered: 0, total: 3 },
+      lastSavedAt: null,
+    });
+    expect(results.body.data.students[0].attempts[0]).not.toHaveProperty('answers');
+
+    await answer(students[0], attempt, 0, { choiceId: choiceId(attempt, 0, 'four') });
+    results = await teacher.get(`/api/quizzes/${quiz.id}/results`);
+    expect(results.body.data.students[0].attempts[0]).toMatchObject({
+      progress: { answered: 1, total: 3 },
+      lastSavedAt: expect.any(String),
+    });
+
+    const followed = await teacher.get(`/api/attempts/${attempt.id}`);
+    expect(followed.body.data).toMatchObject({
+      status: 'IN_PROGRESS',
+      progress: { answered: 1, total: 3 },
+      lastSavedAt: expect.any(String),
+    });
+    expect(followed.body.data.questions).toBeNull();
+  });
+
   it('waits for the teacher on essays, then completes the score', async () => {
     const room = await classroom(1);
     const { teacher, cls, students } = room;

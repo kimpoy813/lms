@@ -31,11 +31,35 @@ export const sanitizeHtml = (html) =>
     FORBID_ATTR: ['style', 'id', 'name'],
   });
 
+function makeTablesScrollable(html) {
+  if (!/<table\b/i.test(html ?? '') || typeof document === 'undefined') return html;
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  for (const table of template.content.querySelectorAll('table')) {
+    let wrapper = table.parentElement;
+    if (!wrapper?.classList.contains('tableWrapper') && !wrapper?.classList.contains('rich-table-scroll')) {
+      wrapper = document.createElement('div');
+      wrapper.className = 'rich-table-scroll';
+      table.before(wrapper);
+      wrapper.append(table);
+    } else {
+      wrapper.classList.add('rich-table-scroll');
+    }
+    wrapper.setAttribute('role', 'region');
+    wrapper.setAttribute('tabindex', '0');
+    const caption = table.querySelector('caption')?.textContent?.trim();
+    wrapper.setAttribute('aria-label', caption
+      ? `Scrollable table: ${caption}`
+      : 'Scrollable table. Scroll horizontally to view all columns.');
+  }
+  return template.innerHTML;
+}
+
 /** True when the HTML has no visible content ("<p></p>"). */
 export const isEmptyHtml = (html) => !html || html.replace(/<(?!img|iframe)[^>]*>/gi, '').replace(/&nbsp;/g, ' ').trim() === '';
 
 export default function RichText({ html, className, empty = null }) {
-  const clean = useMemo(() => sanitizeHtml(html), [html]);
+  const clean = useMemo(() => makeTablesScrollable(sanitizeHtml(html)), [html]);
   if (isEmptyHtml(clean)) return empty;
   return <div className={cn('rich', className)} dangerouslySetInnerHTML={{ __html: clean }} />;
 }

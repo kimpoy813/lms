@@ -528,10 +528,15 @@ export function Pagination({ meta, onPage }) {
 }
 
 // ── Tables ───────────────────────────────────────────────────────────────────
-export function Table({ children, className }) {
+export function Table({ children, className, tableClassName, scrollLabel }) {
   return (
-    <div className={cn('relative overflow-x-auto rounded-2xl border border-line bg-surface shadow-card', className)}>
-      <table className="w-full border-collapse text-left text-sm">{children}</table>
+    <div
+      role={scrollLabel ? 'region' : undefined}
+      aria-label={scrollLabel}
+      tabIndex={scrollLabel ? 0 : undefined}
+      className={cn('relative overflow-x-auto rounded-2xl border border-line bg-surface shadow-card', className)}
+    >
+      <table className={cn('w-full border-collapse text-left text-sm', tableClassName)}>{children}</table>
     </div>
   );
 }

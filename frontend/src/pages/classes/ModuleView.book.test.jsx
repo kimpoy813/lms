@@ -42,7 +42,7 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
         ...summary.lessons[0],
         chapterNumber: 1,
         objectives: ['Distinguish cohesion from coupling'],
-        contentHtml: '<h3>1. Introduction</h3><p>Modularity breaks a system into understandable parts.</p><blockquote><p><strong>Key Concept:</strong> High cohesion keeps related logic together.</p></blockquote>',
+        contentHtml: '<h3>1. Introduction</h3><p>Modularity breaks a system into understandable parts.</p><blockquote><p><strong>Key Concept:</strong> High cohesion keeps related logic together.</p></blockquote><table><caption>Key terms</caption><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td>Cohesion</td><td>How closely related the responsibilities of a module are.</td></tr></tbody></table>',
         resources: [],
         bookmarked: false,
         locked: false,
@@ -184,6 +184,42 @@ describe('Module book-like reader & outline CTA', () => {
     unmount();
   });
 
+  it('keeps the teacher progress matrix scrollable with student names pinned on small screens', async () => {
+    mockClassContext.canManage = true;
+    mockClassContext.user = { id: 'teacher-1', role: 'TEACHER' };
+    mockGet.mockImplementation(async (url) => {
+      if (url === '/classes/cls-1/modules') return [mockModuleSummary];
+      if (url === '/classes/cls-1/modules-progress') return {
+        modules: [
+          { id: 'mod-1', title: 'Module 1: Software Design & Architecture', lessonCount: 2 },
+          { id: 'mod-2', title: 'Module 2: Data Structures', lessonCount: 3 },
+        ],
+        totalLessons: 5,
+        students: [{ id: 'stu-1', name: 'Avery Student', percent: 40, modules: { 'mod-1': 2, 'mod-2': 0 } }],
+      };
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const { container, unmount } = renderAt('/classes/cls-1/modules');
+    await flush();
+    const openProgress = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Student progress'));
+    expect(openProgress).toBeTruthy();
+    act(() => openProgress.click());
+    await flush();
+
+    const tableScroller = document.body.querySelector('[role="region"][aria-label^="Student progress by module"]');
+    expect(tableScroller).not.toBeNull();
+    expect(tableScroller.tabIndex).toBe(0);
+    expect(tableScroller.className).toContain('overflow-x-auto');
+    expect(tableScroller.className).toContain('max-h-[65dvh]');
+    expect(tableScroller.querySelector('thead th').className).toContain('sticky');
+    expect(tableScroller.querySelector('tbody td').className).toContain('sticky');
+    expect(tableScroller.textContent).toContain('Module 1: Software Design & Architecture');
+    expect(tableScroller.textContent).toContain('Avery Student');
+
+    unmount();
+  });
+
   it('enters and exits browser fullscreen for the lesson reader', async () => {
     const originalRequest = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'requestFullscreen');
     const originalExit = Object.getOwnPropertyDescriptor(document, 'exitFullscreen');
@@ -238,6 +274,9 @@ describe('Module book-like reader & outline CTA', () => {
     await act(async () => {
       await vi.waitFor(() => expect(container.textContent).toContain('Draft — hidden from students'));
     });
+    expect(container.querySelector('select[aria-label="Choose a chapter"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Reading display options"]').className).toContain('grid-cols-2');
+    expect(container.querySelector('button[aria-label="More lesson actions"]')).not.toBeNull();
 
     const openAssignment = [...container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'New assignment');
     expect(openAssignment).toBeTruthy();
@@ -282,13 +321,19 @@ describe('Module book-like reader & outline CTA', () => {
 
   it('renders a cohesive book view with cover, table of contents, sequential chapters, typography controls, and completion trigger', async () => {
     const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
-    await flush();
+    await act(async () => {
+      await vi.waitFor(() => expect(container.textContent).toContain('Learning Module'));
+    });
 
     // Front matter & cover
     expect(container.textContent).toContain('Learning Module');
     expect(container.textContent).toContain('Learning Objectives');
     expect(container.textContent).toContain('Explain high cohesion and low coupling');
     expect(container.textContent).toContain('Table of contents');
+    const mobileContents = container.querySelector('select[aria-label="Jump to chapter"]');
+    expect(mobileContents).not.toBeNull();
+    expect(mobileContents.parentElement.parentElement.parentElement.className).toContain('lg:hidden');
+    expect(container.textContent).toContain('0/2 complete');
 
     // Chapter 1 content uses textbook .rich-book styling (default serif)
     expect(container.textContent).toContain('Chapter 1 of 2');
@@ -297,6 +342,11 @@ describe('Module book-like reader & outline CTA', () => {
     const rich = container.querySelector('.rich-book');
     expect(rich).not.toBeNull();
     expect(rich.className).toContain('rich-book-serif');
+    const scrollableTable = rich.querySelector('.rich-table-scroll[role="region"]');
+    expect(scrollableTable).not.toBeNull();
+    expect(scrollableTable.getAttribute('tabindex')).toBe('0');
+    expect(scrollableTable.getAttribute('aria-label')).toBe('Scrollable table: Key terms');
+    expect(scrollableTable.querySelector('table').textContent).toContain('Cohesion');
 
     // Chapter 2 is locked behind Chapter 1
     expect(container.textContent).toContain('Chapter 2 of 2 · Locked');

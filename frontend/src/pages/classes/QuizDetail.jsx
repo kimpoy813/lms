@@ -321,7 +321,7 @@ function Builder({ quiz }) {
               <Button variant="secondary" icon={Share2} onClick={() => setDialog('post')}>Post to classes</Button>
               {!readOnly && <Button variant="secondary" icon={Settings2} onClick={() => setDialog('settings')}>Settings</Button>}
               {quiz.status === 'DRAFT' && !readOnly && <Button icon={CheckCircle2} loading={publish.isPending} disabled={empty} title={empty ? 'Add at least one question first' : undefined} onClick={() => publish.mutate('PUBLISHED')}>Publish</Button>}
-              {quiz.status !== 'DRAFT' && <Button icon={BarChart3} to={`${base}/quizzes/${quiz.id}/results`}>Results{quiz.attemptCount > 0 ? ` (${quiz.attemptCount})` : ''}</Button>}
+              {quiz.status !== 'DRAFT' && <Button icon={BarChart3} to={`${base}/quizzes/${quiz.id}/results`}>Progress & results{quiz.attemptCount > 0 ? ` (${quiz.attemptCount})` : ''}</Button>}
             </div>
           </div>
           {quiz.instructionsHtml && <div className="mt-4 border-t border-line pt-4"><RichText html={quiz.instructionsHtml} className="text-sm" /></div>}
