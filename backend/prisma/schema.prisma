@@ -388,6 +388,7 @@ model User {
   resourcesCreated       LearningResource[]
   lessonProgress         LessonProgress[]
   bookmarks              Bookmark[]
+  readingHighlights      ReadingHighlight[]
   tasks                  Task[]
   assignmentsCreated     Assignment[]
   submissions            AssignmentSubmission[]        @relation("SubmissionStudent")
@@ -1040,6 +1041,7 @@ model Lesson {
   quizzes      Quiz[]
   progress     LessonProgress[]
   bookmarks    Bookmark[]
+  highlights   ReadingHighlight[]
 
   @@index([moduleId, position])
 }
@@ -1102,6 +1104,29 @@ model Bookmark {
 
   @@unique([userId, lessonId])
   @@unique([userId, resourceId])
+}
+
+/// A phrase a reader marked inside a lesson. The text is located again when the lesson is drawn, so
+/// a highlight survives small edits; when the quoted phrase no longer appears it is left out.
+model ReadingHighlight {
+  id         String   @id @default(cuid())
+  userId     String
+  lessonId   String
+  /// The exact words marked, whitespace collapsed and whitespace runs joined with a space.
+  quote      String
+  /// A few words of the page around the quote, so repeated phrases can be told apart.
+  context    String
+  /// yellow | green | blue | pink
+  colour     String   @default("yellow")
+  note       String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lessonId])
+  @@index([lessonId])
 }
 
 model Task {

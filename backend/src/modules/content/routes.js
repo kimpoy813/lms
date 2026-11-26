@@ -20,7 +20,7 @@ export const classContentRouter = Router({ mergeParams: true }); // /classes/:cl
 classContentRouter.use(requireAuth);
 // Mounted at the API root; routes.js puts requireAuth in front of each of these prefixes.
 export const contentRouter = Router();
-export const CONTENT_PREFIXES = ['/modules', '/lessons', '/resources', '/bookmarks'];
+export const CONTENT_PREFIXES = ['/modules', '/lessons', '/resources', '/bookmarks', '/highlights'];
 
 const classParams = idParams('classId');
 const statusEnum = z.enum(['DRAFT', 'SCHEDULED', 'PUBLISHED']);
@@ -276,6 +276,12 @@ contentRouter.get('/modules/:moduleId/book', validate({ params: idParams('module
   }
 
   const lessonIds = view.lessons.map((l) => l.id);
+  const highlightRows = lessonIds.length
+    ? await prisma.readingHighlight.findMany({
+        where: { userId: req.user.id, lessonId: { in: lessonIds } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      })
+    : [];
   const [fullLessons, lessonResources, bookmarks] = await Promise.all([
     lessonIds.length
       ? prisma.lesson.findMany({ where: { id: { in: lessonIds } } })
@@ -300,6 +306,12 @@ contentRouter.get('/modules/:moduleId/book', validate({ params: idParams('module
     resourcesByLesson.set(r.lessonId, list);
   }
   const bookmarkedSet = new Set(bookmarks.map((b) => b.lessonId));
+  const highlightsByLesson = new Map();
+  for (const row of highlightRows) {
+    const list = highlightsByLesson.get(row.lessonId) ?? [];
+    list.push(highlightView(row));
+    highlightsByLesson.set(row.lessonId, list);
+  }
 
   // Mark the first unlocked lesson that has not been completed yet (or first unlocked) as viewed.
   if (!manage) {
@@ -333,6 +345,7 @@ contentRouter.get('/modules/:moduleId/book', validate({ params: idParams('module
         ? (prereq ? `Complete Chapter ${view.lessons.indexOf(prereq) + 1} (“${prereq.title}”) to unlock this chapter.` : 'Complete the previous required chapter first.')
         : null,
       ...(manage ? {} : { bookmarked: bookmarkedSet.has(summary.id) }),
+      highlights: locked ? [] : (highlightsByLesson.get(summary.id) ?? []),
     };
   });
 
@@ -776,6 +789,10 @@ async function lessonDetail(user, lessonId, { markViewed = false } = {}) {
     position: lesson.position,
     updatedAt: lesson.updatedAt,
     resources: resources.map((r) => resourceView(r, { manage })),
+    highlights: (await prisma.readingHighlight.findMany({
+      where: { userId: user.id, lessonId: lesson.id },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })).map(highlightView),
     previous: neighbour(mod.lessons[index - 1]),
     next: neighbour(mod.lessons[index + 1]),
     aiStudyCoachEnabled: Boolean(access.cls.aiStudyCoachEnabled),
@@ -1161,6 +1178,105 @@ contentRouter.delete('/resources/:resourceId', validate({ params: idParams('reso
       await tx.file.update({ where: { id: resource.fileId }, data: { deletedAt: new Date() } });
     }
   });
+  noContent(res);
+});
+
+// ── Highlights ───────────────────────────────────────────────────────────────
+// A reader marks words in a lesson. Only the quote and a little context are stored; the browser
+// finds the quote again in the lesson text, so a highlight follows small edits and simply
+// disappears when the words are gone.
+const HIGHLIGHT_COLOURS = ['yellow', 'green', 'blue', 'pink'];
+const highlightBody = z.object({
+  lessonId: zId,
+  quote: z.string().trim().min(1).max(500),
+  context: z.string().trim().max(500).optional(),
+  note: z.string().trim().max(500).optional(),
+  colour: z.enum(HIGHLIGHT_COLOURS).optional(),
+});
+const highlightPatchBody = z.object({
+  note: z.string().trim().max(500).nullable().optional(),
+  colour: z.enum(HIGHLIGHT_COLOURS).optional(),
+});
+
+/** One line, single spaces: the browser and the server must agree on what the quote is. */
+const normaliseQuote = (value) => plainText(value, 500).replace(/\s+/g, ' ').trim();
+
+const highlightView = (row) => ({
+  id: row.id,
+  lessonId: row.lessonId,
+  quote: row.quote,
+  context: row.context,
+  colour: row.colour,
+  note: row.note ?? null,
+  createdAt: row.createdAt,
+});
+
+/** The lesson must be one the reader may open, exactly as the reader shows it. */
+async function readableLesson(user, lessonId) {
+  await lessonDetail(user, lessonId, { markViewed: false });
+}
+
+contentRouter.get('/highlights', async (req, res) => {
+  const lessonId = typeof req.query.lessonId === 'string' ? req.query.lessonId : null;
+  if (lessonId) {
+    await readableLesson(req.user, lessonId);
+    const rows = await prisma.readingHighlight.findMany({
+      where: { userId: req.user.id, lessonId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    ok(res, rows.map(highlightView));
+    return;
+  }
+  const rows = await prisma.readingHighlight.findMany({
+    where: { userId: req.user.id },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: 500,
+    include: { lesson: { select: { id: true, title: true, deletedAt: true, module: { select: { id: true, title: true, classId: true, deletedAt: true } } } } },
+  });
+  const myClasses = new Set(await classIdsFor(req.user));
+  ok(res, rows
+    .filter((row) => row.lesson && !row.lesson.deletedAt && !row.lesson.module.deletedAt && myClasses.has(row.lesson.module.classId))
+    .map((row) => ({
+      ...highlightView(row),
+      lessonTitle: row.lesson.title,
+      moduleId: row.lesson.module.id,
+      moduleTitle: row.lesson.module.title,
+      classId: row.lesson.module.classId,
+    })));
+});
+
+contentRouter.post('/highlights', validate({ body: highlightBody }), async (req, res) => {
+  const body = req.valid.body;
+  const quote = normaliseQuote(body.quote);
+  if (!quote) throw fieldErrors({ quote: 'Select some words first.' });
+  await readableLesson(req.user, body.lessonId);
+  const row = await prisma.readingHighlight.create({
+    data: {
+      userId: req.user.id,
+      lessonId: body.lessonId,
+      quote,
+      context: normaliseQuote(body.context ?? '').slice(0, 500),
+      colour: body.colour ?? 'yellow',
+      note: body.note ? plainText(body.note, 500) : null,
+    },
+  });
+  created(res, highlightView(row));
+});
+
+contentRouter.patch('/highlights/:highlightId', validate({ params: idParams('highlightId'), body: highlightPatchBody }), async (req, res) => {
+  const row = await prisma.readingHighlight.findUnique({ where: { id: req.valid.params.highlightId } });
+  // Someone else's highlight is reported as missing, so its existence is not revealed.
+  if (!row || row.userId !== req.user.id) throw notFound('Highlight');
+  const body = req.valid.body;
+  const data = {};
+  if (body.note !== undefined) data.note = body.note === null ? null : (plainText(body.note, 500) || null);
+  if (body.colour !== undefined) data.colour = body.colour;
+  const updated = await prisma.readingHighlight.update({ where: { id: row.id }, data });
+  ok(res, highlightView(updated));
+});
+
+contentRouter.delete('/highlights/:highlightId', validate({ params: idParams('highlightId') }), async (req, res) => {
+  await prisma.readingHighlight.deleteMany({ where: { id: req.valid.params.highlightId, userId: req.user.id } });
   noContent(res);
 });
 

@@ -64,8 +64,10 @@ function makeTablesScrollable(html, scrollableTables = true) {
 /** True when the HTML has no visible content ("<p></p>"). */
 export const isEmptyHtml = (html) => !html || html.replace(/<(?!img|iframe)[^>]*>/gi, '').replace(/&nbsp;/g, ' ').trim() === '';
 
-export default function RichText({ html, className, empty = null, scrollableTables = true }) {
+// `ref` is the element the rich text is drawn in, so a caller can mark up the words it holds (the
+// reader's highlights). It adds nothing to the page: the reader's own layout must not change.
+export default function RichText({ html, className, empty = null, scrollableTables = true, ref, ...rest }) {
   const clean = useMemo(() => makeTablesScrollable(sanitizeHtml(html), scrollableTables), [html, scrollableTables]);
   if (isEmptyHtml(clean)) return empty;
-  return <div className={cn('rich', className)} dangerouslySetInnerHTML={{ __html: clean }} />;
+  return <div ref={ref} className={cn('rich', className)} dangerouslySetInnerHTML={{ __html: clean }} {...rest} />;
 }
