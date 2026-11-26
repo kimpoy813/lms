@@ -303,6 +303,86 @@ test('keeps the initial two-page module-cover spread populated', async ({ page }
   }
 });
 
+test('keeps long chapter text flowing across both pages of a two-page spread', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1228, height: 690 });
+  await signIn(page, 'teacher');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('teacher', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+    expect(demoModule, 'the demo class includes its first reading module').toBeTruthy();
+    const [moduleSummary, book] = await Promise.all([
+      api.get(`/modules/${demoModule.id}`),
+      api.get(`/modules/${demoModule.id}/book`),
+    ]);
+    const chapters = Array.from({ length: 10 }, (_, index) => {
+      const chapterNumber = index + 1;
+      const paragraphs = Array.from({ length: 48 }, (_, paragraphIndex) => (
+        `<p><strong>Reading section ${paragraphIndex + 1}.</strong> Chapter ${chapterNumber} continuity marker. ${PAGE_TEXT}</p>`
+      )).join('');
+      return {
+        ...book.chapters[0],
+        id: `continuous-reader-chapter-${chapterNumber}`,
+        moduleId: demoModule.id,
+        title: `Continuous reading chapter ${chapterNumber}`,
+        chapterNumber,
+        kind: 'LESSON',
+        status: 'PUBLISHED',
+        estimatedMinutes: 48,
+        objectives: [],
+        contentHtml: `<h3>Chapter ${chapterNumber} overview</h3>${paragraphs}`,
+        resources: [],
+        visual: null,
+        selfCheck: null,
+        completed: false,
+        bookmarked: false,
+        locked: false,
+        lockedReason: null,
+      };
+    });
+    const fixtureSummary = {
+      ...moduleSummary,
+      title: 'Two-page continuity regression fixture',
+      description: 'Long chapter text should continue across physical page columns.',
+      status: 'PUBLISHED',
+      locked: false,
+      lessonCount: chapters.length,
+      lessons: chapters.map((chapter, index) => ({ ...chapter, position: index })),
+      objectives: [],
+      resources: [],
+    };
+    const fixtureBook = { ...book, ...fixtureSummary, chapters, totalEstimatedMinutes: 480 };
+    await page.route(`**/api/modules/${demoModule.id}`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureSummary }),
+    }));
+    await page.route(`**/api/modules/${demoModule.id}/book`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureBook }),
+    }));
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: true, layout: 'two',
+    })));
+
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book&chapter=${chapters[0].id}&page=3`);
+    const spread = page.locator('[data-testid="book-page-spread"]');
+    const navigation = page.getByRole('navigation', { name: 'Book page navigation' });
+    await expect(page.locator('[data-book-reader]')).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+    await expect(navigation).toContainText('Continuous reading chapter 1 (continued)');
+    await expect.poll(() => visibleTextOnSpreadSide(page, 'Chapter 1 continuity marker', 'left')).toBe(true);
+    await expect.poll(() => visibleTextOnSpreadSide(page, 'Chapter 1 continuity marker', 'right')).toBe(true);
+  } finally {
+    await api.dispose();
+  }
+});
+
 test('keeps the screenshot-derived chapter 9 spread populated at pages 155–156 of 165', async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 1000 });

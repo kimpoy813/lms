@@ -743,14 +743,23 @@ function BookReader({ modSummary, prefs, immersive = false }) {
       // The width and gap define the visible one- or two-page tracks. Keep the count automatic
       // so the continuous book stream can overflow into later page columns as content requires.
       flow.style.columnCount = 'auto';
+      flow.style.webkitColumnCount = 'auto';
       flow.style.columnWidth = `${columnWidth}px`;
+      flow.style.webkitColumnWidth = `${columnWidth}px`;
       flow.style.columnGap = `${gap}px`;
+      flow.style.webkitColumnGap = `${gap}px`;
+      flow.style.columnFill = 'auto';
+      flow.style.webkitColumnFill = 'auto';
       flow.style.setProperty('--book-page-width', `${columnWidth}px`);
       const flowRect = flow.getBoundingClientRect();
       const stride = columnWidth + gap;
       const chapterElements = chapters.map((chapter) => chapterStartRefs.current.get(chapter.id));
       const breakElements = [...chapterElements, endPageRef.current].filter(Boolean);
-      breakElements.forEach((element) => { element.style.breakBefore = 'auto'; });
+      const setColumnBreakBefore = (element, value) => {
+        element.style.breakBefore = value;
+        element.style.webkitColumnBreakBefore = value === 'column' ? 'always' : 'auto';
+      };
+      breakElements.forEach((element) => setColumnBreakBefore(element, 'auto'));
       const firstRectForElement = (element) => {
         if (!element) return null;
         const rects = element.getClientRects?.();
@@ -799,7 +808,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
         const repeatsPreviousColumn = naturalColumn <= previousStart;
         const shouldStartNewColumn = (startsMidColumn || repeatsPreviousColumn)
           && hasEarlierTextInColumn(element, naturalColumn);
-        if (shouldStartNewColumn) element.style.breakBefore = 'column';
+        if (shouldStartNewColumn) setColumnBreakBefore(element, 'column');
         previousStart = Math.max(previousStart, pageForElement(element, fallback));
       });
 
