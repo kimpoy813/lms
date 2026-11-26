@@ -67,8 +67,8 @@ export default function AiStudio() {
       {status.data && !ready && (
         <Alert tone="warn" className="mb-5" title="AI assistance is not set up on this server">
           {isAdmin
-            ? <>Enable the built-in free assistant or add a free Gemini / Groq API key in <Link className="font-medium underline" to="/admin/settings">Administration → Settings</Link> (no credit card or redeploy required). You can still use the Module tool’s external AI prompt flow below without any AI service setup.</>
-            : 'An administrator can enable the built-in free assistant or connect a free AI service under Settings. You can still use the Module tool’s “Get prompt for external AI” option below without any AI service setup.'}
+            ? <>Enable the built-in free assistant or add a free Gemini / Groq API key in <Link className="font-medium underline" to="/admin/settings">Administration → Settings</Link> (no credit card or redeploy required). You can still use the Module, Quiz or exam, and Assignment tools’ external AI prompt flows below without any AI service setup.</>
+            : 'An administrator can enable the built-in free assistant or connect a free AI service under Settings. The Module, Quiz or exam, and Assignment tools also let you use an external AI without any server setup.'}
         </Alert>
       )}
       {ready && isBuiltin && (
@@ -85,7 +85,7 @@ export default function AiStudio() {
       {tool === 'rubric' && <RubricTool ready={ready} onDone={refreshQuota} />}
       {tool === 'programming' && <ProgrammingTool ready={ready} onDone={refreshQuota} />}
       {tool === 'assistant' && <AssistantTool ready={ready} onDone={refreshQuota} />}
-      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Direct AI generation sends only what you type, attach or choose here to the configured AI service; the external AI prompt flow gives you a prompt to paste into an AI platform yourself. Never include student names, scores or submissions.</p>
+      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint"><Bot className="mt-0.5 size-4 shrink-0" aria-hidden="true" />AI drafts can contain mistakes, outdated facts or made-up references. Check everything before you use it. Direct AI generation sends only what you type, attach or choose here to the configured AI service; external AI prompt flows give you prompts to paste into an AI platform yourself. Never include student names, scores or submissions.</p>
     </>
   );
 }
@@ -283,21 +283,54 @@ function QuestionsTool({ ready, onDone }) {
   const [drafts, setDrafts] = useState([]);
   const [note, setNote] = useState(null);
   const [error, setError] = useState(null);
+  const [externalPrompt, setExternalPrompt] = useState('');
+  const [externalPayload, setExternalPayload] = useState(null);
+  const [pastedResponse, setPastedResponse] = useState('');
+  const [externalError, setExternalError] = useState(null);
   const chosen = findModule(material.data, v.moduleId);
-  const generate = useAction(() => api.post('/ai/questions', {
+  const questionPayload = () => ({
     moduleId: v.moduleId || undefined, purpose: v.purpose, topic: v.topic.trim() || undefined, sourceText: v.moduleId ? undefined : v.sourceText.trim() || undefined,
     count: Number(v.count) || 5, types: v.types, difficulty: v.difficulty,
     // What is on the list already, so that another round brings new questions.
     avoid: drafts.slice(-60).map((d) => String(d.text ?? '').slice(0, 1500)).filter(Boolean),
-  }), {
-    onSuccess: (r) => {
-      onDone();
-      setDrafts((list) => [...list, ...r.questions.map((q, i) => ({ ...q, key: `${Date.now()}-${i}`, include: true }))]);
-      const left = [r.rejected > 0 && `${r.rejected} incomplete`, r.skipped > 0 && `${r.skipped} of a type you did not ask for`].filter(Boolean).join(' and ');
-      setNote([sourceNote(r.source), r.questions.length === 0 ? 'No usable questions came back. Try again, or give a more specific topic.' : left ? `Some questions from the AI were left out: ${left}.` : null].filter(Boolean).join(' ') || null);
-    },
+  });
+  const addQuestions = (r, sourceLabel) => {
+    setDrafts((list) => [...list, ...r.questions.map((q, i) => ({ ...q, key: `${sourceLabel}-${Date.now()}-${i}`, include: true }))]);
+    const left = [
+      r.rejected > 0 && `${r.rejected} incomplete`,
+      r.skipped > 0 && `${r.skipped} of a type you did not ask for`,
+      r.truncated > 0 && `${r.truncated} over the requested count`,
+    ].filter(Boolean).join(' and ');
+    setNote([
+      sourceNote(r.source),
+      r.questions.length === 0 ? 'No usable questions came back. Try again, or give a more specific topic.' : left ? `Some questions were left out: ${left}.` : null,
+    ].filter(Boolean).join(' ') || null);
+  };
+  const generate = useAction(() => api.post('/ai/questions', questionPayload()), {
+    onSuccess: (r) => { onDone(); addQuestions(r, 'builtin'); },
     onError: (err) => aiError(err, setError),
   });
+  const buildPrompt = useAction((payload) => api.post('/ai/questions/prompt', payload), {
+    onSuccess: (r, payload) => { setExternalPrompt(r.prompt); setExternalPayload(payload); setPastedResponse(''); setExternalError(null); toast.success('Prompt ready. Copy it into any AI platform.'); },
+    onError: (err) => { setExternalError(err.message || 'Could not generate the prompt.'); return true; },
+  });
+  const importDraft = useAction(() => api.post('/ai/questions/import', { ...(externalPayload ?? questionPayload()), pastedResponse: pastedResponse.trim() }), {
+    onSuccess: (r) => {
+      if (externalPayload) setV((current) => ({ ...current, moduleId: externalPayload.moduleId ?? '', purpose: externalPayload.purpose, topic: externalPayload.topic ?? '', sourceText: externalPayload.sourceText ?? '', count: externalPayload.count, types: externalPayload.types, difficulty: externalPayload.difficulty }));
+      addQuestions(r, 'external'); setPastedResponse(''); setExternalError(null);
+    },
+    onError: (err) => { setExternalError(err.fields?.pastedResponse ?? err.message ?? 'Could not read the pasted questions.'); return true; },
+  });
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(externalPrompt);
+      toast.success('Prompt copied.');
+    } catch {
+      toast.error('Could not copy automatically. Select the prompt and copy it manually.');
+    }
+  };
+  const questionCount = Number(v.count);
+  const canBuild = v.types.length > 0 && Number.isInteger(questionCount) && questionCount >= 1 && questionCount <= 20 && Boolean(v.moduleId || v.topic.trim() || v.sourceText.trim());
   return (
     <div className="space-y-5">
       <Card>
@@ -323,10 +356,35 @@ function QuestionsTool({ ready, onDone }) {
           <div className="flex flex-wrap items-end gap-4">
             <Field label="How many" className="w-28"><Input type="number" min="1" max="20" value={v.count} onChange={(e) => setV({ ...v, count: e.target.value })} /></Field>
             <Field label="Difficulty" className="w-44"><Select value={v.difficulty} onChange={(e) => setV({ ...v, difficulty: e.target.value })}><option value="MIXED">Mixed</option><option value="EASY">Easy</option><option value="MEDIUM">Medium</option><option value="HARD">Hard</option></Select></Field>
-            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || v.types.length === 0 || (!v.moduleId && !v.topic.trim() && !v.sourceText.trim())}>{drafts.length > 0 ? 'Draft more questions' : 'Draft questions'}</Button>
+            <Button type="button" variant="secondary" icon={Copy} loading={buildPrompt.isPending} disabled={!canBuild || v.types.length === 0} onClick={() => { setExternalError(null); setExternalPayload(null); setExternalPrompt(''); setPastedResponse(''); buildPrompt.mutate(questionPayload()); }}>Get prompt for external AI</Button>
+            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || !canBuild}>{drafts.length > 0 ? 'Draft more with built-in AI' : 'Draft with built-in AI'}</Button>
           </div>
           <p className="text-xs text-faint">Up to 20 questions at a time. For a longer examination, draft again: the new questions are added to the list below and do not repeat it.</p>
         </form>
+        <div className="mt-6 border-t border-line pt-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">Use any external AI</p>
+              <p className="text-sm text-faint">Copy the prompt into ChatGPT, Gemini, Claude, Copilot, or another AI, then paste its JSON response here. Discenda does not send the prompt to that service.</p>
+            </div>
+            {externalPrompt && <Button size="sm" variant="secondary" icon={Copy} onClick={copyPrompt}>Copy prompt</Button>}
+          </div>
+          {externalError && <Alert tone="bad" className="mt-3">{externalError}</Alert>}
+          {externalPrompt ? (
+            <div className="mt-4 space-y-4">
+              <Field label="Prompt for your AI" hint="This includes the selected topic or lesson text. Review it before sharing it with an external service.">
+                <Textarea rows={9} value={externalPrompt} readOnly className="font-mono text-xs" />
+              </Field>
+              <Field label="Paste the AI response" hint="Paste the complete JSON object with a questions array. Questions are checked and shown for review before they can be used.">
+                <Textarea rows={7} value={pastedResponse} onChange={(e) => setPastedResponse(e.target.value)} maxLength={200000} placeholder="Paste the AI's JSON response here..." />
+              </Field>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {importDraft.isPending && <span className="text-sm text-soft" role="status">Checking the external AI questions…</span>}
+                <Button type="button" icon={FileQuestion} loading={importDraft.isPending} disabled={pastedResponse.trim().length < 20 || !externalPayload} onClick={() => { setExternalError(null); importDraft.mutate(); }}>Review questions from response</Button>
+              </div>
+            </div>
+          ) : <p className="mt-3 text-sm text-faint">Fill in the details above, then click <span className="font-medium text-ink">Get prompt for external AI</span>.</p>}
+        </div>
       </Card>
       {note && <Alert tone="info">{note}</Alert>}
       {drafts.length > 0 && (
@@ -350,12 +408,48 @@ function AssignmentTool({ ready, onDone }) {
   const [classId, setClassId] = useState('');
   const [targetClassIds, setTargetClassIds] = useState([]);
   const [error, setError] = useState(null);
+  const [externalPrompt, setExternalPrompt] = useState('');
+  const [externalPayload, setExternalPayload] = useState(null);
+  const [pastedResponse, setPastedResponse] = useState('');
+  const [externalError, setExternalError] = useState(null);
   const extraClassIds = targetClassIds.filter((id) => id && id !== classId);
-  const generate = useAction(() => api.post('/ai/assignment', { moduleId: v.moduleId || undefined, topic: v.topic.trim() || undefined, details: v.details.trim() || undefined, points: Number(v.points) || 100, withRubric: v.withRubric }), {
+  const assignmentPayload = () => ({
+    moduleId: v.moduleId || undefined,
+    topic: v.topic.trim() || undefined,
+    details: v.details.trim() || undefined,
+    points: Number(v.points) || 100,
+    withRubric: v.withRubric,
+  });
+  const receiveDraft = (r) => { setDraft(r); if (r.source?.classId) setClassId(r.source.classId); };
+  const generate = useAction(() => api.post('/ai/assignment', assignmentPayload()), {
     // A draft made from a module belongs to that module's class unless the teacher says otherwise.
-    onSuccess: (r) => { onDone(); setDraft(r); if (r.source?.classId) setClassId(r.source.classId); },
+    onSuccess: (r) => { onDone(); receiveDraft(r); },
     onError: (err) => aiError(err, setError),
   });
+  const buildPrompt = useAction((payload) => api.post('/ai/assignment/prompt', payload), {
+    onSuccess: (r, payload) => { setExternalPrompt(r.prompt); setExternalPayload(payload); setPastedResponse(''); setExternalError(null); toast.success('Prompt ready. Copy it into any AI platform.'); },
+    onError: (err) => { setExternalError(err.message || 'Could not generate the prompt.'); return true; },
+  });
+  const importDraft = useAction(() => api.post('/ai/assignment/import', { ...(externalPayload ?? assignmentPayload()), pastedResponse: pastedResponse.trim() }), {
+    onSuccess: (r) => {
+      if (externalPayload) setV((current) => ({ ...current, moduleId: externalPayload.moduleId ?? '', topic: externalPayload.topic ?? '', details: externalPayload.details ?? '', points: externalPayload.points, withRubric: externalPayload.withRubric }));
+      receiveDraft(r); setPastedResponse(''); setExternalError(null);
+    },
+    onError: (err) => { setExternalError(err.fields?.pastedResponse ?? err.message ?? 'Could not read the pasted response.'); return true; },
+  });
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(externalPrompt);
+      toast.success('Prompt copied.');
+    } catch {
+      toast.error('Could not copy automatically. Select the prompt and copy it manually.');
+    }
+  };
+  const pointValue = Number(v.points);
+  const validPoints = Number.isInteger(pointValue) && pointValue >= 1 && pointValue <= 1000;
+  const canBuild = validPoints && (v.moduleId
+    ? !v.topic.trim() || v.topic.trim().length >= 3
+    : v.topic.trim().length >= 3);
   const create = useAction(async () => {
     const rubric = draft.rubric ? await api.post('/rubrics', draft.rubric) : null;
     return api.post(`/classes/${classId}/assignments`, {
@@ -386,9 +480,34 @@ function AssignmentTool({ ready, onDone }) {
           <div className="flex flex-wrap items-end gap-4">
             <Field label="Points" className="w-28"><Input type="number" min="1" max="1000" value={v.points} onChange={(e) => setV({ ...v, points: e.target.value })} /></Field>
             <Checkbox className="mb-2" label="Also draft a rubric" checked={v.withRubric} onChange={(e) => setV({ ...v, withRubric: e.target.checked })} />
-            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || (v.moduleId ? v.topic.trim().length > 0 && v.topic.trim().length < 3 : v.topic.trim().length < 3)}>Draft assignment</Button>
+            <Button type="button" variant="secondary" icon={Copy} loading={buildPrompt.isPending} disabled={!canBuild} onClick={() => { setExternalError(null); setExternalPayload(null); setExternalPrompt(''); setPastedResponse(''); buildPrompt.mutate(assignmentPayload()); }}>Get prompt for external AI</Button>
+            <Button type="submit" icon={Sparkles} className="ml-auto" loading={generate.isPending} disabled={!ready || !canBuild}>Draft with built-in AI</Button>
           </div>
         </form>
+        <div className="mt-6 border-t border-line pt-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">Use any external AI</p>
+              <p className="text-sm text-faint">Copy a prompt into ChatGPT, Gemini, Claude, Copilot, or another AI, then paste its JSON response here. Discenda does not send the prompt to that service.</p>
+            </div>
+            {externalPrompt && <Button size="sm" variant="secondary" icon={Copy} onClick={copyPrompt}>Copy prompt</Button>}
+          </div>
+          {externalError && <Alert tone="bad" className="mt-3">{externalError}</Alert>}
+          {externalPrompt ? (
+            <div className="mt-4 space-y-4">
+              <Field label="Prompt for your AI" hint="The prompt includes selected module text. Review it before sharing it with an external service.">
+                <Textarea rows={9} value={externalPrompt} readOnly className="font-mono text-xs" />
+              </Field>
+              <Field label="Paste the AI response" hint="Paste the complete JSON object. Discenda checks it and returns an editable draft; it does not publish the assignment.">
+                <Textarea rows={8} value={pastedResponse} onChange={(e) => setPastedResponse(e.target.value)} maxLength={200000} placeholder="Paste the AI's JSON response here..." />
+              </Field>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {importDraft.isPending && <span className="text-sm text-soft" role="status">Creating the assignment draft from the response…</span>}
+                <Button type="button" icon={ClipboardList} loading={importDraft.isPending} disabled={pastedResponse.trim().length < 20 || !externalPayload} onClick={() => { setExternalError(null); importDraft.mutate(); }}>Review assignment draft</Button>
+              </div>
+            </div>
+          ) : <p className="mt-3 text-sm text-faint">Fill in the details above, then click <span className="font-medium text-ink">Get prompt for external AI</span>.</p>}
+        </div>
       </Card>
       <Card className="min-w-0">
         <CardHeader title="Draft" description={draft ? 'Review it. You can edit everything after saving it to a class.' : null} />
