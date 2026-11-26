@@ -104,6 +104,10 @@ describe('Mobile navigation and responsive UI primitives', () => {
     );
     await flush();
 
+    const brandLink = container.querySelector('header a[aria-label="Discenda home"]');
+    expect(brandLink.textContent).toContain('Discenda');
+    expect(brandLink.querySelector('img')?.getAttribute('src')).toBe('/icons/icon-192.png');
+
     const quickNav = container.querySelector('nav[aria-label="Quick navigation"]');
     expect(quickNav).toBeTruthy();
     const labels = [...quickNav.querySelectorAll('a, button')].map((el) => el.textContent);

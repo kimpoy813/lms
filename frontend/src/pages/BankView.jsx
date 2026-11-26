@@ -24,32 +24,39 @@ export default function BankView() {
   const bank = (banks.data ?? []).find((b) => b.id === bankId);
   const key = ['question-banks', bankId, 'questions', { term, ...filters, page }];
   const query = useQuery({ queryKey: key, queryFn: () => api.list(`/question-banks/${bankId}/questions`, { search: term || undefined, type: filters.type || undefined, difficulty: filters.difficulty || undefined, topic: filters.topic || undefined, page }), placeholderData: (prev) => prev });
-  const refresh = () => { client.invalidateQueries({ queryKey: ['question-banks'] }); };
-  const remove = useAction((id) => api.delete(`/question-banks/questions/${id}`), { invalidate: [['question-banks']], success: 'Question deleted.', onSuccess: () => setDialog(null) });
-  const copy = useAction((id) => api.post(`/question-banks/questions/${id}/copy`, {}), { invalidate: [['question-banks']], success: 'Question duplicated.' });
+  const refresh = () => Promise.all([
+    client.invalidateQueries({ queryKey: ['question-banks'] }),
+    client.invalidateQueries({ queryKey: ['question-banks', bankId, 'questions'] }),
+  ]);
+  const remove = useAction((id) => api.delete(`/question-banks/questions/${id}`), { invalidate: [['question-banks'], ['question-banks', bankId, 'questions']], success: 'Question deleted.', onSuccess: () => setDialog(null) });
+  const copy = useAction((id) => api.post(`/question-banks/questions/${id}/copy`, {}), { invalidate: [['question-banks'], ['question-banks', bankId, 'questions']], success: 'Question duplicated.' });
   // The whole bank with its answers, in the format the import reads.
   const download = () => api.download(`/question-banks/${bankId}/export`, undefined, 'questions.json').catch((err) => toast.error(errorMessage(err)));
   const meta = query.data?.meta;
+  const hasFilters = Boolean(search.trim() || filters.type || filters.difficulty || filters.topic);
   const setFilter = (name, value) => { setFilters((f) => ({ ...f, [name]: value })); setPage(1); };
+  const clearFilters = () => { setSearch(''); setFilters({ type: '', difficulty: '', topic: '' }); setPage(1); };
 
   return (
     <>
-      <PageHeader back={{ to: '/question-banks', label: 'Question banks' }} title={bank?.title ?? 'Question bank'} description={bank ? [bank.subject, plural(bank.questionCount, 'question')].filter(Boolean).join(' · ') : null}
+      <PageHeader back={{ to: '/question-banks', label: 'Question banks' }} title={bank?.title ?? 'Question bank'} description={bank ? [bank.subject, bank.description, plural(bank.questionCount, 'question')].filter(Boolean).join(' · ') : null}
         actions={<>
           <Button variant="secondary" icon={Sparkles} to="/ai?tool=questions">Draft with AI</Button>
           {bank?.questionCount > 0 && <IconButton icon={Download} variant="secondary" label="Download the questions as a JSON file" onClick={download} />}
           <Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import questions</Button>
           <Button icon={Plus} onClick={() => setDialog({ edit: null })}>New question</Button>
         </>} />
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-3 shadow-card">
         <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search questions…" className="w-full sm:w-72" />
-        <Select value={filters.type} onChange={(e) => setFilter('type', e.target.value)} aria-label="Question type" className="w-48"><option value="">All types</option>{Object.entries(QUESTION_TYPES).map(([v, t]) => <option key={v} value={v}>{t.label}</option>)}</Select>
-        <Select value={filters.difficulty} onChange={(e) => setFilter('difficulty', e.target.value)} aria-label="Difficulty" className="w-40"><option value="">Any difficulty</option>{Object.entries(DIFFICULTY).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select>
-        {(meta?.topics ?? []).length > 0 && <Select value={filters.topic} onChange={(e) => setFilter('topic', e.target.value)} aria-label="Topic" className="w-44"><option value="">All topics</option>{meta.topics.map((t) => <option key={t} value={t}>{t}</option>)}</Select>}
+        <Select value={filters.type} onChange={(e) => setFilter('type', e.target.value)} aria-label="Question type" className="w-full sm:w-48"><option value="">All types</option>{Object.entries(QUESTION_TYPES).map(([v, t]) => <option key={v} value={v}>{t.label}</option>)}</Select>
+        <Select value={filters.difficulty} onChange={(e) => setFilter('difficulty', e.target.value)} aria-label="Difficulty" className="w-full sm:w-40"><option value="">Any difficulty</option>{Object.entries(DIFFICULTY).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select>
+        {(meta?.topics ?? []).length > 0 && <Select value={filters.topic} onChange={(e) => setFilter('topic', e.target.value)} aria-label="Topic" className="w-full sm:w-44"><option value="">All topics</option>{meta.topics.map((t) => <option key={t} value={t}>{t}</option>)}</Select>}
+        {hasFilters && <Button size="sm" variant="ghost" onClick={clearFilters}>Clear filters</Button>}
       </div>
+      {meta && <p className="mb-3 text-[13px] text-faint">Showing <span className="font-semibold text-ink">{query.data?.data?.length ?? 0}</span> of {plural(meta.total, 'question')}{hasFilters ? ' matching your filters' : ''}</p>}
       <QueryState query={{ ...query, data: query.data?.data }}>
         {(questions) => questions.length === 0 ? (
-          <Card><EmptyState icon={Plus} title={term || filters.type || filters.difficulty || filters.topic ? 'No questions match' : 'This bank is empty'} description={term || filters.type ? null : 'Write a question, or import questions you already have: as JSON, or a test paper as Word, PDF or text.'} action={<div className="flex flex-wrap justify-center gap-2"><Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import questions</Button><Button icon={Plus} onClick={() => setDialog({ edit: null })}>New question</Button></div>} /></Card>
+          <Card><EmptyState icon={Plus} title={hasFilters ? 'No questions match those filters' : 'This bank is empty'} description={hasFilters ? 'Try another search or clear the filters to see every question in this bank.' : 'Write a question, or import questions you already have: as JSON, or a test paper as Word, PDF or text.'} action={<div className="flex flex-wrap justify-center gap-2">{hasFilters && <Button variant="secondary" onClick={clearFilters}>Clear filters</Button>}<Button variant="secondary" icon={FileUp} onClick={() => setDialog({ import: true })}>Import questions</Button><Button icon={Plus} onClick={() => setDialog({ edit: null })}>New question</Button></div>} /></Card>
         ) : (
           <ol className="space-y-3">
             {questions.map((q, i) => (
@@ -83,11 +90,11 @@ export default function BankView() {
 
       {dialog?.edit !== undefined && (
         <QuestionEditor question={dialog.edit ?? undefined} parts={[...new Set((query.data?.data ?? []).map((q) => q.section).filter(Boolean))]} onClose={() => setDialog(null)}
-          onSave={async (question) => { if (dialog.edit) await api.put(`/question-banks/questions/${dialog.edit.id}`, question); else await api.post(`/question-banks/${bankId}/questions`, question); refresh(); toast.success('Question saved.'); }} />
+          onSave={async (question) => { if (dialog.edit) await api.put(`/question-banks/questions/${dialog.edit.id}`, question); else await api.post(`/question-banks/${bankId}/questions`, question); await refresh(); toast.success('Question saved.'); }} />
       )}
       {dialog?.import && (
         <ImportQuestions target="bank" previewUrl={`/question-banks/${bankId}/import/preview`} onClose={() => setDialog(null)}
-          onSave={async (questions) => { const r = await api.post(`/question-banks/${bankId}/questions/bulk`, { questions }); refresh(); toast.success(`${plural(r.saved, 'question')} added to the bank.`); }} />
+          onSave={async (questions) => { const r = await api.post(`/question-banks/${bankId}/questions/bulk`, { questions }); await refresh(); toast.success(`${plural(r.saved, 'question')} added to the bank.`); }} />
       )}
       <ConfirmDialog open={Boolean(dialog?.remove)} onClose={() => setDialog(null)} onConfirm={() => remove.mutate(dialog.remove.id)} loading={remove.isPending} title="Delete this question?" confirmLabel="Delete">
         {dialog?.remove?.usedInQuizzes > 0 ? `It is used in ${plural(dialog.remove.usedInQuizzes, 'quiz', 'quizzes')}. Attempts that students already made keep their copy; the question is removed from quizzes nobody has started.` : 'The question is removed from this bank.'}

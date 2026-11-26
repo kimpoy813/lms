@@ -25,6 +25,8 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
   const [bankId, setBankId] = useState('');
   const [editing, setEditing] = useState(null);
   const chosen = drafts.filter((d) => d.include);
+  const allSelected = drafts.length > 0 && chosen.length === drafts.length;
+  const updateDrafts = (updater) => setDrafts(typeof updater === 'function' ? updater(drafts) : updater);
   const save = useAction(async () => {
     let target = bankId;
     if (!target || target === 'new') target = (await api.post('/question-banks', { title: defaultBankTitle || 'AI drafts' })).id;
@@ -32,7 +34,7 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
     return { ...result, bankId: target };
   }, {
     success: (r) => `${plural(r.saved, 'question')} saved to the bank.`,
-    onSuccess: (r) => { client.invalidateQueries({ queryKey: ['question-banks'] }); setBankId(r.bankId); setDrafts((list) => list.filter((d) => !d.include)); },
+    onSuccess: (r) => { client.invalidateQueries({ queryKey: ['question-banks'] }); setBankId(r.bankId); updateDrafts((list) => list.filter((d) => !d.include)); },
   });
 
   // A quiz or an examination made of the chosen questions. They are kept in a question bank too,
@@ -79,11 +81,18 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
   if (drafts.length === 0) return null;
   return (
     <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-raised px-3 py-2.5">
+        <p className="text-[13px] text-soft"><span className="font-semibold text-ink">{chosen.length} of {drafts.length} selected</span> · choose what to keep</p>
+        <div className="flex gap-1">
+          <Button size="sm" variant="ghost" disabled={allSelected} onClick={() => updateDrafts((list) => list.map((d) => ({ ...d, include: true })))}>Select all</Button>
+          <Button size="sm" variant="ghost" disabled={chosen.length === 0} onClick={() => updateDrafts((list) => list.map((d) => ({ ...d, include: false })))}>Clear selection</Button>
+        </div>
+      </div>
       <ol className="space-y-2.5">
         {drafts.map((d, i) => (
           <li key={d.key} className={cn('rounded-xl border border-line p-3.5', !d.include && 'opacity-55')}>
             <div className="flex items-start gap-3">
-              <input type="checkbox" checked={d.include} onChange={(e) => setDrafts((list) => list.map((x) => (x.key === d.key ? { ...x, include: e.target.checked } : x)))} className="mt-1 size-[18px] shrink-0 accent-[var(--brand-fill)]" aria-label={`Keep question ${i + 1}`} />
+              <input type="checkbox" checked={d.include} onChange={(e) => updateDrafts((list) => list.map((x) => (x.key === d.key ? { ...x, include: e.target.checked } : x)))} className="mt-1 size-[18px] shrink-0 accent-[var(--brand-fill)]" aria-label={`Keep question ${i + 1}`} />
               <div className="min-w-0 flex-1">
                 <p className="mb-1 flex flex-wrap items-center gap-2 text-xs text-faint"><Badge>{typeLabel(d.type)}</Badge><span>{d.difficulty?.toLowerCase()}</span>{d.topic && <span>· {d.topic}</span>}<span>· {formatScore(d.points ?? 1)} pt</span></p>
                 <QuestionText question={d} className="text-sm" />
@@ -92,7 +101,7 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
               </div>
               <div className="flex shrink-0 gap-1">
                 <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditing(d)}>Edit</Button>
-                <Button size="sm" variant="ghost" icon={Trash2} aria-label={`Discard question ${i + 1}`} onClick={() => setDrafts((list) => list.filter((x) => x.key !== d.key))} />
+                <Button size="sm" variant="ghost" icon={Trash2} aria-label={`Discard question ${i + 1}`} onClick={() => updateDrafts((list) => list.filter((x) => x.key !== d.key))} />
               </div>
             </div>
           </li>
@@ -133,7 +142,7 @@ export default function QuestionDrafts({ drafts, setDrafts, defaultBankTitle, qu
         </Field>
         <Button icon={ListChecks} loading={save.isPending} disabled={!bankId || chosen.length === 0} onClick={() => save.mutate()}>Save {plural(chosen.length, 'question')}</Button>
       </div>
-      {editing && <QuestionEditor title="Edit draft question" question={{ ...editing, id: undefined }} onClose={() => setEditing(null)} onSave={async (question) => { setDrafts((list) => list.map((x) => (x.key === editing.key ? { ...x, ...question, include: true } : x))); }} />}
+      {editing && <QuestionEditor title="Edit draft question" question={{ ...editing, id: undefined }} onClose={() => setEditing(null)} onSave={async (question) => { updateDrafts((list) => list.map((x) => (x.key === editing.key ? { ...x, ...question, include: true } : x))); }} />}
     </div>
   );
 }

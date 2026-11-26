@@ -1,14 +1,16 @@
 // One coding problem: the statement, an editor, and the history of submissions.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Code2, History, Pencil } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
 import CodeWorkbench, { ProblemStatement, TestResults } from '../components/CodeWorkbench.jsx';
-import { Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, QueryState } from '../components/ui.jsx';
+import { Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, QueryState, Select } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
-import { formatDateTime, formatPercent } from '../lib/format.js';
+import { formatDateTime, formatPercent, plural } from '../lib/format.js';
 import { ProblemDialog } from './Programming.jsx';
+
+const EMPTY_SUBMISSIONS = [];
 
 export default function ProblemView() {
   const { problemId } = useParams();
@@ -16,8 +18,19 @@ export default function ProblemView() {
   const client = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [loaded, setLoaded] = useState(null);
+  const [submissionFilter, setSubmissionFilter] = useState('all');
   const problem = useQuery({ queryKey: ['programming', 'problem', problemId, undefined], queryFn: () => api.get(`/programming/problems/${problemId}`) });
   const submissions = useQuery({ queryKey: ['programming', 'submissions', problemId], queryFn: () => api.get(`/programming/problems/${problemId}/submissions`) });
+  const submissionRows = submissions.data ?? EMPTY_SUBMISSIONS;
+  const visibleSubmissions = useMemo(() => submissionRows.filter((s) => {
+    if (submissionFilter === 'passed') return s.status === 'COMPLETED' && s.scorePercent >= 100;
+    if (submissionFilter === 'needs-work') return s.status === 'COMPLETED' && s.scorePercent < 100;
+    if (submissionFilter === 'errors') return s.status === 'ERROR';
+    return true;
+  }), [submissionRows, submissionFilter]);
+  const completedSubmissions = submissionRows.filter((s) => s.status === 'COMPLETED');
+  const bestScore = completedSubmissions.length ? Math.max(...completedSubmissions.map((s) => s.scorePercent ?? 0)) : null;
+  const fullScoreCount = completedSubmissions.filter((s) => s.scorePercent >= 100).length;
 
   return (
     <QueryState query={problem}>
@@ -30,11 +43,27 @@ export default function ProblemView() {
               <Card><CardHeader icon={Code2} title="Problem" /><ProblemStatement problem={p} /></Card>
               <Card>
                 <CardHeader icon={History} title={isStudent ? 'My submissions' : 'Submissions'} description={isStudent ? 'Latest first. Practice does not count toward your grade.' : 'Latest first.'} />
-                <QueryState query={submissions} loader={<p className="text-sm text-faint">Loading…</p>}>
-                  {(rows) => rows.length === 0 ? <EmptyState compact icon={History} title="No submissions yet" /> : (
-                    <ul className="divide-y divide-line">
-                      {rows.map((s) => <li key={s.id} className="py-2.5 first:pt-0 last:pb-0"><Submission s={s} showStudent={!isStudent} languageLabel={p.runner?.languages.find((l) => l.id === s.language)?.label ?? s.language} onLoad={() => setLoaded({ language: s.language, code: s.code, key: s.id })} /></li>)}
-                    </ul>
+                <QueryState query={submissions} loader={<p className="text-sm text-faint">Loading submissions…</p>}>
+                  {(rows) => rows.length === 0 ? <EmptyState compact icon={History} title="No submissions yet" description={isStudent ? 'Your submitted solutions will appear here.' : 'Student attempts will appear here once the problem is shared.'} /> : (
+                    <>
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap gap-1.5" aria-label="Submission summary">
+                          <Badge>{plural(rows.length, 'submission')}</Badge>
+                          {bestScore != null && <Badge tone={bestScore >= 100 ? 'ok' : 'info'}>Best {formatPercent(bestScore, 0)}</Badge>}
+                          {fullScoreCount > 0 && <Badge tone="ok">{plural(fullScoreCount, 'full-score attempt')}</Badge>}
+                        </div>
+                        <Select value={submissionFilter} onChange={(e) => setSubmissionFilter(e.target.value)} aria-label="Filter submissions" className="w-full sm:w-48">
+                          <option value="all">All submissions</option><option value="passed">Full score</option><option value="needs-work">Needs work</option><option value="errors">Could not run</option>
+                        </Select>
+                      </div>
+                      {visibleSubmissions.length === 0 ? (
+                        <EmptyState compact icon={History} title="No submissions in this group" description="Choose another result filter or show the full history." action={<Button size="sm" variant="secondary" onClick={() => setSubmissionFilter('all')}>Show all submissions</Button>} />
+                      ) : (
+                        <ul className="divide-y divide-line">
+                          {visibleSubmissions.map((s) => <li key={s.id} className="py-2.5 first:pt-0 last:pb-0"><Submission s={s} showStudent={!isStudent} languageLabel={p.runner?.languages.find((l) => l.id === s.language)?.label ?? s.language} onLoad={() => setLoaded({ language: s.language, code: s.code, key: s.id })} /></li>)}
+                        </ul>
+                      )}
+                    </>
                   )}
                 </QueryState>
               </Card>

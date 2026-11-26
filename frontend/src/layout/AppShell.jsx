@@ -322,7 +322,10 @@ export default function AppShell() {
 
       <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-line bg-surface/85 px-3 backdrop-blur-md sm:px-5">
         <IconButton icon={MenuIcon} label="Open menu" onClick={() => setDrawer(true)} className="lg:hidden" />
-        <Link to="/" className="lg:hidden" aria-label="Discenda home"><Logo compact /></Link>
+        <Link to="/" className="inline-flex items-center gap-2 rounded-lg pr-1 lg:hidden" aria-label="Discenda home">
+          <Logo compact />
+          <span className="text-sm font-semibold tracking-tight text-ink">Discenda</span>
+        </Link>
         <button type="button" onClick={() => setSearch(true)} className="ml-1 hidden h-10 w-full max-w-md items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 text-sm text-faint transition-colors hover:border-line-strong sm:flex" aria-label="Search">
           <Search className="size-4" aria-hidden="true" />
           <span className="flex-1 text-left">Search classes, lessons, people…</span>
