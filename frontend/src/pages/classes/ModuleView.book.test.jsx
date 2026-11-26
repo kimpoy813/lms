@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Modules from './Modules.jsx';
-import ModuleView from './ModuleView.jsx';
+import ModuleView, { bookPageIndexForLocation, initialBookLocation, makeBookPageMap } from './ModuleView.jsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 Element.prototype.scrollIntoView = vi.fn();
@@ -144,6 +144,51 @@ function CurrentSearch() {
 function setViewportWidth(width) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width });
   window.dispatchEvent(new Event('resize'));
+}
+
+function mockBookFlowLayout({ chapterStarts, endStart, width = 800, height = 500, layout = 'single' }) {
+  const originalWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
+  const originalHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  const originalBounds = Element.prototype.getBoundingClientRect;
+  const originalRects = Element.prototype.getClientRects;
+  Object.defineProperty(Element.prototype, 'clientWidth', {
+    configurable: true,
+    get() {
+      return this.matches?.('[data-testid="book-page-flow"]') ? width : originalWidth?.get?.call(this) ?? 0;
+    },
+  });
+  Object.defineProperty(Element.prototype, 'clientHeight', {
+    configurable: true,
+    get() {
+      return this.matches?.('[data-testid="book-page-flow"]') ? height : originalHeight?.get?.call(this) ?? 0;
+    },
+  });
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.matches?.('[data-testid="book-page-flow"]')) return { left: 0, top: 0, width, height, right: width, bottom: height };
+    return originalBounds.call(this);
+  };
+  Element.prototype.getClientRects = function getClientRects() {
+    const chapterId = this.getAttribute?.('data-book-chapter-start');
+    const column = chapterId ? chapterStarts[chapterId] : this.hasAttribute?.('data-book-end-start') ? endStart : null;
+    if (column !== null && column !== undefined) {
+      const activeLayout = this.closest?.('[data-reader-layout]')?.dataset.readerLayout ?? layout;
+      const columnGap = activeLayout === 'two' ? 0 : 24;
+      const columnWidth = activeLayout === 'two' ? (width - columnGap) / 2 : width;
+      const flow = this.closest?.('.book-page-flow');
+      const left = column * (columnWidth + columnGap) - (flow?.scrollLeft ?? 0);
+      return [{ left, top: 0, width: columnWidth, height }];
+    }
+    return originalRects.call(this);
+  };
+
+  return () => {
+    if (originalWidth) Object.defineProperty(Element.prototype, 'clientWidth', originalWidth);
+    else delete Element.prototype.clientWidth;
+    if (originalHeight) Object.defineProperty(Element.prototype, 'clientHeight', originalHeight);
+    else delete Element.prototype.clientHeight;
+    Element.prototype.getBoundingClientRect = originalBounds;
+    Element.prototype.getClientRects = originalRects;
+  };
 }
 
 function renderAt(path) {
@@ -387,6 +432,88 @@ describe('Module book-like reader & outline CTA', () => {
     resumed.unmount();
   });
 
+  it('maps measured page columns to chapter ranges and reads intra-chapter deep links', () => {
+    const chapters = [{ id: 'long-chapter' }, { id: 'next-chapter' }];
+    const pages = makeBookPageMap(chapters, [1, 4], 5);
+
+    expect(pages).toEqual([
+      { type: 'cover', page: 0 },
+      { type: 'chapter', chapterId: 'long-chapter', page: 0 },
+      { type: 'chapter', chapterId: 'long-chapter', page: 1 },
+      { type: 'chapter', chapterId: 'long-chapter', page: 2 },
+      { type: 'chapter', chapterId: 'next-chapter', page: 0 },
+      { type: 'end' },
+    ]);
+
+    const deepLink = initialBookLocation(new URLSearchParams('view=book&chapter=long-chapter&page=3'), chapters);
+    expect(deepLink).toEqual({ type: 'chapter', chapterId: 'long-chapter', page: 2 });
+    expect(bookPageIndexForLocation(pages, deepLink)).toBe(3);
+    expect(bookPageIndexForLocation(pages, { type: 'chapter', chapterId: 'next-chapter', page: 0 })).toBe(4);
+  });
+
+  it('resumes within a long chapter and starts the next chapter only after its final page', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    window.localStorage.setItem('discenda.bookPosition.v1.stu-1.mod-1', 'les-1');
+    window.localStorage.setItem('discenda.bookPosition.v1.stu-1.mod-1.page', '3');
+    setViewportWidth(820);
+    const restoreLayout = mockBookFlowLayout({ chapterStarts: { 'les-1': 1, 'les-2': 4 }, endStart: 5, layout: 'two' });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnWidth).toBe('400px');
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 6');
+
+      const continueButton = [...view.container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Continue reading');
+      expect(continueButton).toBeTruthy();
+      act(() => continueButton.click());
+      await flush();
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 3–4 of 6');
+      expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
+      const flow = view.container.querySelector('[data-testid="book-page-flow"]');
+      const currentScrollLeft = flow.scrollLeft;
+      expect(currentScrollLeft).toBe(800);
+      act(() => window.dispatchEvent(new Event('beforeprint')));
+      expect(flow.scrollLeft).toBe(0);
+      act(() => window.dispatchEvent(new Event('afterprint')));
+      expect(flow.scrollLeft).toBe(currentScrollLeft);
+
+      const singlePage = [...view.container.querySelectorAll('[role="radiogroup"][aria-label="Book page layout"] [role="radio"]')]
+        .find((button) => button.textContent.trim() === 'Single page');
+      act(() => singlePage.click());
+      await flush();
+      expect(view.container.querySelector('[data-book-reader]').dataset.readerLayout).toBe('single');
+      expect(flow.style.columnWidth).toBe('800px');
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 4 of 6');
+      expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
+
+      act(() => view.container.querySelector('[aria-label="Next page"]').click());
+      await flush();
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 5 of 6');
+      expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-2');
+      expect(view.container.querySelector('#chapter-les-2').getAttribute('aria-hidden')).toBe('false');
+
+      act(() => view.container.querySelector('[aria-label="Previous page"]').click());
+      await flush();
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 4 of 6');
+      expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
+      expect(window.localStorage.getItem('discenda.bookPosition.v1.stu-1.mod-1.page')).toBe('3');
+
+      view.unmount();
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+      const resumeAgain = [...view.container.querySelectorAll('button')]
+        .find((button) => button.textContent.trim() === 'Continue reading');
+      act(() => resumeAgain.click());
+      await flush();
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 4 of 6');
+      expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+    }
+  });
+
   it.each([
     ['tablet', 820],
     ['laptop', 1366],
@@ -516,7 +643,7 @@ describe('Module book-like reader & outline CTA', () => {
     expect(reader.getAttribute('tabindex')).toBe('0');
     expect(pageNavigation.textContent).toContain('Page 1 of 4');
     expect(pageNavigation.querySelector('[aria-label="Previous page"]').disabled).toBe(true);
-    expect(chapterOne.className).toContain('hidden');
+    expect(chapterOne.getAttribute('aria-hidden')).toBe('true');
 
     // Vertical reading movement does not accidentally turn a page.
     act(() => {
@@ -527,7 +654,7 @@ describe('Module book-like reader & outline CTA', () => {
 
     // Laptop keyboard navigation moves forward; a left swipe moves forward too.
     act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
-    expect(chapterOne.className).not.toContain('hidden');
+    expect(chapterOne.getAttribute('aria-hidden')).toBe('false');
     expect(pageNavigation.textContent).toContain('Page 2 of 4');
     const tableScroller = container.querySelector('.rich-table-scroll');
     act(() => {
@@ -540,8 +667,8 @@ describe('Module book-like reader & outline CTA', () => {
       dispatchTouch(reader, 'touchstart', { x: 180, y: 120 });
       dispatchTouch(reader, 'touchend', { x: 90, y: 118 });
     });
-    expect(chapterOne.className).toContain('hidden');
-    expect(chapterTwo.className).not.toContain('hidden');
+    expect(chapterOne.getAttribute('aria-hidden')).toBe('true');
+    expect(chapterTwo.getAttribute('aria-hidden')).toBe('false');
     expect(pageNavigation.textContent).toContain('Page 3 of 4');
 
     // A right swipe and the opposite arrow key both turn back toward the cover.
@@ -549,11 +676,11 @@ describe('Module book-like reader & outline CTA', () => {
       dispatchTouch(reader, 'touchstart', { x: 90, y: 118 });
       dispatchTouch(reader, 'touchend', { x: 180, y: 120 });
     });
-    expect(chapterOne.className).not.toContain('hidden');
-    expect(chapterTwo.className).toContain('hidden');
+    expect(chapterOne.getAttribute('aria-hidden')).toBe('false');
+    expect(chapterTwo.getAttribute('aria-hidden')).toBe('true');
     act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })));
     expect(pageNavigation.textContent).toContain('Page 1 of 4');
-    expect(chapterOne.className).toContain('hidden');
+    expect(chapterOne.getAttribute('aria-hidden')).toBe('true');
 
     const now = vi.spyOn(Date, 'now');
     try {
