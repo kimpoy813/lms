@@ -452,12 +452,12 @@ describe('Module book-like reader & outline CTA', () => {
     expect(bookPageIndexForLocation(pages, { type: 'chapter', chapterId: 'next-chapter', page: 0 })).toBe(4);
   });
 
-  it('avoids adding an extra column break when the next chapter already starts at the top of the facing page', async () => {
+  it('does not force a break when chapters already start at column tops in a two-page spread', async () => {
     window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
     const restoreLayout = mockBookFlowLayout({
       chapterStarts: { 'les-1': 1, 'les-2': 4 },
       endStart: 5,
-      chapterTopOffsets: { 'les-1': 80, 'les-2': 0 },
+      chapterTopOffsets: { 'les-1': 0, 'les-2': 0 },
       layout: 'two',
     });
     let view;
@@ -465,7 +465,7 @@ describe('Module book-like reader & outline CTA', () => {
       view = renderAt('/classes/cls-1/modules/mod-1?view=book');
       await flush();
 
-      expect(view.container.querySelector('#chapter-les-1').style.breakBefore).toBe('column');
+      expect(view.container.querySelector('#chapter-les-1').style.breakBefore).toBe('auto');
       expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('auto');
       expect(view.container.querySelector('[data-book-end-start]').style.breakBefore).toBe('auto');
       expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 6');
@@ -475,13 +475,125 @@ describe('Module book-like reader & outline CTA', () => {
     }
   });
 
-  it('does not force a chapter into a new page when the preceding column contains no reading text', async () => {
+  it('moves a two-page chapter past visible text when it starts mid-column', async () => {
     window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
     const rangePrototype = Object.getPrototypeOf(document.createRange());
     const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects');
     Object.defineProperty(rangePrototype, 'getClientRects', {
       configurable: true,
-      value: () => [{ left: 3 * 408 + 8, top: 80, width: 120, height: 18 }],
+      value: () => [{ left: 4 * 408 + 8, top: 80, right: 4 * 408 + 128, bottom: 98, width: 120, height: 18 }],
+    });
+    const restoreLayout = mockBookFlowLayout({
+      chapterStarts: { 'les-1': 1, 'les-2': 4 },
+      endStart: 5,
+      chapterTopOffsets: { 'les-1': 80, 'les-2': 80 },
+      layout: 'two',
+    });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+
+      expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('column');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+      if (originalRangeRects) Object.defineProperty(rangePrototype, 'getClientRects', originalRangeRects);
+      else delete rangePrototype.getClientRects;
+    }
+  });
+
+  it('moves a repeated-column chapter past visible text in a two-page spread', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    const rangePrototype = Object.getPrototypeOf(document.createRange());
+    const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects');
+    Object.defineProperty(rangePrototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 1 * 408 + 8, top: 80, right: 1 * 408 + 128, bottom: 98, width: 120, height: 18 }],
+    });
+    const restoreLayout = mockBookFlowLayout({
+      chapterStarts: { 'les-1': 1, 'les-2': 1 },
+      endStart: 2,
+      chapterTopOffsets: { 'les-1': 80, 'les-2': 80 },
+      layout: 'two',
+    });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+
+      expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('column');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+      if (originalRangeRects) Object.defineProperty(rangePrototype, 'getClientRects', originalRangeRects);
+      else delete rangePrototype.getClientRects;
+    }
+  });
+
+  it('does not force a single page break when the target column contains no reading text', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'single' }));
+    const rangePrototype = Object.getPrototypeOf(document.createRange());
+    const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects');
+    Object.defineProperty(rangePrototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 3 * 824 + 8, top: 80, right: 3 * 824 + 128, bottom: 98, width: 120, height: 18 }],
+    });
+    const restoreLayout = mockBookFlowLayout({
+      chapterStarts: { 'les-1': 1, 'les-2': 4 },
+      endStart: 5,
+      chapterTopOffsets: { 'les-1': 80, 'les-2': 80 },
+      layout: 'single',
+    });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+
+      expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('auto');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+      if (originalRangeRects) Object.defineProperty(rangePrototype, 'getClientRects', originalRangeRects);
+      else delete rangePrototype.getClientRects;
+    }
+  });
+
+  it('preserves single-page chapter breaks when visible text occupies the target column', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'single' }));
+    const rangePrototype = Object.getPrototypeOf(document.createRange());
+    const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects');
+    Object.defineProperty(rangePrototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 4 * 824 + 8, top: 80, right: 4 * 824 + 128, bottom: 98, width: 120, height: 18 }],
+    });
+    const restoreLayout = mockBookFlowLayout({
+      chapterStarts: { 'les-1': 1, 'les-2': 4 },
+      endStart: 5,
+      chapterTopOffsets: { 'les-1': 80, 'les-2': 80 },
+      layout: 'single',
+    });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+
+      expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('column');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+      if (originalRangeRects) Object.defineProperty(rangePrototype, 'getClientRects', originalRangeRects);
+      else delete rangePrototype.getClientRects;
+    }
+  });
+
+  it('ignores off-page overflow text when deciding whether to break in a two-page spread', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    const rangePrototype = Object.getPrototypeOf(document.createRange());
+    const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects');
+    Object.defineProperty(rangePrototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 4 * 408 + 8, top: 580, right: 4 * 408 + 128, bottom: 598, width: 120, height: 18 }],
     });
     const restoreLayout = mockBookFlowLayout({
       chapterStarts: { 'les-1': 1, 'les-2': 4 },

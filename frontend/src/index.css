@@ -253,9 +253,9 @@
   .quiz-guarded input, .quiz-guarded textarea, .quiz-guarded [contenteditable] { -webkit-user-select: text; user-select: text; }
   .quiz-guarded img { -webkit-user-drag: none; }
 
-  /* Each CSS column is a device-sized book page. Chapter boundaries are measured in the reader
-     and only forced to a new column when they would otherwise begin mid-page; this avoids blank
-     spread pages when a chapter already ended at a natural column break. */
+  /* Each CSS column is a device-sized book page. Measured chapter breaks are applied only when
+     visible reading text already occupies the natural start column, so off-page overflow cannot
+     create a blank page in a spread. */
   .book-reader-surface { overscroll-behavior-x: contain; }
   .book-page-spread {
     position: relative;
