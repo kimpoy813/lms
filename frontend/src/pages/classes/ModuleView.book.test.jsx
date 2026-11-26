@@ -141,6 +141,11 @@ function CurrentSearch() {
   return <output data-current-search>{useLocation().search}</output>;
 }
 
+function setViewportWidth(width) {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width });
+  window.dispatchEvent(new Event('resize'));
+}
+
 function renderAt(path) {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -183,6 +188,7 @@ function dispatchTouch(target, type, { x, y }) {
 describe('Module book-like reader & outline CTA', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    setViewportWidth(1024);
     mockClassContext.canManage = false;
     mockClassContext.user = { id: 'stu-1', role: 'STUDENT' };
     mockGet.mockImplementation(async (url) => {
@@ -379,6 +385,122 @@ describe('Module book-like reader & outline CTA', () => {
     expect(resumed.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 3 of 4');
     expect(resumed.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-2');
     resumed.unmount();
+  });
+
+  it.each([
+    ['tablet', 820],
+    ['laptop', 1366],
+  ])('supports single pages and working two-page spreads on a %s viewport', async (_device, width) => {
+    setViewportWidth(width);
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const spread = container.querySelector('[data-testid="book-page-spread"]');
+    const pageLayout = container.querySelector('[role="radiogroup"][aria-label="Book page layout"]');
+    const pageNavigation = container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(reader.dataset.readerLayout).toBe('single');
+    expect(pageLayout.className).toContain('md:inline-flex');
+    expect(pageNavigation.textContent).toContain('Page 1 of 4');
+    expect([...spread.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0']);
+
+    const twoPages = [...pageLayout.querySelectorAll('[role="radio"]')].find((button) => button.textContent.trim() === 'Two pages');
+    act(() => twoPages.click());
+    await flush();
+
+    expect(reader.dataset.readerLayout).toBe('two');
+    expect(spread.dataset.pageCount).toBe('2');
+    let visiblePages = [...spread.querySelectorAll('.book-page[aria-hidden="false"]')];
+    expect(visiblePages.map((page) => page.dataset.bookPage)).toEqual(['0', '1']);
+    expect(visiblePages.map((page) => page.dataset.spreadSide)).toEqual(['left', 'right']);
+    expect(pageNavigation.textContent).toContain('Pages 1–2 of 4');
+
+    act(() => pageNavigation.querySelector('[aria-label="Next page"]').click());
+    await flush();
+    expect(pageNavigation.textContent).toContain('Pages 3–4 of 4');
+    expect(pageNavigation.querySelector('[aria-label="Next page"]').disabled).toBe(true);
+    expect(pageNavigation.querySelector('[aria-label="Previous page"]').disabled).toBe(false);
+    expect(container.querySelector('[data-current-search]').textContent).toContain('chapter=les-2');
+    expect(container.querySelector('[data-testid="book-turn-sheet"]').className).toContain('book-turn-sheet-next');
+    visiblePages = [...spread.querySelectorAll('.book-page[aria-hidden="false"]')];
+    expect(visiblePages.map((page) => page.dataset.bookPage)).toEqual(['2', '3']);
+
+    act(() => pageNavigation.querySelector('[aria-label="Previous page"]').click());
+    await flush();
+    expect(pageNavigation.textContent).toContain('Pages 1–2 of 4');
+    expect(container.querySelector('[data-testid="book-turn-sheet"]').className).toContain('book-turn-sheet-previous');
+
+    const singlePage = [...pageLayout.querySelectorAll('[role="radio"]')].find((button) => button.textContent.trim() === 'Single page');
+    act(() => singlePage.click());
+    await flush();
+    expect(reader.dataset.readerLayout).toBe('single');
+    expect(pageNavigation.textContent).toContain('Page 1 of 4');
+    expect([...spread.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0']);
+
+    act(() => pageNavigation.querySelector('[aria-label="Next page"]').click());
+    await flush();
+    expect(pageNavigation.textContent).toContain('Page 2 of 4');
+    expect(container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1');
+    unmount();
+  });
+
+  it('aligns deep links and the end-of-book URL with the correct saved spread', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    const chapter = renderAt('/classes/cls-1/modules/mod-1?view=book&chapter=les-1');
+    await act(async () => {
+      await vi.waitFor(() => expect(chapter.container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    let pageNavigation = chapter.container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(pageNavigation.textContent).toContain('Pages 1–2 of 4');
+    expect(chapter.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1');
+    expect([...chapter.container.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0', '1']);
+    expect(pageNavigation.querySelector('[aria-label="Previous page"]').disabled).toBe(true);
+    act(() => pageNavigation.querySelector('[aria-label="Next page"]').click());
+    await flush();
+    pageNavigation = chapter.container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(pageNavigation.textContent).toContain('Pages 3–4 of 4');
+    expect(chapter.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-2');
+    expect(pageNavigation.querySelector('[aria-label="Next page"]').disabled).toBe(true);
+    chapter.unmount();
+
+    const end = renderAt('/classes/cls-1/modules/mod-1?view=book&end=1');
+    await act(async () => {
+      await vi.waitFor(() => expect(end.container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+    pageNavigation = end.container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(pageNavigation.textContent).toContain('Pages 3–4 of 4');
+    expect([...end.container.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['2', '3']);
+    expect(end.container.querySelector('[data-current-search]').textContent).toContain('end=1');
+    expect(pageNavigation.querySelector('[aria-label="Next page"]').disabled).toBe(true);
+    end.unmount();
+  });
+
+  it('uses a single page below tablet width and restores a saved spread when widened', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'lg', focus: false, layout: 'two' }));
+    setViewportWidth(390);
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const spread = container.querySelector('[data-testid="book-page-spread"]');
+    const pageLayout = container.querySelector('[role="radiogroup"][aria-label="Book page layout"]');
+    expect(reader.dataset.readerLayout).toBe('single');
+    expect(pageLayout.className).toContain('hidden');
+    expect([...spread.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0']);
+    expect(window.localStorage.getItem('discenda.readerPrefs')).toContain('"layout":"two"');
+
+    act(() => setViewportWidth(820));
+    await flush();
+    expect(reader.dataset.readerLayout).toBe('two');
+    expect(spread.dataset.pageCount).toBe('2');
+    expect([...spread.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0', '1']);
+    expect(container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 4');
+    unmount();
   });
 
   it('turns module book pages in both directions with touch swipes and laptop arrow keys', async () => {

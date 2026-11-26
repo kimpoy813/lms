@@ -26,7 +26,8 @@ import { useClass } from './useClass.js';
 
 const READER_PREFS_KEY = 'discenda.readerPrefs';
 const BOOK_POSITION_END = '__end_of_book__';
-const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false };
+const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false, layout: 'single' };
+const BOOK_SPREAD_MIN_WIDTH = 768;
 
 function bookPositionKey(userId, moduleId) {
   return userId && moduleId ? `discenda.bookPosition.v1.${userId}.${moduleId}` : null;
@@ -62,6 +63,7 @@ function useReaderPrefs() {
         font: saved.font === 'sans' ? 'sans' : 'serif',
         size: ['sm', 'md', 'lg'].includes(saved.size) ? saved.size : 'md',
         focus: Boolean(saved.focus),
+        layout: saved.layout === 'two' ? 'two' : 'single',
       };
     } catch {
       return DEFAULT_READER_PREFS;
@@ -81,6 +83,23 @@ function useReaderPrefs() {
   return [prefs, update];
 }
 
+function useBookSpreadViewport() {
+  const [canShowSpread, setCanShowSpread] = useState(() => (
+    typeof window !== 'undefined' && window.innerWidth >= BOOK_SPREAD_MIN_WIDTH
+  ));
+
+  useEffect(() => {
+    const updateViewport = () => {
+      setCanShowSpread(window.innerWidth >= BOOK_SPREAD_MIN_WIDTH);
+    };
+    window.addEventListener('resize', updateViewport);
+    updateViewport();
+    return () => window.removeEventListener('resize', updateViewport);
+  }, []);
+
+  return canShowSpread;
+}
+
 function bookTextClasses(prefs) {
   return cn(
     'rich-book mx-auto',
@@ -98,7 +117,7 @@ function formatDuration(minutes) {
   return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
-function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
+function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false }) {
   return (
     <div className="no-print grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-1.5" role="group" aria-label="Reading display options">
       <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
@@ -141,6 +160,19 @@ function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
           </button>
         ))}
       </div>
+      {showBookLayout && (
+        <Segmented
+          label="Book page layout"
+          value={prefs.layout}
+          onChange={(layout) => onChange({ layout })}
+          size="sm"
+          className="hidden md:inline-flex md:w-auto"
+          options={[
+            { value: 'single', label: 'Single page', title: 'Show one book page at a time' },
+            { value: 'two', label: 'Two pages', title: 'Show a two-page book spread' },
+          ]}
+        />
+      )}
       <Button
         variant={prefs.focus ? 'soft' : 'ghost'}
         size="sm"
@@ -266,7 +298,13 @@ export default function ModuleView() {
                     { value: 'book', label: 'Read as book', icon: BookOpen },
                   ]}
                 />
-                <ReaderControls prefs={prefs} onChange={updatePrefs} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} />
+                <ReaderControls
+                  prefs={prefs}
+                  onChange={updatePrefs}
+                  isFullscreen={isFullscreen}
+                  onToggleFullscreen={toggleFullscreen}
+                  showBookLayout={viewMode === 'book'}
+                />
               </div>
             )}
           </div>
@@ -361,8 +399,9 @@ function LessonList({ mod, activeId, focus = false }) {
   );
 }
 
-function BookPageNavigation({ label, page, total, canPrevious, canNext, onPrevious, onNext, showHint = false, helpId }) {
-  const progress = total > 1 ? Math.round(((page - 1) / (total - 1)) * 100) : 0;
+function BookPageNavigation({ label, page, pageEnd = page, total, canPrevious, canNext, onPrevious, onNext, showHint = false, helpId }) {
+  const progress = total > 1 ? Math.round(((pageEnd - 1) / (total - 1)) * 100) : 0;
+  const pageCountLabel = pageEnd > page ? `Pages ${page}–${pageEnd} of ${total}` : `Page ${page} of ${total}`;
   return (
     <div className="no-print">
       <div className="mb-2 flex items-center gap-2.5">
@@ -375,7 +414,7 @@ function BookPageNavigation({ label, page, total, canPrevious, canNext, onPrevio
         </Button>
         <span className="min-w-0 text-center text-xs font-medium text-soft">
           <span className="block truncate">{label}</span>
-          <span className="block text-faint tabular-nums">Page {page} of {total}</span>
+          <span className="block text-faint tabular-nums">{pageCountLabel}</span>
         </span>
         <Button variant="secondary" size="sm" icon={ArrowRight} disabled={!canNext} onClick={onNext} aria-label="Next page" className="shrink-0">
           Next
@@ -398,10 +437,21 @@ function BookReader({ modSummary, prefs }) {
   ));
   const [resumePosition, setResumePosition] = useState(() => readBookPosition(user?.id, modSummary.id));
   const [turnDirection, setTurnDirection] = useState(null);
+  const [turnId, setTurnId] = useState(0);
+  const canShowSpread = useBookSpreadViewport();
+  const layout = prefs.layout === 'two' && canShowSpread ? 'two' : 'single';
+  const pageStep = layout === 'two' ? 2 : 1;
+  const navigationPageIndex = layout === 'two' ? Math.floor(pageIndex / pageStep) * pageStep : pageIndex;
+  const canPreviousPage = navigationPageIndex > 0;
+  const canNextPage = navigationPageIndex + pageStep <= lastPage;
   const pageStartRef = useRef(null);
   const goToPage = (nextPage) => {
     if (nextPage < 0 || nextPage > lastPage || nextPage === pageIndex) return;
-    setTurnDirection(nextPage > pageIndex ? 'next' : 'previous');
+    const nextNavigationPageIndex = layout === 'two' ? Math.floor(nextPage / pageStep) * pageStep : nextPage;
+    if (nextNavigationPageIndex !== navigationPageIndex) {
+      setTurnDirection(nextNavigationPageIndex > navigationPageIndex ? 'next' : 'previous');
+      setTurnId((current) => current + 1);
+    }
     setPageIndex(nextPage);
     const nextPosition = nextPage === lastPage ? BOOK_POSITION_END : nextPage === 0 ? null : modSummary.lessons?.[nextPage - 1]?.id ?? null;
     writeBookPosition(user?.id, modSummary.id, nextPosition);
@@ -412,10 +462,10 @@ function BookReader({ modSummary, prefs }) {
     setParams(nextParams, { replace: true });
   };
   const pageNavigation = useBookNavigation({
-    canPrevious: pageIndex > 0,
-    canNext: pageIndex < lastPage,
-    onPrevious: () => goToPage(pageIndex - 1),
-    onNext: () => goToPage(pageIndex + 1),
+    canPrevious: canPreviousPage,
+    canNext: canNextPage,
+    onPrevious: () => goToPage(Math.max(0, navigationPageIndex - pageStep)),
+    onNext: () => goToPage(Math.min(lastPage, navigationPageIndex + pageStep)),
   });
 
   useEffect(() => {
@@ -495,16 +545,34 @@ function BookReader({ modSummary, prefs }) {
         const resumePageIndex = resumePosition === BOOK_POSITION_END ? chapters.length + 1 : resumeChapterIndex >= 0 ? resumeChapterIndex + 1 : 0;
         const resumeChapter = resumeChapterIndex >= 0 ? chapters[resumeChapterIndex] : null;
         const activeChapter = pageIndex > 0 && pageIndex <= chapters.length ? chapters[pageIndex - 1] : null;
-        const pageLabel = pageIndex === 0
+        const pageTotal = chapters.length + 2;
+        const visiblePageCount = Math.min(pageStep, Math.max(1, lastPage - navigationPageIndex + 1));
+        const visiblePageIndices = Array.from({ length: visiblePageCount }, (_, offset) => navigationPageIndex + offset);
+        const pageEndIndex = visiblePageIndices[visiblePageIndices.length - 1] ?? navigationPageIndex;
+        const labelForPage = (index) => index === 0
           ? 'Module cover'
-          : activeChapter
-            ? `Chapter ${activeChapter.chapterNumber} of ${chapters.length}: ${activeChapter.title}`
+          : index <= chapters.length
+            ? `Chapter ${chapters[index - 1].chapterNumber} of ${chapters.length}: ${chapters[index - 1].title}`
             : `End of ${book.title}`;
-        const pageAnnouncement = pageIndex === 0
+        const announcementForPage = (index) => index === 0
           ? `Module cover: ${book.title}`
-          : activeChapter
-            ? `Chapter ${activeChapter.chapterNumber} of ${chapters.length}: ${activeChapter.title}`
+          : index <= chapters.length
+            ? `Chapter ${chapters[index - 1].chapterNumber} of ${chapters.length}: ${chapters[index - 1].title}`
             : `End of ${book.title}`;
+        const pageLabel = labelForPage(navigationPageIndex);
+        const pageRangeLabel = pageEndIndex > navigationPageIndex
+          ? `Pages ${navigationPageIndex + 1}–${pageEndIndex + 1} of ${pageTotal}`
+          : `Page ${navigationPageIndex + 1} of ${pageTotal}`;
+        const pageAnnouncement = `${pageRangeLabel}: ${visiblePageIndices.map(announcementForPage).join('; ')}`;
+        const isPageVisible = (index) => visiblePageIndices.includes(index);
+        const spreadSideForPage = (index) => layout === 'two' && isPageVisible(index)
+          ? (index === navigationPageIndex ? 'left' : 'right')
+          : undefined;
+        const spreadCardClasses = (side) => side === 'left'
+          ? '!rounded-r-none !border-r-0'
+          : side === 'right'
+            ? '!rounded-l-none !border-l-0'
+            : '';
         const scrollToChapter = (id) => {
           const index = chapters.findIndex((chapter) => chapter.id === id);
           if (index >= 0) goToPage(index + 1);
@@ -514,12 +582,16 @@ function BookReader({ modSummary, prefs }) {
           <div
             ref={pageStartRef}
             data-book-reader
+            data-reader-layout={layout}
             role="region"
             tabIndex={0}
             aria-label={`Book reader: ${book.title}`}
             aria-describedby={`book-page-turn-help-${modSummary.id}`}
             {...pageNavigation}
-            className={cn('book-reader-surface grid min-w-0 grid-cols-1 gap-4 sm:gap-6', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}
+            className={cn(
+              'book-reader-surface grid min-w-0 grid-cols-1 gap-4 sm:gap-6',
+              prefs.focus ? 'mx-auto max-w-4xl' : layout === 'two' ? 'lg:grid-cols-[16rem_minmax(0,1fr)]' : 'lg:grid-cols-[18rem_minmax(0,1fr)]',
+            )}
           >
             <p className="sr-only" aria-live="polite" aria-atomic="true">{pageAnnouncement}</p>
             <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', prefs.focus && 'lg:hidden')}>
@@ -614,17 +686,30 @@ function BookReader({ modSummary, prefs }) {
               )}
               <BookPageNavigation
                 label={pageLabel}
-                page={pageIndex + 1}
-                total={chapters.length + 2}
-                canPrevious={pageIndex > 0}
-                canNext={pageIndex < chapters.length + 1}
-                onPrevious={() => goToPage(pageIndex - 1)}
-                onNext={() => goToPage(pageIndex + 1)}
+                page={navigationPageIndex + 1}
+                pageEnd={pageEndIndex + 1}
+                total={pageTotal}
+                canPrevious={canPreviousPage}
+                canNext={canNextPage}
+                onPrevious={() => goToPage(Math.max(0, navigationPageIndex - pageStep))}
+                onNext={() => goToPage(Math.min(lastPage, navigationPageIndex + pageStep))}
                 showHint
                 helpId={`book-page-turn-help-${modSummary.id}`}
               />
+              <div
+                className="book-page-spread"
+                data-layout={layout}
+                data-page-count={visiblePageIndices.length}
+                data-testid="book-page-spread"
+              >
               {/* Module Title / Front-Matter Page */}
-              <Card className={cn('overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none', pageIndex !== 0 && 'hidden print:block', pageIndex === 0 && turnDirection && `book-page-turn-${turnDirection}`)}>
+              <article
+                className={cn('book-page', !isPageVisible(0) && 'hidden print:block')}
+                data-book-page="0"
+                data-spread-side={spreadSideForPage(0)}
+                aria-hidden={!isPageVisible(0)}
+              >
+              <Card className={cn('book-page-card overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none', spreadCardClasses(spreadSideForPage(0)))}>
                 <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
@@ -712,18 +797,29 @@ function BookReader({ modSummary, prefs }) {
                   )}
                 </div>
               </Card>
+              </article>
 
               {/* Inactive chapter pages stay mounted for printing, but only the selected page is visible while reading. */}
               {chapters.map((ch, idx) => {
                 const nextChapter = chapters[idx + 1];
                 const locked = !canManage && ch.locked;
-                const visiblePage = pageIndex === idx + 1;
-                const pageClassName = cn('book-chapter scroll-mt-24', !visiblePage && 'hidden print:block', visiblePage && turnDirection && `book-page-turn-${turnDirection}`);
+                const chapterPageIndex = idx + 1;
+                const visiblePage = isPageVisible(chapterPageIndex);
+                const spreadSide = spreadSideForPage(chapterPageIndex);
+                const pageClassName = cn('book-page book-chapter scroll-mt-24', !visiblePage && 'hidden print:block');
+                const pageCardClassName = cn('book-page-card', spreadCardClasses(spreadSide));
 
                 if (locked) {
                   return (
-                    <article key={ch.id} id={`chapter-${ch.id}`} className={pageClassName}>
-                      <Card className="border-dashed bg-raised/35 p-4 sm:p-6">
+                    <article
+                      key={ch.id}
+                      id={`chapter-${ch.id}`}
+                      className={pageClassName}
+                      data-book-page={chapterPageIndex}
+                      data-spread-side={spreadSide}
+                      aria-hidden={!visiblePage}
+                    >
+                      <Card className={cn(pageCardClassName, 'border-dashed bg-raised/35 p-4 sm:p-6')}>
                         <div className="reader-scaled-content mx-auto flex max-w-[68ch] items-start gap-3" data-reader-size={prefs.size}>
                           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-raised text-faint"><Lock className="size-4" aria-hidden="true" /></span>
                           <div className="min-w-0 flex-1">
@@ -738,8 +834,15 @@ function BookReader({ modSummary, prefs }) {
                 }
 
                 return (
-                  <article key={ch.id} id={`chapter-${ch.id}`} className={pageClassName}>
-                    <Card className="p-4 sm:p-6 print:border-0 print:shadow-none">
+                  <article
+                    key={ch.id}
+                    id={`chapter-${ch.id}`}
+                    className={pageClassName}
+                    data-book-page={chapterPageIndex}
+                    data-spread-side={spreadSide}
+                    aria-hidden={!visiblePage}
+                  >
+                    <Card className={cn(pageCardClassName, 'p-4 sm:p-6 print:border-0 print:shadow-none')}>
                       <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
                         <header className="mb-6 border-b border-line pb-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -869,7 +972,13 @@ function BookReader({ modSummary, prefs }) {
               })}
 
               {/* End-of-Module Epilogue */}
-              <Card className={cn('no-print bg-raised/40 p-4 sm:p-6', pageIndex !== chapters.length + 1 && 'hidden', pageIndex === chapters.length + 1 && turnDirection && `book-page-turn-${turnDirection}`)}>
+              <article
+                className={cn('book-page', !isPageVisible(lastPage) && 'hidden')}
+                data-book-page={lastPage}
+                data-spread-side={spreadSideForPage(lastPage)}
+                aria-hidden={!isPageVisible(lastPage)}
+              >
+              <Card className={cn('book-page-card no-print bg-raised/40 p-4 sm:p-6', spreadCardClasses(spreadSideForPage(lastPage)))}>
                 <div className="reader-scaled-content mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4" data-reader-size={prefs.size}>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-ink">
@@ -889,14 +998,25 @@ function BookReader({ modSummary, prefs }) {
                   </div>
                 </div>
               </Card>
+              </article>
+              {turnId > 0 && turnDirection && (
+                <div
+                  key={turnId}
+                  className={cn('book-turn-sheet', `book-turn-sheet-${turnDirection}`)}
+                  aria-hidden="true"
+                  data-testid="book-turn-sheet"
+                />
+              )}
+              </div>
               <BookPageNavigation
                 label={pageLabel}
-                page={pageIndex + 1}
-                total={chapters.length + 2}
-                canPrevious={pageIndex > 0}
-                canNext={pageIndex < chapters.length + 1}
-                onPrevious={() => goToPage(pageIndex - 1)}
-                onNext={() => goToPage(pageIndex + 1)}
+                page={navigationPageIndex + 1}
+                pageEnd={pageEndIndex + 1}
+                total={pageTotal}
+                canPrevious={canPreviousPage}
+                canNext={canNextPage}
+                onPrevious={() => goToPage(Math.max(0, navigationPageIndex - pageStep))}
+                onNext={() => goToPage(Math.min(lastPage, navigationPageIndex + pageStep))}
               />
             </div>
           </div>
