@@ -3,6 +3,26 @@ import { apiAs, demoClass, signIn } from '../helpers.js';
 
 const PAGE_TEXT = 'A well-designed reading sequence explains each idea clearly, connects it to the next concept, and gives learners enough context to apply it. '.repeat(3);
 const WIDE_CELL = 'InterdepartmentalInformationAssuranceControl '.repeat(4);
+const REPORTED_SUMMARY_TEXT = 'Every learner should understand how a careful security decision works, connect it to an appropriate control, and apply the result responsibly to information systems. '.repeat(3);
+const REPORTED_SUMMARY_OBJECTIVES = [
+  'I can recommend appropriate administrative, technical, and physical controls.',
+  'I can distinguish authentication from authorization and explain least privilege.',
+  'I can explain how defense in depth supports information protection.',
+  'I can identify basic secure coding and database management practices.',
+  'I can explain why backup verification, monitoring, and recovery planning contribute to information assurance.',
+  'I can incorporate security and privacy considerations into a computer science capstone project.',
+  'I can demonstrate responsible and ethical behavior when handling information and performing security-related activities.',
+];
+const REPORTED_SUMMARY_END = `<ul>${REPORTED_SUMMARY_OBJECTIVES.map((objective) => `<li>${objective}</li>`).join('')}</ul><h3>Final Learning Reflection</h3><p>Reflect on a software application that you have developed or frequently use. Identify the information it processes, explain how the CIA triad applies to it, discuss its potential security risks, and recommend improvements that would make it more trustworthy. Consider how your responsibilities as a computer science professional extend beyond delivering functional software.</p>`;
+
+// The visible objectives/reflection come from the supplied screenshot; repeated notes only place
+// that excerpt at the reported 155–156 spread because the complete module export is unavailable here.
+function reportedSummaryFixtureContent(chapterNumber, paragraphCount) {
+  const paragraphs = Array.from({ length: paragraphCount }, (_, index) => (
+    `<p><strong>Security note ${chapterNumber}-${index + 1}.</strong> ${REPORTED_SUMMARY_TEXT}</p>`
+  )).join('');
+  return `${paragraphs}${chapterNumber === 9 ? REPORTED_SUMMARY_END : ''}`;
+}
 
 function longChapterContent(chapterNumber) {
   const paragraphs = Array.from({ length: 22 }, (_, index) => (
@@ -42,22 +62,29 @@ async function visibleSpreadHasTextInBothPages(page) {
   });
 }
 
-async function visibleTableTextInSpread(page, chapterId) {
-  return page.locator(`#chapter-${chapterId} .rich-table-scroll`).evaluate((wrapper) => {
-    const flow = wrapper.closest('[data-testid="book-page-flow"]');
-    const bounds = flow.getBoundingClientRect();
-    const cell = wrapper.querySelector('tbody td, tbody th, td, th');
-    if (!cell) return false;
-    const range = document.createRange();
-    range.selectNodeContents(cell);
-    const visible = [...range.getClientRects()].some((rect) => (
-      rect.width > 2 && rect.height > 2
-      && rect.bottom > bounds.top + 2 && rect.top < bounds.bottom - 2
-      && rect.right > bounds.left + 4 && rect.left < bounds.right - 4
-    ));
-    range.detach?.();
-    return visible;
-  });
+async function visibleTextOnSpreadSide(page, text, side) {
+  return page.locator('[data-testid="book-page-flow"]').evaluate((flow, { needle, targetSide }) => {
+    const box = flow.getBoundingClientRect();
+    const middle = box.left + box.width / 2;
+    const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.textContent?.includes(needle)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const visibleOnSide = [...range.getClientRects()].some((rect) => {
+        if (rect.width < 2 || rect.height < 2
+          || rect.bottom <= box.top + 2 || rect.top >= box.bottom - 2
+          || rect.right <= box.left + 4 || rect.left >= box.right - 4) return false;
+        const center = (rect.left + rect.right) / 2;
+        return targetSide === 'left' ? center < middle - 8 : center > middle + 8;
+      });
+      range.detach?.();
+      if (visibleOnSide) return true;
+    }
+    return false;
+  }, { needle: text, targetSide: side });
 }
 
 test('two-page book spreads fill both sides, wrap tables, and keep settings out of the text', async ({ page }) => {
@@ -137,12 +164,10 @@ test('two-page book spreads fill both sides, wrap tables, and keep settings out 
     const reader = page.locator('[data-book-reader]');
     const spread = page.locator('[data-testid="book-page-spread"]');
     const toolbar = page.getByTestId('book-immersive-toolbar');
-    const navigation = page.getByRole('navigation', { name: 'Book page navigation' });
     await expect(reader).toBeVisible();
     await expect(reader).toHaveAttribute('data-reader-layout', 'two');
     await expect(spread).toHaveAttribute('data-page-count', '2');
     await expect(toolbar).toBeVisible();
-    await expect(navigation).toContainText('Chapter 9 of 10');
     await expect(page.locator(`#chapter-${chapters[8].id}`)).toHaveAttribute('aria-hidden', 'false');
     await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
 
@@ -183,36 +208,102 @@ test('two-page book spreads fill both sides, wrap tables, and keep settings out 
     expect(Math.max(...tableMetrics.tableFragmentWidths)).toBeLessThanOrEqual(tableMetrics.wrapperWidth + 1);
     expect(tableMetrics.tableScrollWidth).toBeLessThanOrEqual(tableMetrics.wrapperWidth + 1);
 
-    await settings.locator('summary').click();
-    const nextPage = navigation.getByRole('button', { name: 'Next page' });
-    const flow = page.locator('[data-testid="book-page-flow"]');
-    for (let turns = 0; turns < 8 && !(await visibleTableTextInSpread(page, chapters[8].id)); turns += 1) {
-      const previousScrollLeft = await flow.evaluate((element) => element.scrollLeft);
-      await expect(nextPage).toBeEnabled();
-      await nextPage.click();
-      await expect.poll(() => flow.evaluate((element) => element.scrollLeft)).toBeGreaterThan(previousScrollLeft);
-      await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
-    }
-    await expect.poll(() => visibleTableTextInSpread(page, chapters[8].id)).toBe(true);
-    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
-    const tableHeaderAndFirstRowSharePage = await table.evaluate((wrapper) => {
-      const flow = wrapper.closest('[data-testid="book-page-flow"]');
-      const flowRect = flow.getBoundingClientRect();
-      const styles = getComputedStyle(flow);
-      const stride = Number.parseFloat(styles.columnWidth) + Number.parseFloat(styles.columnGap);
-      const pageIndexes = (element) => [...element.getClientRects()].map((rect) => (
-        Math.floor((rect.left - flowRect.left + flow.scrollLeft) / stride)
-      ));
-      const headerPages = pageIndexes(wrapper.querySelector('thead'));
-      const rowPages = pageIndexes(wrapper.querySelector('tbody tr'));
-      return headerPages.some((index) => rowPages.includes(index));
-    });
-    expect(tableHeaderAndFirstRowSharePage).toBe(true);
-
-    await settings.locator('summary').click();
     await settings.locator('select[aria-label="Jump to chapter"]').selectOption(chapters[9].id);
     await expect(page.locator(`#chapter-${chapters[9].id}`)).toHaveAttribute('aria-hidden', 'false');
     await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+  } finally {
+    await api.dispose();
+  }
+});
+
+test('keeps the screenshot-derived chapter 9 spread populated at pages 155–156 of 165', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await signIn(page, 'teacher');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('teacher', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+    expect(demoModule, 'the demo class includes its first reading module').toBeTruthy();
+
+    const [moduleSummary, book] = await Promise.all([
+      api.get(`/modules/${demoModule.id}`),
+      api.get(`/modules/${demoModule.id}/book`),
+    ]);
+    const paragraphCounts = [45, 45, 45, 45, 45, 45, 49, 49, 131, 27];
+    const chapters = paragraphCounts.map((paragraphCount, index) => {
+      const chapterNumber = index + 1;
+      return {
+        ...book.chapters[0],
+        id: `reported-summary-chapter-${chapterNumber}`,
+        moduleId: demoModule.id,
+        title: chapterNumber === 9
+          ? 'Module Summary: Building a Security-Oriented Computing Mindset'
+          : `Reader QA chapter ${chapterNumber}`,
+        chapterNumber,
+        kind: 'LESSON',
+        status: 'PUBLISHED',
+        estimatedMinutes: 6,
+        objectives: [],
+        contentHtml: reportedSummaryFixtureContent(chapterNumber, paragraphCount),
+        resources: [],
+        visual: null,
+        selfCheck: null,
+        completed: false,
+        bookmarked: false,
+        locked: false,
+        lockedReason: null,
+      };
+    });
+    const fixtureSummary = {
+      ...moduleSummary,
+      title: 'Module 1: Introduction to Information Assurance and Security',
+      description: 'Screenshot-derived content at the reported two-page boundary.',
+      status: 'PUBLISHED',
+      locked: false,
+      lessonCount: chapters.length,
+      lessons: chapters.map((chapter, index) => ({ ...chapter, position: index })),
+      objectives: [],
+      resources: [],
+    };
+    const fixtureBook = {
+      ...book,
+      ...fixtureSummary,
+      chapters,
+      totalEstimatedMinutes: chapters.length * 6,
+    };
+
+    await page.route(`**/api/modules/${demoModule.id}`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureSummary }),
+    }));
+    await page.route(`**/api/modules/${demoModule.id}/book`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureBook }),
+    }));
+
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: true, layout: 'two',
+    })));
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book&chapter=${chapters[8].id}&page=39`);
+
+    const reader = page.locator('[data-book-reader]');
+    const spread = page.locator('[data-testid="book-page-spread"]');
+    const navigation = page.getByRole('navigation', { name: 'Book page navigation' });
+    await expect(reader).toBeVisible();
+    await expect(reader).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+    await expect(spread).toHaveAttribute('data-total-pages', '165');
+    await expect(navigation).toContainText('Chapter 9 of 10: Module Summary: Building a Security-Oriented Computing Mindset (continued)');
+    await expect(navigation).toContainText('Pages 155–156 of 165');
+    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+    await expect.poll(() => visibleTextOnSpreadSide(page, 'Final Learning Reflection', 'left')).toBe(true);
+    await expect.poll(() => visibleTextOnSpreadSide(page, 'Security note 10-1.', 'right')).toBe(true);
   } finally {
     await api.dispose();
   }

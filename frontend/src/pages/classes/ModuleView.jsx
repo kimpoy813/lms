@@ -774,6 +774,8 @@ function BookReader({ modSummary, prefs, immersive = false }) {
             ? [...rects].some((rect) => (
               rect.width > 1
               && rect.height > 1
+              && rect.bottom > flowRect.top + 1
+              && rect.top < flowRect.bottom - 1
               && Math.floor((rect.left - flowRect.left + flow.scrollLeft) / stride) === column
             ))
             : true;
@@ -783,9 +785,9 @@ function BookReader({ modSummary, prefs, immersive = false }) {
         return false;
       };
 
-      // Only break before a chapter when real content already occupies that column. A fragmented
-      // card can leave a little trailing padding in an otherwise empty column; treating that as
-      // content pushes the next chapter past it and leaves a blank page in the two-page spread.
+      // Move a chapter start only when its natural column already contains visible reading text.
+      // Range rectangles must overlap the flow's vertical bounds; off-page overflow is not content
+      // on the current page and must not push a chapter past an otherwise empty facing page.
       let previousStart = -1;
       [...chapterElements, endPageRef.current].forEach((element, index) => {
         if (!element) return;
