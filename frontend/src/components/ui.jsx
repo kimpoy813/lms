@@ -36,6 +36,28 @@ export function Button({ variant = 'primary', size = 'md', loading = false, icon
   return <button type={type} className={classes} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>{content}</button>;
 }
 
+/** Keeps long lists scannable while still exposing every loaded row on demand. */
+export function ProgressiveList({ items, initialCount = 4, moreLabel = 'item', className, children }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const remainingCount = items.length - initialCount;
+  const visibleItems = expanded ? items : items.slice(0, initialCount);
+  return (
+    <>
+      <ul id={listId} className={className}>
+        {visibleItems.map((item, index) => children(item, index))}
+      </ul>
+      {items.length > initialCount && (
+        <div className="mt-2 border-t border-line pt-2">
+          <Button variant="ghost" size="sm" className="w-full" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={listId}>
+            {expanded ? 'Show fewer' : `Show ${remainingCount} more ${remainingCount === 1 ? moreLabel : `${moreLabel}s`}`}
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function IconButton({ icon: Icon, label, className, size = 'md', variant = 'ghost', ...props }) {
   return (
     <button type="button" aria-label={label} title={label} className={cn('inline-flex shrink-0 items-center justify-center rounded-lg transition-colors disabled:opacity-50', size === 'sm' ? 'size-8' : 'size-10', BUTTON.variant[variant], className)} {...props}>

@@ -5,11 +5,11 @@ import {
   AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Clock, FileQuestion, GraduationCap, HardDrive, History, Inbox,
   Mail, MapPin, Megaphone, PenLine, Radio, ScanLine, Server, Sparkles, TrendingDown, UserCheck, UserPlus, Users,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useId, useState } from 'react';
+import { lazy, Suspense, useCallback } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
 import PushNotificationsCard from '../components/PushNotificationsCard.jsx';
-import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, ProgressBar, QueryState, Skeleton, StatCard } from '../components/ui.jsx';
+import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, PageHeader, ProgressiveList, ProgressBar, QueryState, Skeleton, StatCard } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { dueLabel, formatBytes, formatClock, formatDateKey, formatDay, formatPercent, formatScore, formatTime, getTimeZone, plural, relativeTime } from '../lib/format.js';
 import { useLiveInterval, useOnReturn } from '../lib/live.js';
@@ -66,28 +66,6 @@ function ItemRow({ to, icon: Icon, title, meta, right, tone = 'brand' }) {
         <ArrowRight className="size-4 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
       </Link>
     </li>
-  );
-}
-
-// Keep the most actionable rows visible; expose the rest of the dashboard's loaded rows on demand.
-function ProgressiveList({ items, initialCount = 4, moreLabel = 'item', className, children }) {
-  const [expanded, setExpanded] = useState(false);
-  const listId = useId();
-  const remainingCount = items.length - initialCount;
-  const visibleItems = expanded ? items : items.slice(0, initialCount);
-  return (
-    <>
-      <ul id={listId} className={className}>
-        {visibleItems.map((item, index) => children(item, index))}
-      </ul>
-      {items.length > initialCount && (
-        <div className="mt-2 border-t border-line pt-2">
-          <Button variant="ghost" size="sm" className="w-full" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={listId}>
-            {expanded ? 'Show fewer' : `Show ${remainingCount} more ${remainingCount === 1 ? moreLabel : `${moreLabel}s`}`}
-          </Button>
-        </div>
-      )}
-    </>
   );
 }
 

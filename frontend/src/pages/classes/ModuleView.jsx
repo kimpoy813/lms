@@ -25,7 +25,33 @@ import { ResourceDialog, ResourceItem } from './ResourceParts.jsx';
 import { useClass } from './useClass.js';
 
 const READER_PREFS_KEY = 'discenda.readerPrefs';
+const BOOK_POSITION_END = '__end_of_book__';
 const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false };
+
+function bookPositionKey(userId, moduleId) {
+  return userId && moduleId ? `discenda.bookPosition.v1.${userId}.${moduleId}` : null;
+}
+
+function readBookPosition(userId, moduleId) {
+  const key = bookPositionKey(userId, moduleId);
+  if (!key || typeof window === 'undefined') return null;
+  try {
+    return window.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBookPosition(userId, moduleId, position) {
+  const key = bookPositionKey(userId, moduleId);
+  if (!key || typeof window === 'undefined') return;
+  try {
+    if (position) window.localStorage?.setItem(key, position);
+    else window.localStorage?.removeItem(key);
+  } catch {
+    // Reading still works if storage is unavailable or full.
+  }
+}
 
 function useReaderPrefs() {
   const [prefs, setPrefs] = useState(() => {
@@ -202,11 +228,12 @@ export default function ModuleView() {
   }, [effectiveQuery.data, viewMode, lessonId, creating, canManage, setParams]);
 
   const switchView = (next, mod) => {
+    const currentChapterId = lessonId ?? params.get('chapter');
     if (next === 'book') {
-      setParams({ view: 'book' });
+      setParams({ view: 'book', ...(currentChapterId ? { chapter: currentChapterId } : {}) });
       return;
     }
-    const targetLesson = lessonId
+    const targetLesson = currentChapterId
       || (canManage ? mod.lessons[0]?.id : (mod.lessons.find((l) => !l.completed && !l.locked) ?? mod.lessons.find((l) => !l.locked))?.id);
     setParams(targetLesson ? { lesson: targetLesson } : {});
   };
@@ -334,8 +361,13 @@ function LessonList({ mod, activeId, focus = false }) {
 }
 
 function BookPageNavigation({ label, page, total, canPrevious, canNext, onPrevious, onNext, showHint = false, helpId }) {
+  const progress = total > 1 ? Math.round(((page - 1) / (total - 1)) * 100) : 0;
   return (
     <div className="no-print">
+      <div className="mb-2 flex items-center gap-2.5">
+        <ProgressBar value={progress} label="Progress through this book" className="h-1.5" />
+        <span className="w-9 shrink-0 text-right text-xs tabular-nums text-faint">{progress}%</span>
+      </div>
       <nav aria-label="Book page navigation" className="flex items-center justify-between gap-2 rounded-xl border border-line bg-surface/80 p-2 sm:px-3 sm:py-2.5">
         <Button variant="secondary" size="sm" icon={ArrowLeft} disabled={!canPrevious} onClick={onPrevious} aria-label="Previous page" className="shrink-0">
           Previous
@@ -356,16 +388,27 @@ function BookPageNavigation({ label, page, total, canPrevious, canNext, onPrevio
 function BookReader({ modSummary, prefs }) {
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
-  const [, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [savingId, setSavingId] = useState(null);
-  const [pageIndex, setPageIndex] = useState(0);
+  const lastPage = (modSummary.lessons?.length ?? 0) + 1;
+  const initialChapterIndex = (modSummary.lessons ?? []).findIndex((chapter) => chapter.id === params.get('chapter'));
+  const [pageIndex, setPageIndex] = useState(() => (
+    params.get('end') === '1' ? lastPage : initialChapterIndex >= 0 ? initialChapterIndex + 1 : 0
+  ));
+  const [resumePosition, setResumePosition] = useState(() => readBookPosition(user?.id, modSummary.id));
   const [turnDirection, setTurnDirection] = useState(null);
   const pageStartRef = useRef(null);
-  const lastPage = (modSummary.lessons?.length ?? 0) + 1;
   const goToPage = (nextPage) => {
     if (nextPage < 0 || nextPage > lastPage || nextPage === pageIndex) return;
     setTurnDirection(nextPage > pageIndex ? 'next' : 'previous');
     setPageIndex(nextPage);
+    const nextPosition = nextPage === lastPage ? BOOK_POSITION_END : nextPage === 0 ? null : modSummary.lessons?.[nextPage - 1]?.id ?? null;
+    writeBookPosition(user?.id, modSummary.id, nextPosition);
+    setResumePosition(nextPosition);
+    const nextParams = { view: 'book' };
+    if (nextPosition === BOOK_POSITION_END) nextParams.end = '1';
+    else if (nextPosition) nextParams.chapter = nextPosition;
+    setParams(nextParams, { replace: true });
   };
   const pageNavigation = useBookNavigation({
     canPrevious: pageIndex > 0,
@@ -373,6 +416,15 @@ function BookReader({ modSummary, prefs }) {
     onPrevious: () => goToPage(pageIndex - 1),
     onNext: () => goToPage(pageIndex + 1),
   });
+
+  useEffect(() => {
+    if (pageIndex === 0) return;
+    const position = pageIndex === lastPage ? BOOK_POSITION_END : modSummary.lessons?.[pageIndex - 1]?.id;
+    if (!position) return;
+    writeBookPosition(user?.id, modSummary.id, position);
+    setResumePosition((current) => (current === position ? current : position));
+  }, [lastPage, modSummary.id, modSummary.lessons, pageIndex, user?.id]);
+
   const [offlineMap, setOfflineMap] = useState(() => {
     const map = {};
     for (const l of modSummary.lessons ?? []) map[l.id] = isLessonSavedOffline(user?.id, l.id);
@@ -438,6 +490,9 @@ function BookReader({ modSummary, prefs }) {
         const totalReadTime = formatDuration(book.totalEstimatedMinutes || chapters.reduce((s, c) => s + (Number(c.estimatedMinutes) || 0), 0));
         const completedCount = chapters.filter((c) => c.completed).length;
         const progressPercent = chapters.length ? Math.round((completedCount / chapters.length) * 100) : 0;
+        const resumeChapterIndex = chapters.findIndex((chapter) => chapter.id === resumePosition);
+        const resumePageIndex = resumePosition === BOOK_POSITION_END ? chapters.length + 1 : resumeChapterIndex >= 0 ? resumeChapterIndex + 1 : 0;
+        const resumeChapter = resumeChapterIndex >= 0 ? chapters[resumeChapterIndex] : null;
         const activeChapter = pageIndex > 0 && pageIndex <= chapters.length ? chapters[pageIndex - 1] : null;
         const pageLabel = pageIndex === 0
           ? 'Module cover'
@@ -586,6 +641,18 @@ function BookReader({ modSummary, prefs }) {
                     <p className={cn('mt-3 text-base leading-relaxed text-soft', prefs.font === 'serif' && 'font-serif text-[1.06rem]')}>
                       {book.description}
                     </p>
+                  )}
+
+                  {pageIndex === 0 && resumePageIndex > 0 && (
+                    <div className="no-print mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-brand/30 bg-brand-soft p-3.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-ink">Continue where you left off</p>
+                        <p className="mt-0.5 truncate text-xs text-soft">{resumeChapter ? `Chapter ${resumeChapter.chapterNumber}: ${resumeChapter.title}` : `End of ${book.title}`}</p>
+                      </div>
+                      <Button variant="secondary" size="sm" icon={ArrowRight} onClick={() => goToPage(resumePageIndex)}>
+                        {resumePageIndex === chapters.length + 1 ? 'Return to end' : 'Continue reading'}
+                      </Button>
+                    </div>
                   )}
 
                   {book.objectives?.length > 0 && (

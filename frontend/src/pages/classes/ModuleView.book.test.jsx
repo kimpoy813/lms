@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Modules from './Modules.jsx';
 import ModuleView from './ModuleView.jsx';
@@ -137,6 +137,10 @@ const flush = () => act(async () => {
   await new Promise((r) => setTimeout(r, 20));
 });
 
+function CurrentSearch() {
+  return <output data-current-search>{useLocation().search}</output>;
+}
+
 function renderAt(path) {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -146,10 +150,13 @@ function renderAt(path) {
     root.render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[path]}>
-          <Routes>
-            <Route path="/classes/:classId/modules" element={<Modules />} />
-            <Route path="/classes/:classId/modules/:moduleId" element={<ModuleView />} />
-          </Routes>
+          <>
+            <CurrentSearch />
+            <Routes>
+              <Route path="/classes/:classId/modules" element={<Modules />} />
+              <Route path="/classes/:classId/modules/:moduleId" element={<ModuleView />} />
+            </Routes>
+          </>
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -341,6 +348,37 @@ describe('Module book-like reader & outline CTA', () => {
     expect(dialog.querySelector('[aria-label="Assignment instructions"]').value).toBe(mockLesson1.contentHtml);
 
     unmount();
+  });
+
+  it('keeps the active book chapter in the URL and offers a saved resume point from the cover', async () => {
+    const start = renderAt('/classes/cls-1/modules/mod-1?lesson=les-1');
+    await flush();
+
+    const bookMode = [...start.container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Read as book');
+    expect(bookMode).toBeTruthy();
+    act(() => bookMode.click());
+    await flush();
+
+    let pageNavigation = start.container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(pageNavigation.textContent).toContain('Page 2 of 4');
+    expect(start.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1');
+    const reader = start.container.querySelector('[data-book-reader]');
+    act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
+    pageNavigation = start.container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(pageNavigation.textContent).toContain('Page 3 of 4');
+    expect(start.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-2');
+    start.unmount();
+
+    const resumed = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await flush();
+    expect(resumed.container.textContent).toContain('Continue where you left off');
+    const continueButton = [...resumed.container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Continue reading');
+    expect(continueButton).toBeTruthy();
+    act(() => continueButton.click());
+    await flush();
+    expect(resumed.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 3 of 4');
+    expect(resumed.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-2');
+    resumed.unmount();
   });
 
   it('turns module book pages in both directions with touch swipes and laptop arrow keys', async () => {
