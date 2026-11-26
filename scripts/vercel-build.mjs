@@ -76,6 +76,15 @@ if (requiredEsModules.length > 0) {
   }
 }
 
+// The function lazily loads this application on the first request. Check its full import graph and
+// initialization with Node's native ESM linker during the build: the test runner's Vite transforms
+// do not enforce every named export, so a missing export can otherwise ship and stop every request.
+run(
+  'Checking the backend application loads under Node.js',
+  ['--input-type=module', '-e', "const { createApp } = await import('./src/app.js'); createApp();"],
+  { cwd: backend, env: { VERCEL: '1', NODE_ENV: 'production' } },
+);
+
 // How far the database is from the functions. A function pays for that distance on every query,
 // and one page of the app asks for several. Only the region is read from the database's address
 // (Neon puts it in the host name); the address itself is not printed.

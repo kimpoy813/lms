@@ -1,5 +1,6 @@
 // Shared tabular shape for the standard gradebook download and uploaded-template exports.
-import { fieldErrors, round } from '../../lib/http.js';
+import { fieldErrors } from '../../lib/errors.js';
+import { round } from '../../lib/http.js';
 import { dateKey } from '../../lib/time.js';
 import { classLabel } from '../classes/access.js';
 
