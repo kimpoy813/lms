@@ -740,6 +740,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
       flow.style.columnCount = String(columnCount);
       flow.style.columnWidth = `${columnWidth}px`;
       flow.style.columnGap = `${gap}px`;
+      flow.style.setProperty('--book-page-width', `${columnWidth}px`);
       const flowRect = flow.getBoundingClientRect();
       const stride = columnWidth + gap;
       const pageForElement = (element, fallback) => {

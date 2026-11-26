@@ -253,8 +253,9 @@
   .quiz-guarded input, .quiz-guarded textarea, .quiz-guarded [contenteditable] { -webkit-user-select: text; user-select: text; }
   .quiz-guarded img { -webkit-user-drag: none; }
 
-  /* Each CSS column is a device-sized book page. The chapter sections all share one
-     column-flow stream, so later chapters cannot begin until the current chapter is complete. */
+  /* Each CSS column is a device-sized book page. The chapter sections share one continuous
+     column-flow stream, but each page block is constrained to one measured column so two-page
+     mode cannot center a single full-spread column between the page edges. */
   .book-reader-surface { overscroll-behavior-x: contain; }
   .book-page-spread {
     position: relative;
@@ -278,6 +279,7 @@
   }
   .book-page-flow > .book-page {
     display: block;
+    width: var(--book-page-width, 100%);
     min-width: 0;
     break-inside: auto;
   }

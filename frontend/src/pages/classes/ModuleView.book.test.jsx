@@ -463,6 +463,7 @@ describe('Module book-like reader & outline CTA', () => {
       await flush();
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnWidth).toBe('392px');
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnCount).toBe('2');
+      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.getPropertyValue('--book-page-width')).toBe('392px');
       expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 6');
 
       const continueButton = [...view.container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Continue reading');
@@ -486,6 +487,7 @@ describe('Module book-like reader & outline CTA', () => {
       expect(view.container.querySelector('[data-book-reader]').dataset.readerLayout).toBe('single');
       expect(flow.style.columnWidth).toBe('800px');
       expect(flow.style.columnCount).toBe('auto');
+      expect(flow.style.getPropertyValue('--book-page-width')).toBe('800px');
       expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 4 of 6');
       expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
 
