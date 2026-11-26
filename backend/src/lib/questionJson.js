@@ -28,6 +28,8 @@ export class QuestionImportError extends Error {}
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 /** A name as people write it ("correctAnswer", "correct_answer", "Correct Answer") in one form. */
 const norm = (key) => String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+// Keep namespaced question-export markers lossless without coupling imports to a particular brand.
+const isQuestionExportFormat = (value) => typeof value === 'string' && /^[a-z0-9-]+\.questions$/i.test(value);
 const same = (a, b) => normalizeAnswer(a) === normalizeAnswer(b) && normalizeAnswer(a) !== '';
 const clip = (value, max = 60) => { const s = String(value).replace(/\s+/g, ' ').trim(); return s.length > max ? `${s.slice(0, max - 1)}…` : s; };
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
@@ -456,7 +458,7 @@ function collect(node, defaults, out, depth, inList, keys = null) {
   const points = toPoints(r.get('pointseach', 'pointsperquestion', 'pointsperitem', 'markseach', 'marksperquestion'));
   if (points !== null && points > 0) next.points = points;
   // A file downloaded from Discenda is read back exactly as it was written.
-  if (r.get('format') === 'discenda.questions' || r.get('format') === 'edusphere.questions') next.exact = true;
+  if (isQuestionExportFormat(r.get('format'))) next.exact = true;
   // One of several parts, with a heading of its own.
   const heading = r.get('section', 'part', 'heading') ?? (inList ? r.get('title', 'name') : undefined);
   if (filled(heading)) next.section = heading.trim();

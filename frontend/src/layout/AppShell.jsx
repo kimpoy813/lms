@@ -72,10 +72,12 @@ const NAV = {
 };
 
 export function Logo({ className, compact = false }) {
+  if (compact) return <img src="/icons/icon-192.png" alt="Discenda" className={cn('size-8 rounded-[9px]', className)} />;
+
   return (
-    <span className={cn('flex items-center gap-2.5', className)}>
-      <img src="/favicon.svg" alt="" className="size-8 rounded-[9px]" />
-      {!compact && <span className="text-[17px] font-bold tracking-tight text-ink">Discenda</span>}
+    <span className={cn('inline-flex items-center', className)}>
+      <img src="/branding/discenda-logo-light.png" alt="Discenda" className="h-9 w-auto dark:hidden" />
+      <img src="/branding/discenda-logo-dark.png" alt="Discenda" className="hidden h-9 w-auto dark:block" />
     </span>
   );
 }

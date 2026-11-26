@@ -20,7 +20,7 @@ const HIGH_URGENCY_TYPES = new Set([
   'quiz.closing_soon',
   'push.test',
 ]);
-const GENERIC_PUSH_TITLES = new Set(['discenda', 'edusphere', 'notification', 'new notification', 'new message']);
+const GENERIC_PUSH_TITLES = new Set(['discenda', 'notification', 'new notification', 'new message']);
 
 const EMPTY_BODY_FALLBACKS = {
   'module.published': 'A new learning module is ready to read in Discenda.',

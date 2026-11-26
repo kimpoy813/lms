@@ -15,9 +15,8 @@ export default function AuthLayout({ title, subtitle, children, footer }) {
       <aside className="relative hidden overflow-hidden bg-[#312e81] p-12 text-white lg:sticky lg:top-0 lg:flex lg:h-dvh lg:flex-col lg:justify-between" aria-hidden="true">
         <div className="pointer-events-none absolute -left-24 -top-24 size-96 rounded-full bg-[#6366f1]/40 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 right-0 size-[28rem] rounded-full bg-[#0ea5e9]/25 blur-3xl" />
-        <div className="relative flex items-center gap-3">
-          <img src="/favicon.svg" alt="" className="size-10 rounded-xl ring-1 ring-white/20" />
-          <span className="text-xl font-bold tracking-tight">Discenda</span>
+        <div className="relative">
+          <img src="/branding/discenda-logo-dark.png" alt="" className="h-10 w-auto" />
         </div>
         <div className="relative max-w-md">
           <h2 className="text-[2rem] font-bold leading-tight tracking-tight text-balance">One place for classes, attendance and grades.</h2>

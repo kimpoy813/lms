@@ -152,6 +152,9 @@ describe('other names for the same things', () => {
     // The file that was downloaded is read by its own names only.
     const own = read({ format: 'discenda.questions', version: 1, questions: [{ type: 'essay', question: 'Compare.', a: 'RAM', b: 'CPU' }] }).questions[0];
     expect([own.type, own.choices]).toEqual(['ESSAY', undefined]);
+    // Older namespaced exports keep their answers intact without hard-coding another app's brand.
+    const olderExport = read({ format: 'classroom.questions', version: 1, questions: [{ type: 'essay', question: 'Explain.', a: 'CPU', b: 'RAM' }] }).questions[0];
+    expect([olderExport.type, olderExport.choices]).toEqual(['ESSAY', undefined]);
   });
 
   it('puts the choices together when the wrong ones are listed apart from the correct one', () => {
