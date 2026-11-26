@@ -1149,7 +1149,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
                     </section>
                   )}
 
-                  <section className="mt-6 border-t border-line pt-5" aria-labelledby="module-cover-toc">
+                  <section className="book-cover-toc mt-6 border-t border-line pt-5" aria-labelledby="module-cover-toc">
                     <h2 id="module-cover-toc" className="text-xs font-semibold uppercase tracking-wider text-faint">Chapters in this module</h2>
                     <ol className="mt-3 divide-y divide-line rounded-xl border border-line">
                       {chapters.map((ch) => (
