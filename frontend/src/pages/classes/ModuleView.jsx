@@ -89,6 +89,10 @@ function bookTextClasses(prefs) {
   );
 }
 
+function bookTextStyle(prefs) {
+  return { fontSize: prefs.size === 'sm' ? '0.875rem' : prefs.size === 'lg' ? '1.25rem' : '1rem' };
+}
+
 function formatDuration(minutes) {
   const m = Number(minutes) || 0;
   if (m <= 0) return null;
@@ -799,6 +803,7 @@ function BookReader({ modSummary, prefs }) {
                         <RichText
                           html={ch.contentHtml}
                           className={bookTextClasses(prefs)}
+                          style={bookTextStyle(prefs)}
                           empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
                         />
                         {ch.visual && <LearningVisual visual={ch.visual} />}
@@ -1084,7 +1089,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                 )}
               </header>
 
-              <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
+              <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} style={bookTextStyle(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
               {lesson.visual && <LearningVisual visual={lesson.visual} />}
               {lesson.selfCheck && <QuickCheck check={lesson.selfCheck} />}
 

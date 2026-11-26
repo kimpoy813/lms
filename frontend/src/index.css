@@ -182,8 +182,8 @@
 
   /* Textbook / learning-module reading typography for module chapters and book mode. */
   .rich-book { line-height: 1.8; font-size: 1rem; max-width: 68ch; }
-  .rich-book-sm { font-size: 0.875rem; line-height: 1.72; }
-  .rich-book-lg { font-size: 1.25rem; line-height: 1.82; }
+  .rich-book-sm { line-height: 1.72; }
+  .rich-book-lg { line-height: 1.82; }
   .rich-book h1, .rich-book h2 { font-size: 1.45em; line-height: 1.3; }
   .rich-book pre { font-size: 0.9em; }
   .rich-book-serif { font-family: Georgia, Cambria, "Times New Roman", Times, serif; }

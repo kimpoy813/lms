@@ -463,11 +463,13 @@ describe('Module book-like reader & outline CTA', () => {
     act(() => largerText.click());
     await flush();
     expect(container.querySelector('.rich-book').className).toContain('rich-book-lg');
+    expect(container.querySelector('.rich-book').style.fontSize).toBe('1.25rem');
 
     act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
     await flush();
     expect(container.textContent).toContain('Dependency Rules & Pitfalls');
     expect(container.querySelector('.rich-book').className).toContain('rich-book-lg');
+    expect(container.querySelector('.rich-book').style.fontSize).toBe('1.25rem');
 
     reader = container.querySelector('[data-lesson-reader]');
     act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })));
@@ -530,13 +532,16 @@ describe('Module book-like reader & outline CTA', () => {
     expect(defaultText.getAttribute('aria-pressed')).toBe('true');
     await act(async () => { largerText.click(); });
     expect(rich.className).toContain('rich-book-lg');
+    expect(rich.style.fontSize).toBe('1.25rem');
     expect(largerText.getAttribute('aria-pressed')).toBe('true');
     expect(JSON.parse(window.localStorage.getItem('discenda.readerPrefs')).size).toBe('lg');
     await act(async () => { smallerText.click(); });
     expect(rich.className).toContain('rich-book-sm');
+    expect(rich.style.fontSize).toBe('0.875rem');
     await act(async () => { defaultText.click(); });
     expect(rich.className).not.toContain('rich-book-sm');
     expect(rich.className).not.toContain('rich-book-lg');
+    expect(rich.style.fontSize).toBe('1rem');
 
     // Mark Chapter 1 completed directly inside book view
     const completeBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Mark Chapter 1 as completed'));
