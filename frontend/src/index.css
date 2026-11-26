@@ -307,6 +307,20 @@
   .book-page-flow .rich-book h2,
   .book-page-flow .rich-book h3,
   .book-page-flow .rich-book h4 { break-after: avoid-column; }
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .rich-table-scroll > table,
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .tableWrapper > table {
+    width: 100%;
+    min-width: 100%;
+    table-layout: fixed;
+  }
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .rich-table-scroll th,
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .rich-table-scroll td,
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .tableWrapper th,
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .tableWrapper td {
+    min-width: 0;
+    max-width: none;
+    overflow-wrap: anywhere;
+  }
   .book-page-spread[data-layout="two"]::after {
     content: "";
     position: absolute;

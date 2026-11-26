@@ -462,7 +462,7 @@ describe('Module book-like reader & outline CTA', () => {
       view = renderAt('/classes/cls-1/modules/mod-1?view=book');
       await flush();
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnWidth).toBe('392px');
-      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnCount).toBe('2');
+      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnCount).toBe('auto');
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.getPropertyValue('--book-page-width')).toBe('392px');
       expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 6');
 
