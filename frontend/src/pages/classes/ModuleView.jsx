@@ -211,7 +211,7 @@ function formatDuration(minutes) {
   return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
-function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false }) {
+function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false, showFocusOnSmallScreens = false }) {
   return (
     <div className="no-print grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-1.5" role="group" aria-label="Reading display options">
       <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
@@ -273,7 +273,7 @@ function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, sho
         icon={prefs.focus ? Minimize2 : Maximize2}
         aria-pressed={prefs.focus}
         onClick={() => onChange({ focus: !prefs.focus })}
-        className="hidden lg:inline-flex"
+        className={showFocusOnSmallScreens ? 'inline-flex' : 'hidden lg:inline-flex'}
       >
         {prefs.focus ? 'Show contents' : 'Focus mode'}
       </Button>
@@ -303,6 +303,7 @@ export default function ModuleView() {
   const query = useQuery({ queryKey: ['class', cls.id, 'modules', moduleId], queryFn: () => api.get(`/modules/${moduleId}`) });
   const creating = canManage && params.get('new') === '1';
   const viewMode = !creating && params.get('view') === 'book' ? 'book' : 'chapter';
+  const immersiveBook = viewMode === 'book' && (isFullscreen || prefs.focus);
   const lessonId = params.get('lesson');
   const offlineFallback = lessonId ? getOfflineLesson(user?.id, lessonId) : getOfflineModuleBook(user?.id, moduleId);
   const effectiveQuery = query.isError && query.error?.code === 'NETWORK' && offlineFallback?.mod?.id === moduleId
@@ -321,6 +322,20 @@ export default function ModuleView() {
       document.removeEventListener('webkitfullscreenchange', syncFullscreen);
     };
   }, []);
+
+  useEffect(() => {
+    if (!immersiveBook) return undefined;
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlOverflow = html.style.overflow;
+    const previousBodyOverflow = body.style.overflow;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = previousHtmlOverflow;
+      body.style.overflow = previousBodyOverflow;
+    };
+  }, [immersiveBook]);
 
   const toggleFullscreen = async () => {
     const reader = readerRef.current;
@@ -371,41 +386,100 @@ export default function ModuleView() {
         <div
           ref={readerRef}
           data-module-reader
-          className={cn('min-w-0', isFullscreen && 'min-h-dvh overflow-y-auto bg-canvas p-3 sm:p-6')}
+          data-reader-immersive={immersiveBook ? 'true' : undefined}
+          className={cn('min-w-0', isFullscreen && !immersiveBook && 'min-h-dvh overflow-y-auto bg-canvas p-3 sm:p-6')}
         >
-          <div className="no-print mb-4 space-y-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <Link to={`${base}/modules`} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-soft hover:text-brand sm:text-sm"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
-              <span className="shrink-0 text-line-strong" aria-hidden="true">/</span>
-              <h2 className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-ink sm:truncate sm:text-lg">{mod.title}</h2>
-              {canManage && <span className="shrink-0"><StatusBadge status={mod.status} publishAt={mod.publishAt} /></span>}
-            </div>
-            {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
-              <div className="grid gap-2.5 border-b border-line pb-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
-                <Segmented
-                  label="Module reading mode"
-                  value={viewMode}
-                  onChange={(next) => switchView(next, mod)}
-                  className="w-full sm:w-auto"
-                  options={[
-                    { value: 'chapter', label: 'Chapter view', icon: BookText },
-                    { value: 'book', label: 'Read as book', icon: BookOpen },
-                  ]}
-                />
-                <ReaderControls
-                  prefs={prefs}
-                  onChange={updatePrefs}
-                  isFullscreen={isFullscreen}
-                  onToggleFullscreen={toggleFullscreen}
-                  showBookLayout={viewMode === 'book'}
-                />
+          {immersiveBook ? (
+            <details className="no-print book-floating-tools" data-testid="book-floating-tools">
+              <summary className="book-floating-tools-trigger" aria-label="Open reader controls" title="Reader controls">
+                <MoreHorizontal className="size-5" aria-hidden="true" />
+                <span className="sr-only">Reader controls</span>
+              </summary>
+              <div className="book-floating-tools-panel">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-brand">Immersive reading</p>
+                    <h2 className="mt-1 line-clamp-2 break-words text-sm font-semibold text-ink">{mod.title}</h2>
+                  </div>
+                  {canManage && <StatusBadge status={mod.status} publishAt={mod.publishAt} />}
+                </div>
+                <Link to={`${base}/modules`} className="inline-flex items-center gap-1 text-xs font-medium text-soft hover:text-brand">
+                  <ChevronLeft className="size-3.5" aria-hidden="true" />All lessons
+                </Link>
+                {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
+                  <div className="mt-3 space-y-3">
+                    <Segmented
+                      label="Module reading mode"
+                      value={viewMode}
+                      onChange={(next) => switchView(next, mod)}
+                      className="w-full"
+                      options={[
+                        { value: 'chapter', label: 'Chapter view', icon: BookText },
+                        { value: 'book', label: 'Read as book', icon: BookOpen },
+                      ]}
+                    />
+                    {viewMode === 'book' && (
+                      <Select
+                        aria-label="Jump to chapter"
+                        value={params.get('chapter') ?? ''}
+                        onChange={(event) => setParams({ view: 'book', chapter: event.target.value })}
+                      >
+                        <option value="">Jump to chapter…</option>
+                        {mod.lessons.map((chapter) => (
+                          <option key={chapter.id} value={chapter.id}>
+                            Ch. {chapter.chapterNumber}: {chapter.title}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                    <ReaderControls
+                      prefs={prefs}
+                      onChange={updatePrefs}
+                      isFullscreen={isFullscreen}
+                      onToggleFullscreen={toggleFullscreen}
+                      showBookLayout={viewMode === 'book'}
+                      showFocusOnSmallScreens={viewMode === 'book'}
+                    />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </details>
+          ) : (
+            <div className="no-print mb-4 space-y-3" data-reader-toolbar>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Link to={`${base}/modules`} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-soft hover:text-brand sm:text-sm"><ChevronLeft className="size-4" aria-hidden="true" />All lessons</Link>
+                <span className="shrink-0 text-line-strong" aria-hidden="true">/</span>
+                <h2 className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-ink sm:truncate sm:text-lg">{mod.title}</h2>
+                {canManage && <span className="shrink-0"><StatusBadge status={mod.status} publishAt={mod.publishAt} /></span>}
+              </div>
+              {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
+                <div className="grid gap-2.5 border-b border-line pb-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+                  <Segmented
+                    label="Module reading mode"
+                    value={viewMode}
+                    onChange={(next) => switchView(next, mod)}
+                    className="w-full sm:w-auto"
+                    options={[
+                      { value: 'chapter', label: 'Chapter view', icon: BookText },
+                      { value: 'book', label: 'Read as book', icon: BookOpen },
+                    ]}
+                  />
+                  <ReaderControls
+                    prefs={prefs}
+                    onChange={updatePrefs}
+                    isFullscreen={isFullscreen}
+                    onToggleFullscreen={toggleFullscreen}
+                    showBookLayout={viewMode === 'book'}
+                    showFocusOnSmallScreens={viewMode === 'book'}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {!canManage && mod.locked ? (
             <Card><EmptyState icon={Lock} title="This module is locked" description={mod.lockedReason} action={<Button to={`${base}/modules`}>Back to lessons</Button>} /></Card>
           ) : viewMode === 'book' && mod.lessons.length > 0 ? (
-            <BookReader key={mod.id} modSummary={mod} prefs={prefs} />
+            <BookReader key={mod.id} modSummary={mod} prefs={prefs} immersive={immersiveBook} />
           ) : (
             <div className={cn('grid grid-cols-1 gap-5', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
               <LessonList mod={mod} activeId={creating ? null : lessonId} focus={prefs.focus} />
@@ -493,11 +567,11 @@ function LessonList({ mod, activeId, focus = false }) {
   );
 }
 
-function BookPageNavigation({ label, page, pageEnd = page, total, canPrevious, canNext, onPrevious, onNext, showHint = false, helpId }) {
+function BookPageNavigation({ label, page, pageEnd = page, total, canPrevious, canNext, onPrevious, onNext, showHint = false, position = 'bottom' }) {
   const progress = total > 1 ? Math.round(((pageEnd - 1) / (total - 1)) * 100) : 0;
   const pageCountLabel = pageEnd > page ? `Pages ${page}–${pageEnd} of ${total}` : `Page ${page} of ${total}`;
   return (
-    <div className="no-print">
+    <div className="no-print" data-book-navigation={position}>
       <div className="mb-2 flex items-center gap-2.5">
         <ProgressBar value={progress} label="Progress through this book" className="h-1.5" />
         <span className="w-9 shrink-0 text-right text-xs tabular-nums text-faint">{progress}%</span>
@@ -514,12 +588,12 @@ function BookPageNavigation({ label, page, pageEnd = page, total, canPrevious, c
           Next
         </Button>
       </nav>
-      {showHint && <p id={helpId} className="mt-1.5 text-center text-xs text-faint">Swipe left or right, use a horizontal trackpad gesture, or focus the reader and press ← / →.</p>}
+      {showHint && <p className="mt-1.5 text-center text-xs text-faint">Swipe left or right, use a horizontal trackpad gesture, or focus the reader and press ← / →.</p>}
     </div>
   );
 }
 
-function BookReader({ modSummary, prefs }) {
+function BookReader({ modSummary, prefs, immersive = false }) {
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const [params, setParams] = useSearchParams();
@@ -713,9 +787,9 @@ function BookReader({ modSummary, prefs }) {
   }, [layout, measuredPagination, navigationPageIndex, pageMapReady]);
 
   useEffect(() => {
-    if (!readerReady) return;
+    if (!readerReady || immersive) return;
     pageStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [pageIndex, readerReady]);
+  }, [immersive, pageIndex, readerReady]);
 
   useEffect(() => {
     const flow = flowRef.current;
@@ -851,6 +925,7 @@ function BookReader({ modSummary, prefs }) {
             )}
           >
             <p className="sr-only" aria-live="polite" aria-atomic="true">{pageAnnouncement}</p>
+            <p id={`book-page-turn-help-${modSummary.id}`} className="sr-only">Swipe left or right, use a horizontal trackpad gesture, or focus the reader and press left or right arrow keys.</p>
             <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', prefs.focus && 'lg:hidden')}>
               <div className="lg:hidden">
                 <Card padded={false} className="overflow-hidden">
@@ -934,25 +1009,27 @@ function BookReader({ modSummary, prefs }) {
               </Card>
             </aside>
 
-            <div className="min-w-0 space-y-6">
+            <div className="min-w-0 space-y-6" data-book-content>
               {readingOffline && (
                 <Alert tone="info">
                   <WifiOff className="mr-1.5 inline size-4" aria-hidden="true" />
                   You are offline. Showing chapters saved on this device {relativeTime(offlineBook.savedAt)}.
                 </Alert>
               )}
-              <BookPageNavigation
-                label={pageLabel}
-                page={navigationPageIndex + 1}
-                pageEnd={pageEndIndex + 1}
-                total={pageTotal}
-                canPrevious={canPreviousPage}
-                canNext={canNextPage}
-                onPrevious={() => goToPage(Math.max(0, navigationPageIndex - pageStep))}
-                onNext={() => goToPage(Math.min(lastPage, navigationPageIndex + pageStep))}
-                showHint
-                helpId={`book-page-turn-help-${modSummary.id}`}
-              />
+              {!immersive && (
+                <BookPageNavigation
+                  label={pageLabel}
+                  page={navigationPageIndex + 1}
+                  pageEnd={pageEndIndex + 1}
+                  total={pageTotal}
+                  canPrevious={canPreviousPage}
+                  canNext={canNextPage}
+                  onPrevious={() => goToPage(Math.max(0, navigationPageIndex - pageStep))}
+                  onNext={() => goToPage(Math.min(lastPage, navigationPageIndex + pageStep))}
+                  showHint
+                  position="top"
+                />
+              )}
               <div
                 className="book-page-spread"
                 data-layout={layout}
@@ -1291,6 +1368,7 @@ function BookReader({ modSummary, prefs }) {
                 canNext={canNextPage}
                 onPrevious={() => goToPage(Math.max(0, navigationPageIndex - pageStep))}
                 onNext={() => goToPage(Math.min(lastPage, navigationPageIndex + pageStep))}
+                position="bottom"
               />
             </div>
           </div>
