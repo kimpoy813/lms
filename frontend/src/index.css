@@ -271,9 +271,13 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
+    -webkit-column-count: auto;
     column-count: auto;
+    -webkit-column-width: var(--book-column-width, 48rem);
     column-width: var(--book-column-width, 48rem);
+    -webkit-column-gap: var(--book-column-gap, 1.5rem);
     column-gap: var(--book-column-gap, 1.5rem);
+    -webkit-column-fill: auto;
     column-fill: auto;
     overscroll-behavior-x: contain;
   }
@@ -281,10 +285,19 @@
     display: block;
     width: var(--book-page-width, 100%);
     min-width: 0;
+    -webkit-column-break-inside: auto;
+    break-inside: auto;
+  }
+  .book-page-flow > .book-page > .book-page-card,
+  .book-page-flow > .book-page > .book-page-card > .reader-scaled-content {
+    -webkit-column-break-inside: auto;
     break-inside: auto;
   }
   .book-page-flow > .book-chapter,
-  .book-page-flow > .book-end-page { break-before: auto; }
+  .book-page-flow > .book-end-page {
+    -webkit-column-break-before: auto;
+    break-before: auto;
+  }
   @media screen {
     /* Give the module cover a useful facing page when its summary fits on one page. */
     .book-page-spread[data-layout="two"] .book-cover-toc {
