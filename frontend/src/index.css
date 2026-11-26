@@ -241,6 +241,22 @@
   .quiz-guarded { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .quiz-guarded input, .quiz-guarded textarea, .quiz-guarded [contenteditable] { -webkit-user-select: text; user-select: text; }
   .quiz-guarded img { -webkit-user-drag: none; }
+
+  /* Keep native touch scrolling intact, including horizontal tables inside a reader. */
+  .book-reader-surface { overscroll-behavior-x: contain; }
+  .book-page-turn-next { animation: book-page-enter-next 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; transform-origin: left center; }
+  .book-page-turn-previous { animation: book-page-enter-previous 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; transform-origin: right center; }
+  @keyframes book-page-enter-next {
+    from { opacity: 0.72; transform: translateX(1.25rem) rotateY(-1.5deg); }
+    to { opacity: 1; transform: translateX(0) rotateY(0); }
+  }
+  @keyframes book-page-enter-previous {
+    from { opacity: 0.72; transform: translateX(-1.25rem) rotateY(1.5deg); }
+    to { opacity: 1; transform: translateX(0) rotateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .book-page-turn-next, .book-page-turn-previous { animation: none; }
+  }
 }
 
 /* While such a quiz is open: pulling the page down on a phone would reload it. */

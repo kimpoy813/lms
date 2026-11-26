@@ -15,7 +15,7 @@ vi.mock('../../components/LazyEditor.jsx', () => ({
   ),
 }));
 
-const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLesson1, mockClassContext } = vi.hoisted(() => {
+const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLesson1, mockLesson2, mockClassContext } = vi.hoisted(() => {
   const summary = {
     id: 'mod-1',
     classId: 'cls-1',
@@ -82,6 +82,14 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
     bookmarked: false,
     aiStudyCoachEnabled: false,
   };
+  const lesson2 = {
+    ...lesson1,
+    id: 'les-2',
+    title: 'Dependency Rules & Pitfalls',
+    contentHtml: '<p>Dependencies should point toward stable abstractions.</p>',
+    previous: { id: 'les-1', title: 'Foundations of Modularity' },
+    next: null,
+  };
   return {
     mockGet: vi.fn(),
     mockPost: vi.fn().mockResolvedValue({}),
@@ -89,6 +97,7 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
     mockModuleSummary: summary,
     mockModuleBook: book,
     mockLesson1: lesson1,
+    mockLesson2: lesson2,
     mockClassContext: { canManage: false, user: { id: 'stu-1', role: 'STUDENT' } },
   };
 });
@@ -154,6 +163,16 @@ function renderAt(path) {
   };
 }
 
+function dispatchTouch(target, type, { x, y }) {
+  const touch = { identifier: 1, clientX: x, clientY: y };
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    touches: { value: type === 'touchend' ? [] : [touch] },
+    changedTouches: { value: [touch] },
+  });
+  target.dispatchEvent(event);
+}
+
 describe('Module book-like reader & outline CTA', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -165,6 +184,7 @@ describe('Module book-like reader & outline CTA', () => {
       if (url === '/modules/mod-1') return mockModuleSummary;
       if (url === '/modules/mod-1/book') return mockModuleBook;
       if (url === '/lessons/les-1') return mockLesson1;
+      if (url === '/lessons/les-2') return mockLesson2;
       throw new Error(`Unexpected GET ${url}`);
     });
     mockPost.mockClear();
@@ -319,6 +339,96 @@ describe('Module book-like reader & outline CTA', () => {
     const titleLabel = [...dialog.querySelectorAll('label')].find((label) => label.textContent.includes('Assignment title'));
     expect(document.getElementById(titleLabel.htmlFor).value).toBe('Foundations of Modularity');
     expect(dialog.querySelector('[aria-label="Assignment instructions"]').value).toBe(mockLesson1.contentHtml);
+
+    unmount();
+  });
+
+  it('turns module book pages in both directions with touch swipes and laptop arrow keys', async () => {
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const chapterOne = container.querySelector('#chapter-les-1');
+    const chapterTwo = container.querySelector('#chapter-les-2');
+    const pageNavigation = container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(reader.getAttribute('tabindex')).toBe('0');
+    expect(pageNavigation.textContent).toContain('Page 1 of 4');
+    expect(pageNavigation.querySelector('[aria-label="Previous page"]').disabled).toBe(true);
+    expect(chapterOne.className).toContain('hidden');
+
+    // Vertical reading movement does not accidentally turn a page.
+    act(() => {
+      dispatchTouch(reader, 'touchstart', { x: 100, y: 100 });
+      dispatchTouch(reader, 'touchend', { x: 104, y: 180 });
+    });
+    expect(pageNavigation.textContent).toContain('Page 1 of 4');
+
+    // Laptop keyboard navigation moves forward; a left swipe moves forward too.
+    act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
+    expect(chapterOne.className).not.toContain('hidden');
+    expect(pageNavigation.textContent).toContain('Page 2 of 4');
+    const tableScroller = container.querySelector('.rich-table-scroll');
+    act(() => {
+      dispatchTouch(tableScroller, 'touchstart', { x: 180, y: 120 });
+      dispatchTouch(tableScroller, 'touchend', { x: 90, y: 118 });
+    });
+    expect(pageNavigation.textContent).toContain('Page 2 of 4');
+
+    act(() => {
+      dispatchTouch(reader, 'touchstart', { x: 180, y: 120 });
+      dispatchTouch(reader, 'touchend', { x: 90, y: 118 });
+    });
+    expect(chapterOne.className).toContain('hidden');
+    expect(chapterTwo.className).not.toContain('hidden');
+    expect(pageNavigation.textContent).toContain('Page 3 of 4');
+
+    // A right swipe and the opposite arrow key both turn back toward the cover.
+    act(() => {
+      dispatchTouch(reader, 'touchstart', { x: 90, y: 118 });
+      dispatchTouch(reader, 'touchend', { x: 180, y: 120 });
+    });
+    expect(chapterOne.className).not.toContain('hidden');
+    expect(chapterTwo.className).toContain('hidden');
+    act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })));
+    expect(pageNavigation.textContent).toContain('Page 1 of 4');
+    expect(chapterOne.className).toContain('hidden');
+
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(10_000);
+      act(() => reader.dispatchEvent(new WheelEvent('wheel', { deltaX: 100, bubbles: true, cancelable: true })));
+      expect(pageNavigation.textContent).toContain('Page 2 of 4');
+      now.mockReturnValue(10_500);
+      act(() => reader.dispatchEvent(new WheelEvent('wheel', { deltaX: -100, bubbles: true, cancelable: true })));
+      expect(pageNavigation.textContent).toContain('Page 1 of 4');
+    } finally {
+      now.mockRestore();
+    }
+
+    unmount();
+  });
+
+  it('lets a teacher turn between individual lessons in both directions with laptop arrow keys', async () => {
+    mockClassContext.canManage = true;
+    mockClassContext.user = { id: 'teacher-1', role: 'TEACHER' };
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?lesson=les-1');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-lesson-reader]')).not.toBeNull());
+    });
+
+    let reader = container.querySelector('[data-lesson-reader]');
+    expect(reader.getAttribute('tabindex')).toBe('0');
+    expect(container.textContent).toContain('Foundations of Modularity');
+    act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
+    await flush();
+    expect(container.textContent).toContain('Dependency Rules & Pitfalls');
+
+    reader = container.querySelector('[data-lesson-reader]');
+    act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })));
+    await flush();
+    expect(container.textContent).toContain('Foundations of Modularity');
 
     unmount();
   });
