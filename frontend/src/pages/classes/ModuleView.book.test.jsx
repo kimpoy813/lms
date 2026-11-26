@@ -172,7 +172,7 @@ function mockBookFlowLayout({ chapterStarts, endStart, width = 800, height = 500
     const column = chapterId ? chapterStarts[chapterId] : this.hasAttribute?.('data-book-end-start') ? endStart : null;
     if (column !== null && column !== undefined) {
       const activeLayout = this.closest?.('[data-reader-layout]')?.dataset.readerLayout ?? layout;
-      const columnGap = activeLayout === 'two' ? 0 : 24;
+      const columnGap = activeLayout === 'two' ? 16 : 24;
       const columnWidth = activeLayout === 'two' ? (width - columnGap) / 2 : width;
       const flow = this.closest?.('.book-page-flow');
       const left = column * (columnWidth + columnGap) - (flow?.scrollLeft ?? 0);
@@ -461,7 +461,8 @@ describe('Module book-like reader & outline CTA', () => {
     try {
       view = renderAt('/classes/cls-1/modules/mod-1?view=book');
       await flush();
-      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnWidth).toBe('400px');
+      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnWidth).toBe('392px');
+      expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnCount).toBe('2');
       expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 6');
 
       const continueButton = [...view.container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Continue reading');
@@ -472,7 +473,7 @@ describe('Module book-like reader & outline CTA', () => {
       expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
       const flow = view.container.querySelector('[data-testid="book-page-flow"]');
       const currentScrollLeft = flow.scrollLeft;
-      expect(currentScrollLeft).toBe(800);
+      expect(currentScrollLeft).toBe(816);
       act(() => window.dispatchEvent(new Event('beforeprint')));
       expect(flow.scrollLeft).toBe(0);
       act(() => window.dispatchEvent(new Event('afterprint')));
@@ -484,6 +485,7 @@ describe('Module book-like reader & outline CTA', () => {
       await flush();
       expect(view.container.querySelector('[data-book-reader]').dataset.readerLayout).toBe('single');
       expect(flow.style.columnWidth).toBe('800px');
+      expect(flow.style.columnCount).toBe('auto');
       expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Page 4 of 6');
       expect(view.container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1&page=3');
 
@@ -528,6 +530,9 @@ describe('Module book-like reader & outline CTA', () => {
     const spread = container.querySelector('[data-testid="book-page-spread"]');
     const pageLayout = container.querySelector('[role="radiogroup"][aria-label="Book page layout"]');
     const pageNavigation = container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(spread.className).toContain('bg-surface');
+    expect(spread.className).toContain('border-line');
+    expect(spread.className).toContain('shadow-card');
     expect(reader.dataset.readerLayout).toBe('single');
     expect(pageLayout.className).toContain('md:inline-flex');
     expect(pageNavigation.textContent).toContain('Page 1 of 4');
@@ -542,6 +547,11 @@ describe('Module book-like reader & outline CTA', () => {
     let visiblePages = [...spread.querySelectorAll('.book-page[aria-hidden="false"]')];
     expect(visiblePages.map((page) => page.dataset.bookPage)).toEqual(['0', '1']);
     expect(visiblePages.map((page) => page.dataset.spreadSide)).toEqual(['left', 'right']);
+    expect(visiblePages[0].textContent).toContain('Learning Module');
+    expect(visiblePages[1].textContent).toContain('Foundations of Modularity');
+    expect(visiblePages[1].textContent).toContain('1. Introduction');
+    expect(visiblePages[1].querySelector('.book-page-card').className).toContain('p-4');
+    expect(visiblePages[1].querySelector('.book-page-card').className).toContain('sm:p-6');
     expect(pageNavigation.textContent).toContain('Pages 1–2 of 4');
 
     act(() => pageNavigation.querySelector('[aria-label="Next page"]').click());
