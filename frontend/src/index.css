@@ -577,22 +577,9 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
   box-shadow: 0 18px 45px -30px rgb(15 23 42 / 0.45);
   padding: 0.9rem 1rem 1rem;
 }
-/* The panel opens under the toolbar rather than squeezed into it, and never covers the pages.
-   The immersive toolbar spans the top of the screen with the book below it, so on a wide screen the
-   panel can drop into that band; on a narrow one it stays in the flow and pushes the book down. */
+/* The panel opens under the toolbar rather than squeezed into it, and never covers the pages: it
+   takes its room in the flow, so the book moves down instead of being read through a menu. */
 .book-reader-settings-panel { width: 100%; max-width: 46rem; margin-left: auto; }
-.book-immersive-toolbar { position: relative; }
-@media (min-width: 900px) {
-  .book-immersive-toolbar .book-reader-settings { position: static; }
-  .book-immersive-toolbar .book-reader-settings-panel {
-    position: absolute;
-    top: calc(100% + 0.35rem);
-    right: 0;
-    z-index: 45;
-    width: min(40rem, calc(100vw - 4rem));
-    margin-top: 0;
-  }
-}
 .reading-settings-summary-hint {
   display: none;
   border-left: 1px solid var(--line);

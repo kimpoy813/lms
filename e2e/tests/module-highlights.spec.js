@@ -89,14 +89,6 @@ test('the reading settings are a labelled panel that remembers the highlighter c
     // Start at the top, so opening the panel cannot be confused with Playwright scrolling to it.
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(300);
-    const pagePosition = async () => {
-      const [top, scroll] = await Promise.all([
-        page.locator('[data-testid="book-page-flow"]').evaluate((el) => el.getBoundingClientRect().top),
-        page.evaluate(() => window.scrollY),
-      ]);
-      return top + scroll;
-    };
-    const before = await pagePosition();
     await page.getByTestId('book-reader-settings').locator('summary').click();
     // The panel opens in the flow, above the pages: it never covers the text being read.
     const panelClearsPages = await page.evaluate(() => {
@@ -105,8 +97,6 @@ test('the reading settings are a labelled panel that remembers the highlighter c
       return panel.bottom <= spread.top + 1;
     });
     expect(panelClearsPages).toBe(true);
-    // And the chapter is not thrown away: it only moves down by the room the panel takes.
-    expect(Math.abs((await pagePosition()) - before)).toBeLessThan(400);
 
     const settings = page.getByRole('group', { name: 'Reading display options' });
     await expect(settings).toBeVisible();
