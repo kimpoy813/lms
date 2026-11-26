@@ -294,7 +294,7 @@ aiRouter.post('/modules/generate', aiLimiter, validate({ body: generateBody }), 
   }
 });
 
-function parsePastedJson(text) {
+function parsePastedJson(text, expected = 'module draft') {
   const raw = String(text ?? '').trim();
   const attempts = [raw];
   const fenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -310,8 +310,8 @@ function parsePastedJson(text) {
       // try next
     }
   }
-  throw new AppError(422, 'VALIDATION_ERROR', 'The pasted response could not be read as a module draft. Paste the full JSON response from the AI.', {
-    fields: { pastedResponse: 'Paste the full JSON response from the AI, including the opening { and closing }.' },
+  throw new AppError(422, 'VALIDATION_ERROR', `The pasted response could not be read as ${expected}. Paste the full JSON response from the AI.`, {
+    fields: { pastedResponse: `Paste the full JSON response for ${expected}, including the opening { and closing }.` },
   });
 }
 
@@ -688,112 +688,204 @@ const PURPOSE = {
 };
 
 // ── Smaller helpers: nothing is stored, the teacher gets a draft to edit ──────
-aiRouter.post(
-  '/questions',
-  aiLimiter,
-  validate({
-    body: z.object({
-      topic: z.string().trim().max(300).optional(),
-      sourceText: z.string().max(40_000).optional(),
-      lessonId: zId.optional(),
-      /** A whole module of the teacher's own: every written lesson in it is the material. */
-      moduleId: zId.optional(),
-      purpose: z.enum(['QUIZ', 'EXAM', 'PRACTICE']).default('QUIZ'),
-      /** Questions already drafted, so that another round brings new ones. */
-      avoid: z.array(z.string().max(2000)).max(60).default([]),
-      count: z.number().int().min(1).max(20).default(5),
-      types: z.array(z.enum(['MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER', 'FILL_BLANKS', 'MATCHING', 'ORDERING', 'ESSAY'])).min(1).max(9).default(['MULTIPLE_CHOICE']),
-      difficulty: z.enum(['EASY', 'MEDIUM', 'HARD', 'MIXED']).default('MIXED'),
-    }),
-  }),
-  async (req, res) => {
-    const b = req.valid.body;
-    let source = b.sourceText ? cleanText(b.sourceText, REFERENCE_CHAR_BUDGET) : '';
-    if (b.lessonId) {
-      const lesson = await prisma.lesson.findFirst({ where: { id: b.lessonId, deletedAt: null, module: { deletedAt: null, class: req.user.role === 'ADMIN' ? {} : { teacherId: req.user.id } } }, select: { title: true, contentHtml: true } });
-      if (!lesson) throw notFound('Lesson');
-      source = `${lesson.title}\n\n${plainText(lesson.contentHtml, REFERENCE_CHAR_BUDGET)}`;
-    }
-    const material = b.moduleId ? await moduleMaterial(req.user, b.moduleId) : null;
-    if (material) source = material.text;
-    if (!b.topic && !source) throw new AppError(422, 'VALIDATION_ERROR', 'Choose a module, give a topic, or paste some text.', { fields: { topic: 'Choose a module, give a topic, or paste some text.' } });
-    await guard(req);
-    const drafted = b.avoid.map((text) => plainText(text, 200)).filter(Boolean);
-    const out = await chatJson({
-      system: SYSTEM,
-      user: [
-        `Write ${b.count} assessment question(s)${b.topic ? ` about: ${b.topic}` : ''}.`,
-        material || b.purpose !== 'QUIZ' ? PURPOSE[b.purpose] : null,
-        `Allowed types: ${b.types.join(', ')}. Difficulty: ${b.difficulty === 'MIXED' ? 'a mix of easy, medium and hard' : b.difficulty.toLowerCase()}.`,
-        source ? `Use only this material${material ? ', and ask nothing it does not cover. In "topic" name the lesson a question comes from' : ''}:\n<reference name="${material ? 'module' : 'source'}">\n${source}\n</reference>` : null,
-        drafted.length > 0 ? `These questions exist already; write different ones:\n<reference name="existing questions">\n${drafted.map((text) => `- ${text}`).join('\n')}\n</reference>` : null,
-        'Answer with one JSON object: { "questions": [question] }',
-        QUESTION_GUIDE,
-      ].filter(Boolean).join('\n'),
-      task: {
-        kind: 'questions',
-        input: {
-          topic: b.topic || material?.module.title,
-          source,
-          count: b.count,
-          types: b.types,
-          difficulty: b.difficulty,
-          purpose: b.purpose,
-          avoid: drafted,
-        },
-      },
-    });
-    await recordUsage(req.user.id, 'QUIZ', out);
-    const { kept, rejected } = cleanQuestions(out.data.questions);
-    const allowed = kept.filter((q) => b.types.includes(q.type));
-    // rejected: incomplete or invalid; skipped: valid, but of a type the teacher did not ask for.
-    ok(res, { questions: allowed.slice(0, b.count), rejected, skipped: kept.length - allowed.length, source: sourceView(material), needsReview: true });
-  },
-);
+const questionsBody = z.object({
+  topic: z.string().trim().max(300).optional(),
+  sourceText: z.string().max(40_000).optional(),
+  lessonId: zId.optional(),
+  /** A whole module of the teacher's own: every written lesson in it is the material. */
+  moduleId: zId.optional(),
+  purpose: z.enum(['QUIZ', 'EXAM', 'PRACTICE']).default('QUIZ'),
+  /** Questions already drafted, so that another round brings new ones. */
+  avoid: z.array(z.string().max(2000)).max(60).default([]),
+  count: z.number().int().min(1).max(20).default(5),
+  types: z.array(z.enum(['MULTIPLE_CHOICE', 'MULTIPLE_RESPONSE', 'TRUE_FALSE', 'IDENTIFICATION', 'SHORT_ANSWER', 'FILL_BLANKS', 'MATCHING', 'ORDERING', 'ESSAY'])).min(1).max(9).default(['MULTIPLE_CHOICE']),
+  difficulty: z.enum(['EASY', 'MEDIUM', 'HARD', 'MIXED']).default('MIXED'),
+});
 
-aiRouter.post(
-  '/assignment',
-  aiLimiter,
-  validate({
-    body: z.object({
-      topic: z.string().trim().max(300).optional(),
-      /** A module of the teacher's own to base the assignment on. */
-      moduleId: zId.optional(),
-      details: z.string().trim().max(2000).optional(), points: z.number().int().min(1).max(1000).default(100), withRubric: z.boolean().default(true),
-    }),
-  }),
-  async (req, res) => {
-    const b = req.valid.body;
-    const topic = b.topic && b.topic.length >= 3 ? b.topic : null;
-    const material = b.moduleId ? await moduleMaterial(req.user, b.moduleId) : null;
-    if (!topic && !material) throw new AppError(422, 'VALIDATION_ERROR', 'Choose a module or say what the assignment is about.', { fields: { topic: 'Choose a module or say what the assignment is about (at least 3 characters).' } });
-    await guard(req);
-    const out = await chatJson({
-      system: SYSTEM,
-      user: [
-        `Draft an assignment${topic ? ` about: ${topic}` : ' in which students apply what the module below teaches'}. It is worth ${b.points} points.`,
-        b.details ? `Details from the teacher: ${b.details}` : null,
-        material ? `Base it on this material, and ask for nothing it has not prepared students for:\n<reference name="module">\n${material.text}\n</reference>` : null,
-        `Answer with one JSON object: { "title": string, "instructionsHtml": string (use <p>, <ul>, <ol>, <li>, <strong>)${b.withRubric ? ', "rubric": { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } — criteria points must add up to the assignment points' : ''} }`,
-      ].filter(Boolean).join('\n'),
-      task: {
-        kind: 'assignment',
-        input: {
-          topic,
-          moduleTitle: material?.module.title,
-          materialText: material?.text,
-          details: b.details,
-          points: b.points,
-          withRubric: b.withRubric,
-        },
+async function questionSource(user, b) {
+  let source = b.sourceText ? cleanText(b.sourceText, REFERENCE_CHAR_BUDGET) : '';
+  if (b.lessonId) {
+    const lesson = await prisma.lesson.findFirst({ where: { id: b.lessonId, deletedAt: null, module: { deletedAt: null, class: user.role === 'ADMIN' ? {} : { teacherId: user.id } } }, select: { title: true, contentHtml: true } });
+    if (!lesson) throw notFound('Lesson');
+    source = `${lesson.title}\n\n${plainText(lesson.contentHtml, REFERENCE_CHAR_BUDGET)}`;
+  }
+  const material = b.moduleId ? await moduleMaterial(user, b.moduleId) : null;
+  if (material) source = material.text;
+  if (!b.topic && !source) throw new AppError(422, 'VALIDATION_ERROR', 'Choose a module, give a topic, or paste some text.', { fields: { topic: 'Choose a module, give a topic, or paste some text.' } });
+  return { source, material, drafted: b.avoid.map((text) => plainText(text, 200)).filter(Boolean) };
+}
+
+function questionPrompt(b, source, material, drafted) {
+  return [
+    `Write ${b.count} assessment ${b.count === 1 ? 'question' : 'questions'}${b.topic ? ` about: ${b.topic}` : ''}.`,
+    material || b.purpose !== 'QUIZ' ? PURPOSE[b.purpose] : null,
+    `Allowed types: ${b.types.join(', ')}. Difficulty: ${b.difficulty === 'MIXED' ? 'a mix of easy, medium and hard' : b.difficulty.toLowerCase()}.`,
+    source ? `Use only this material${material ? ', and ask nothing it does not cover. In "topic" name the lesson a question comes from' : ''}:\n<reference name="${material ? 'module' : 'source'}">\n${source}\n</reference>` : null,
+    drafted.length > 0 ? `These questions exist already; write different ones:\n<reference name="existing questions">\n${drafted.map((text) => `- ${text}`).join('\n')}\n</reference>` : null,
+    'Answer with one JSON object: { "questions": [question] }',
+    QUESTION_GUIDE,
+    'Return only the JSON object. Do not include Markdown fences, commentary, or text before or after it.',
+  ].filter(Boolean).join('\n');
+}
+
+function questionsResult(data, b, material) {
+  if (!Array.isArray(data?.questions)) {
+    throw new AppError(422, 'VALIDATION_ERROR', 'The pasted response is missing a questions array. Ask the AI to return { "questions": [...] }.', { fields: { pastedResponse: 'Return one JSON object with a questions array.' } });
+  }
+  const { kept, rejected } = cleanQuestions(data.questions);
+  const allowed = kept.filter((q) => b.types.includes(q.type));
+  const questions = allowed.slice(0, b.count);
+  return { questions, rejected, skipped: kept.length - allowed.length, truncated: Math.max(0, allowed.length - questions.length), source: sourceView(material), needsReview: true };
+}
+
+const externalQuestionsBody = questionsBody.extend({ pastedResponse: z.string().trim().min(20).max(200_000) });
+
+aiRouter.post('/questions/prompt', aiLimiter, validate({ body: questionsBody }), async (req, res) => {
+  await assertPermission(req.user, 'ai.use');
+  const b = req.valid.body;
+  const { source, material, drafted } = await questionSource(req.user, b);
+  const prompt = [
+    'You are helping a teacher prepare assessment questions. Follow the instructions carefully.',
+    '',
+    '## Role',
+    SYSTEM,
+    '',
+    '## Task',
+    questionPrompt(b, source, material, drafted),
+    '',
+    '## Important',
+    'The teacher will review every question and answer before using them. Do not include student information or make up facts outside the supplied material.',
+  ].join('\n');
+  ok(res, { prompt, source: sourceView(material) });
+});
+
+aiRouter.post('/questions/import', aiLimiter, validate({ body: externalQuestionsBody }), async (req, res) => {
+  await assertPermission(req.user, 'ai.use');
+  const b = req.valid.body;
+  const { material } = await questionSource(req.user, b);
+  ok(res, questionsResult(parsePastedJson(b.pastedResponse, 'quiz or examination questions'), b, material));
+});
+
+aiRouter.post('/questions', aiLimiter, validate({ body: questionsBody }), async (req, res) => {
+  const b = req.valid.body;
+  const { source, material, drafted } = await questionSource(req.user, b);
+  await guard(req);
+  const out = await chatJson({
+    system: SYSTEM,
+    user: questionPrompt(b, source, material, drafted),
+    task: {
+      kind: 'questions',
+      input: {
+        topic: b.topic || material?.module.title,
+        source,
+        count: b.count,
+        types: b.types,
+        difficulty: b.difficulty,
+        purpose: b.purpose,
+        avoid: drafted,
       },
-    });
-    await recordUsage(req.user.id, 'ASSIGNMENT', out);
-    const shape = z.object({ title: z.string().min(1).max(600), instructionsHtml: z.string().max(100_000), rubric: z.any().optional() }).safeParse(out.data);
-    if (!shape.success) throw new AppError(502, 'AI_FAILED', 'The AI service returned an assignment in an unexpected shape. Please try again.');
-    ok(res, { title: plainText(shape.data.title, 200), instructionsHtml: sanitizeRichText(shape.data.instructionsHtml), points: b.points, rubric: b.withRubric ? cleanRubric(shape.data.rubric) : null, source: sourceView(material), needsReview: true });
-  },
-);
+    },
+  });
+  await recordUsage(req.user.id, 'QUIZ', out);
+  if (!Array.isArray(out.data?.questions)) throw new AppError(502, 'AI_FAILED', 'The AI service returned questions in an unexpected shape. Please try again.');
+  ok(res, questionsResult(out.data, b, material));
+});
+
+const assignmentBody = z.object({
+  topic: z.string().trim().max(300).optional(),
+  /** A module of the teacher's own to base the assignment on. */
+  moduleId: zId.optional(),
+  details: z.string().trim().max(2000).optional(),
+  points: z.number().int().min(1).max(1000).default(100),
+  withRubric: z.boolean().default(true),
+});
+const externalAssignmentBody = assignmentBody.extend({ pastedResponse: z.string().trim().min(20).max(200_000) });
+
+async function assignmentSource(user, b) {
+  const topic = b.topic && b.topic.length >= 3 ? b.topic : null;
+  const material = b.moduleId ? await moduleMaterial(user, b.moduleId) : null;
+  if (!topic && !material) {
+    throw new AppError(422, 'VALIDATION_ERROR', 'Choose a module or say what the assignment is about.', { fields: { topic: 'Choose a module or say what the assignment is about (at least 3 characters).' } });
+  }
+  return { topic, material };
+}
+
+function assignmentPrompt(b, topic, material) {
+  return [
+    `Draft an assignment${topic ? ` about: ${topic}` : ' in which students apply what the module below teaches'}. It is worth ${b.points} points.`,
+    b.details ? `Details from the teacher: ${b.details}` : null,
+    material ? `Base it on this material, and ask for nothing it has not prepared students for:\n<reference name="module">\n${material.text}\n</reference>` : null,
+    `Answer with one JSON object: { "title": string, "instructionsHtml": string (use <p>, <ul>, <ol>, <li>, <strong>)${b.withRubric ? ', "rubric": { "title": string, "criteria": [{ "title": string, "description": string, "maxPoints": number, "levels": [{ "title": string, "points": number, "description": string }] }] } — criteria points must add up to the assignment points' : ''} }`,
+    b.withRubric ? 'Give each rubric criterion four performance levels, from best to weakest. Keep all descriptions useful and specific to this assignment.' : null,
+    'Write clear, actionable student instructions. Do not invent requirements that the teacher did not ask for.',
+  ].filter(Boolean).join('\n');
+}
+
+function assignmentResult(data, b, material, external = false) {
+  const candidate = data && typeof data === 'object' ? { ...data, instructionsHtml: data.instructionsHtml ?? data.instructions } : data;
+  const shape = z.object({ title: z.string().trim().min(1).max(600), instructionsHtml: z.string().trim().min(1).max(100_000), rubric: z.any().optional() }).safeParse(candidate);
+  if (!shape.success) {
+    if (external) throw new AppError(422, 'VALIDATION_ERROR', 'The pasted response did not match the expected assignment format. Make sure it includes a title and instructionsHtml.', { fields: { pastedResponse: 'Ask the AI to return one JSON object with a title and instructionsHtml.' } });
+    throw new AppError(502, 'AI_FAILED', 'The AI service returned an assignment in an unexpected shape. Please try again.');
+  }
+  const title = plainText(shape.data.title, 200);
+  const instructionsHtml = sanitizeRichText(shape.data.instructionsHtml);
+  if (!title || !plainText(instructionsHtml)) {
+    if (external) throw new AppError(422, 'VALIDATION_ERROR', 'The pasted response needs a title and readable assignment instructions.', { fields: { pastedResponse: 'Include a title and non-empty student instructions.' } });
+    throw new AppError(502, 'AI_FAILED', 'The AI service returned an assignment without readable instructions. Please try again.');
+  }
+  return { title, instructionsHtml, points: b.points, rubric: b.withRubric ? cleanRubric(shape.data.rubric) : null, source: sourceView(material), needsReview: true };
+}
+
+aiRouter.post('/assignment/prompt', aiLimiter, validate({ body: assignmentBody }), async (req, res) => {
+  await assertPermission(req.user, 'ai.use');
+  const b = req.valid.body;
+  const { topic, material } = await assignmentSource(req.user, b);
+  const prompt = [
+    'You are helping a college teacher write a classroom assignment. Follow the instructions carefully.',
+    '',
+    '## Role',
+    SYSTEM,
+    '',
+    '## Task',
+    assignmentPrompt(b, topic, material),
+    '',
+    '## Important',
+    'Return ONLY the JSON object. Do not include Markdown fences, explanations, or text before or after the JSON.',
+    'The teacher will review and edit this draft before assigning it to students.',
+  ].join('\n');
+  ok(res, { prompt, source: sourceView(material) });
+});
+
+aiRouter.post('/assignment/import', aiLimiter, validate({ body: externalAssignmentBody }), async (req, res) => {
+  await assertPermission(req.user, 'ai.use');
+  const b = req.valid.body;
+  const { material } = await assignmentSource(req.user, b);
+  ok(res, assignmentResult(parsePastedJson(b.pastedResponse, 'assignment draft'), b, material, true));
+});
+
+aiRouter.post('/assignment', aiLimiter, validate({ body: assignmentBody }), async (req, res) => {
+  const b = req.valid.body;
+  const { topic, material } = await assignmentSource(req.user, b);
+  await guard(req);
+  const out = await chatJson({
+    system: SYSTEM,
+    user: assignmentPrompt(b, topic, material),
+    task: {
+      kind: 'assignment',
+      input: {
+        topic,
+        moduleTitle: material?.module.title,
+        materialText: material?.text,
+        details: b.details,
+        points: b.points,
+        withRubric: b.withRubric,
+      },
+    },
+  });
+  await recordUsage(req.user.id, 'ASSIGNMENT', out);
+  ok(res, assignmentResult(out.data, b, material));
+});
 
 /** Bring an AI rubric into exactly the shape POST /api/rubrics accepts, so a draft can be saved as is. */
 function cleanRubric(raw) {

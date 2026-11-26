@@ -427,6 +427,58 @@ describe('AI-assisted authoring', () => {
     expect(await prisma.aIGenerationRequest.count({ where: { teacherId: teacher.user.id, clientRequestId } })).toBe(1);
   });
 
+  it('builds and imports external AI drafts for assignments, quizzes and examinations without a built-in provider', async () => {
+    setAiTransport(null);
+    const { teacher, cls } = await classroom(0);
+    const module = (await teacher.post(`/api/classes/${cls.id}/modules`, { title: 'Photosynthesis', description: 'How plants use light.', status: 'DRAFT' })).body.data;
+    await teacher.post(`/api/modules/${module.id}/lessons`, { title: 'Light reactions', contentHtml: '<p>Leaves use light energy to turn water and carbon dioxide into glucose and oxygen.</p>' });
+
+    const questionRequest = { moduleId: module.id, topic: 'Photosynthesis', purpose: 'EXAM', count: 2, types: ['MULTIPLE_CHOICE', 'TRUE_FALSE'], difficulty: 'MIXED', avoid: ['Which gas do plants absorb?'] };
+    const questionPrompt = await teacher.post('/api/ai/questions/prompt', questionRequest);
+    expect(questionPrompt.status).toBe(200);
+    expect(questionPrompt.body.data.prompt).toContain('The questions are for an examination on the whole of the material');
+    expect(questionPrompt.body.data.prompt).toContain('<reference name="module">\nModule: Photosynthesis');
+    expect(questionPrompt.body.data.prompt).toContain('Which gas do plants absorb?');
+    expect(questionPrompt.body.data.prompt).toContain('Return only the JSON object');
+
+    const externalQuestions = {
+      questions: [
+        { type: 'MULTIPLE_CHOICE', text: 'Which gas do leaves take in?', points: 2, difficulty: 'EASY', choices: [{ text: 'Carbon dioxide', isCorrect: true }, { text: 'Oxygen', isCorrect: false }, { text: 'Nitrogen', isCorrect: false }, { text: 'Helium', isCorrect: false }], explanation: 'Carbon dioxide is used in photosynthesis.' },
+        { type: 'TRUE_FALSE', text: 'Photosynthesis uses light energy.', answer: true, points: 1, difficulty: 'MEDIUM' },
+        { type: 'ESSAY', text: 'Explain how light contributes to photosynthesis.', points: 5, difficulty: 'HARD' },
+      ],
+    };
+    const importedQuestions = await teacher.post('/api/ai/questions/import', { ...questionRequest, pastedResponse: JSON.stringify(externalQuestions) });
+    expect(importedQuestions.status).toBe(200);
+    expect(importedQuestions.body.data).toMatchObject({ rejected: 0, skipped: 1, truncated: 0, needsReview: true, source: { moduleId: module.id, moduleTitle: 'Photosynthesis', classId: cls.id, usedLessons: 1 } });
+    expect(importedQuestions.body.data.questions.map((q) => q.type)).toEqual(['MULTIPLE_CHOICE', 'TRUE_FALSE']);
+
+    const assignmentRequest = { moduleId: module.id, topic: 'A plant observation journal', details: 'Record one observation per day for a week.', points: 30, withRubric: true };
+    const assignmentPrompt = await teacher.post('/api/ai/assignment/prompt', assignmentRequest);
+    expect(assignmentPrompt.status).toBe(200);
+    expect(assignmentPrompt.body.data.prompt).toContain('Draft an assignment about: A plant observation journal. It is worth 30 points.');
+    expect(assignmentPrompt.body.data.prompt).toContain('criteria points must add up to the assignment points');
+    expect(assignmentPrompt.body.data.prompt).toContain('Leaves use light energy');
+
+    const importedAssignment = await teacher.post('/api/ai/assignment/import', {
+      ...assignmentRequest,
+      pastedResponse: JSON.stringify({
+        title: 'Plant observation journal',
+        instructionsHtml: '<p onclick="bad()">Record the changes you observe each day.</p><script>alert(1)</script>',
+        rubric: { title: 'Journal rubric', criteria: [{ title: 'Observation quality', maxPoints: 30, description: 'Accurate, specific records.', levels: [{ title: 'Excellent', points: 30, description: 'Detailed and accurate.' }, { title: 'Developing', points: 15, description: 'Some details are missing.' }] }] },
+      }),
+    });
+    expect(importedAssignment.status).toBe(200);
+    expect(importedAssignment.body.data).toMatchObject({ title: 'Plant observation journal', instructionsHtml: '<p>Record the changes you observe each day.</p>', points: 30, needsReview: true, source: { moduleId: module.id, moduleTitle: 'Photosynthesis' }, rubric: { title: 'Journal rubric', criteria: [{ title: 'Observation quality', maxPoints: 30 }] } });
+
+    const noRubricPrompt = await teacher.post('/api/ai/assignment/prompt', { topic: 'A reflection on plant growth', withRubric: false });
+    expect(noRubricPrompt.status).toBe(200);
+    expect(noRubricPrompt.body.data.prompt).not.toContain('"rubric"');
+    expect((await teacher.post('/api/ai/questions/import', { ...questionRequest, pastedResponse: '{"wrong":"format","here":"no questions array"}' })).status).toBe(422);
+    expect((await teacher.post('/api/ai/assignment/import', { ...assignmentRequest, pastedResponse: JSON.stringify({ title: 'Missing instructions' }) })).status).toBe(422);
+    expect(await prisma.aIGenerationUsage.count({ where: { userId: teacher.user.id } })).toBe(0);
+  });
+
   it('exports the draft as PDF and Word', async () => {
     setAiTransport(fakeAi(moduleAnswer));
     const teacher = await actor('TEACHER');
