@@ -475,3 +475,163 @@ test('keeps the screenshot-derived chapter 9 spread populated at pages 155–156
     await api.dispose();
   }
 });
+
+// A scaled Windows display or a page zoom lays the reader out at a fractional width (837.89px, not
+// 838px). `clientWidth` rounds that up, so a column width taken from it no longer fits twice besides
+// the gap: the browser then draws one column and the right page of every spread stays empty.
+test('keeps both pages of a spread filled at a fractional reader width', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await signIn(page, 'teacher');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('teacher', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+    expect(demoModule, 'the demo class includes its first reading module').toBeTruthy();
+    const book = await api.get(`/modules/${demoModule.id}/book`);
+
+    const chapters = Array.from({ length: 4 }, (_, index) => {
+      const chapterNumber = index + 1;
+      const paragraphs = Array.from({ length: 14 }, (_, paragraphIndex) => (
+        `<p><strong>Reading note ${paragraphIndex + 1}.</strong> Chapter ${chapterNumber} continues the spread. ${PAGE_TEXT}</p>`
+      )).join('');
+      return {
+        ...book.chapters[0],
+        id: `fractional-reader-chapter-${chapterNumber}`,
+        moduleId: demoModule.id,
+        title: `Fractional reader chapter ${chapterNumber}`,
+        chapterNumber,
+        kind: 'LESSON',
+        status: 'PUBLISHED',
+        estimatedMinutes: 6,
+        objectives: [],
+        contentHtml: `<h3>Chapter ${chapterNumber} overview</h3>${paragraphs}`,
+        resources: [],
+        visual: null,
+        selfCheck: null,
+        completed: false,
+        bookmarked: false,
+        locked: false,
+        lockedReason: null,
+      };
+    });
+    const fixtureSummary = {
+      ...demoModule,
+      title: 'Fractional reader fixture',
+      description: 'Chapter text should fill both pages of every spread.',
+      status: 'PUBLISHED',
+      locked: false,
+      lessonCount: chapters.length,
+      lessons: chapters.map((chapter, index) => ({ ...chapter, position: index })),
+      objectives: [],
+      resources: [],
+    };
+    const fixtureBook = { ...book, ...fixtureSummary, chapters, totalEstimatedMinutes: 24 };
+    await page.route(`**/api/modules/${demoModule.id}`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureSummary }),
+    }));
+    await page.route(`**/api/modules/${demoModule.id}/book`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureBook }),
+    }));
+
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: false, layout: 'two',
+    })));
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book&chapter=${chapters[0].id}`);
+
+    const reader = page.locator('[data-book-reader]');
+    const spread = page.locator('[data-testid="book-page-spread"]');
+    const flow = page.locator('[data-testid="book-page-flow"]');
+    await expect(reader).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+
+    // Widths that leave a fraction of a pixel, as a scaled display or a page zoom does.
+    for (const width of [837.9, 836.9, 823.5, 899.35]) {
+      await spread.evaluate((element, nextWidth) => { element.style.width = `${nextWidth}px`; }, width);
+      await expect.poll(async () => (await visibleSpreadHasTextInBothPages(page))).toEqual({ left: true, right: true });
+      const columns = await flow.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const columnWidth = Number.parseFloat(element.style.columnWidth);
+        const gap = Number.parseFloat(element.style.columnGap);
+        const offsets = new Set();
+        for (const article of element.querySelectorAll('[data-book-page]')) {
+          const rect = article.getBoundingClientRect();
+          if (rect.width > 0) offsets.add(Math.round((rect.left - bounds.left) / (columnWidth + gap)));
+        }
+        return { count: offsets.size, columnWidth, gap, width: bounds.width };
+      });
+      expect(columns.count, `a ${width}px reader must keep two columns (${JSON.stringify(columns)})`).toBeGreaterThanOrEqual(2);
+      expect(columns.columnWidth * 2 + columns.gap).toBeLessThanOrEqual(columns.width + 0.01);
+    }
+
+    // Turning pages still moves one spread at a time at a fractional width.
+    await spread.evaluate((element) => { element.style.width = '837.9px'; });
+    const navigation = page.getByRole('navigation', { name: 'Book page navigation' }).first();
+    const before = await navigation.textContent();
+    await page.locator('[data-book-reader]').press('ArrowRight');
+    await expect.poll(() => navigation.textContent()).not.toBe(before);
+    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+  } finally {
+    await api.dispose();
+  }
+});
+
+// Two thin columns are hard to read on a tablet held upright, so the spread is offered on landscape
+// screens only: a laptop, or a tablet turned sideways.
+test('offers a two-page spread on landscape screens only', async ({ page }) => {
+  test.setTimeout(180_000);
+  await signIn(page, 'teacher');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('teacher', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+    expect(demoModule, 'the demo class includes its first reading module').toBeTruthy();
+
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: false, layout: 'two',
+    })));
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book`);
+
+    const reader = page.locator('[data-book-reader]');
+    const spread = page.locator('[data-testid="book-page-spread"]');
+    const twoPages = page.locator('[role="radiogroup"][aria-label="Book page layout"] [role="radio"]')
+      .filter({ hasText: 'Two pages' });
+    await expect(reader).toBeVisible();
+
+    // A tablet held upright: one page, and the spread choice explains why it is unavailable.
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'single');
+    await expect(spread).toHaveAttribute('data-page-count', '1');
+    await expect(twoPages).toBeDisabled();
+    await expect(twoPages).toHaveAttribute('title', /landscape/);
+
+    // Turned sideways (or on a laptop) the saved spread comes back by itself.
+    await page.setViewportSize({ width: 1180, height: 820 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+    await expect(twoPages).toBeEnabled();
+    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+
+    // A laptop keeps its spread.
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+
+    // A phone-sized screen stays on one page.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'single');
+    await expect(spread).toHaveAttribute('data-page-count', '1');
+  } finally {
+    await api.dispose();
+  }
+});

@@ -3,9 +3,9 @@
 | Suite | Command | Size | Needs |
 |---|---|---|---|
 | API and unit tests | `npm run test:backend` | 816 tests in 34 files, about two minutes | Nothing: starts its own PostgreSQL. Five of them run only on request (below) |
-| Web-app unit tests | `npm run test:frontend` | 322 tests in 13 files, about ten seconds | Nothing |
+| Web-app unit tests | `npm run test:frontend` | 324 tests in 13 files, about ten seconds | Nothing |
 | Both of the above | `npm test` | | |
-| Browser tests | `npm run test:e2e` | 70 tests in 15 files, about eight minutes | A Chromium browser and the demo data |
+| Browser tests | `npm run test:e2e` | 72 tests in 15 files, about eight minutes | A Chromium browser and the demo data |
 | Lint | `npm run lint` | | |
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
 | The code runner on a real Vercel account | `npm run judge:check` | 29 checks, about a minute | Vercel credentials; starts eight machines ([below](#the-code-runner-against-a-real-account)) |

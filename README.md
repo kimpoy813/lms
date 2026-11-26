@@ -7,7 +7,7 @@ administrators, teachers and students.
 - **Backend** — Node.js 22 or newer, Express 5, PostgreSQL through Prisma, Socket.IO
 - **Web app** — React 19, React Router 7, TanStack Query, Tailwind CSS 4 (installable, works on phones)
 - **Hosting** — one Node.js server, or Vercel with a Neon database ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md))
-- **Tests** — 816 API and unit tests, 322 web-app unit tests, 70 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
+- **Tests** — 816 API and unit tests, 324 web-app unit tests, 72 end-to-end browser tests ([docs/TESTING.md](docs/TESTING.md))
 
 ## Quick start
 

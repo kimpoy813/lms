@@ -158,13 +158,14 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
 }
 
 /** Buttons that behave like radio options (e.g. Present / Late / Absent). */
-export function Segmented({ value, onChange, options, size = 'md', className, label }) {
+export function Segmented({ value, onChange, options, size = 'md', className, label, disabled = false }) {
   return (
     <div role="radiogroup" aria-label={label} className={cn('inline-flex max-w-full overflow-x-auto rounded-lg border border-line bg-raised p-0.5 [scrollbar-width:none]', className)}>
       {options.map((o) => {
         const active = o.value === value;
+        const unavailable = disabled || o.disabled;
         return (
-          <button key={o.value} type="button" role="radio" aria-checked={active} onClick={() => onChange(o.value)} title={o.title} className={cn('shrink-0 rounded-md font-medium whitespace-nowrap transition-colors', size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3.5 py-1.5 text-sm', active ? cn('bg-surface shadow-sm', o.tone ?? 'text-ink') : 'text-soft hover:text-ink')}>
+          <button key={o.value} type="button" role="radio" aria-checked={active} disabled={unavailable} onClick={() => onChange(o.value)} title={o.title} className={cn('shrink-0 rounded-md font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed', size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3.5 py-1.5 text-sm', active ? cn('bg-surface shadow-sm', o.tone ?? 'text-ink') : 'text-soft hover:text-ink', unavailable && 'opacity-45 hover:text-soft')}>
             {o.label}
           </button>
         );
