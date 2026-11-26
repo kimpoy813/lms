@@ -49,6 +49,9 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
         bookmarked: false,
         locked: false,
         lockedReason: null,
+        highlights: [
+          { id: 'hl-1', lessonId: 'les-1', quote: 'High cohesion keeps related logic together', context: '', note: 'Remember this for the quiz', colour: 'green', createdAt: '2026-11-20T09:00:00.000Z' },
+        ],
       },
       {
         ...summary.lessons[1],
@@ -81,6 +84,9 @@ const { mockGet, mockPost, mockDelete, mockModuleSummary, mockModuleBook, mockLe
     completed: false,
     bookmarked: false,
     aiStudyCoachEnabled: false,
+    highlights: [
+      { id: 'hl-1', lessonId: 'les-1', quote: 'understandable parts', context: '', note: 'Remember this for the quiz', colour: 'green', createdAt: '2026-11-20T09:00:00.000Z' },
+    ],
   };
   const lesson2 = {
     ...lesson1,
@@ -365,7 +371,8 @@ describe('Module book-like reader & outline CTA', () => {
       await vi.waitFor(() => expect(container.textContent).toContain('Draft — hidden from students'));
     });
     expect(container.querySelector('select[aria-label="Choose a chapter"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Reading display options"]').className).toContain('grid-cols-2');
+    // The settings are a panel of labelled groups, not one row of unlabelled chips.
+    expect(container.querySelector('[aria-label="Reading display options"]').className).toContain('reading-settings');
     expect(container.querySelector('button[aria-label="More lesson actions"]')).not.toBeNull();
 
     const openAssignment = [...container.querySelectorAll('button')].find((button) => button.textContent.trim() === 'New assignment');
@@ -1092,6 +1099,74 @@ describe('Module book-like reader & outline CTA', () => {
     });
     expect(mockPost).toHaveBeenCalledWith('/lessons/les-1/complete');
 
+    unmount();
+  });
+
+  it('paints a saved highlight in the lesson text and offers to remove it', async () => {
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?lesson=les-1');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-lesson-reader]')).not.toBeNull());
+    });
+
+    const mark = container.querySelector('mark[data-reading-highlight="hl-1"]');
+    expect(mark).not.toBeNull();
+    expect(mark.textContent).toBe('understandable parts');
+    // The reader's note colour wins: the saved green, not the yellow chosen in settings.
+    expect(mark.getAttribute('data-highlight-colour')).toBe('green');
+    // The rest of the lesson is untouched.
+    expect(container.querySelector('.rich-book h3').textContent).toBe('1. Introduction');
+
+    act(() => mark.click());
+    await flush();
+    const toolbar = container.querySelector('[data-testid="highlight-toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar.getAttribute('aria-label')).toBe('Highlight options');
+    expect(toolbar.textContent).toContain('Note');
+
+    const remove = toolbar.querySelector('[aria-label="Remove this highlight"]');
+    await act(async () => {
+      remove.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(mockDelete).toHaveBeenCalledWith('/highlights/hl-1');
+    unmount();
+  });
+
+  it('offers a highlighter colour in the reading settings that is remembered', async () => {
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const blue = container.querySelector('button[aria-label="Blue highlighter"]');
+    expect(blue).not.toBeNull();
+    act(() => blue.click());
+    await flush();
+
+    expect(blue.getAttribute('aria-pressed')).toBe('true');
+    expect(JSON.parse(window.localStorage.getItem('discenda.readerPrefs')).highlightColour).toBe('blue');
+    expect(container.querySelector('mark[data-reading-highlight="hl-1"]').getAttribute('data-highlight-colour')).toBe('green');
+    unmount();
+  });
+
+  it('groups the reading settings under their own labels instead of one cramped row', async () => {
+    setViewport(820, 600);
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const settings = container.querySelector('[aria-label="Reading display options"]');
+    expect(settings).not.toBeNull();
+    for (const title of ['Typeface', 'Text size', 'Pages', 'Highlighter']) {
+      expect(settings.textContent).toContain(title);
+    }
+    // Each choice keeps its own accessible name, so the panel is usable with a screen reader.
+    expect(settings.querySelector('[role="radiogroup"][aria-label="Typeface"]')).not.toBeNull();
+    expect(settings.querySelector('[role="radiogroup"][aria-label="Text size"]')).not.toBeNull();
+    expect(settings.querySelector('[role="group"][aria-label="Highlighter colour"]')).not.toBeNull();
+    expect(settings.querySelector('[role="radiogroup"][aria-label="Book page layout"]')).not.toBeNull();
+    expect([...settings.querySelectorAll('button[aria-pressed]')].some((button) => button.getAttribute('aria-label') === 'Yellow highlighter')).toBe(true);
     unmount();
   });
 });

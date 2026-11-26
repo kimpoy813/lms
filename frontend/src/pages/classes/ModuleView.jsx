@@ -1,19 +1,21 @@
 // One module: chapter-by-chapter reading or full-module "book view".
 // Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, FileQuestion, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, FileQuestion, Fullscreen, HelpCircle, Highlighter, Layers, Lock, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
+import HighlightLayer from '../../components/HighlightLayer.jsx';
 import LazyEditor from '../../components/LazyEditor.jsx';
 import { LearningFeaturesEditor, LearningVisual, QuickCheck } from '../../components/LearningFeatures.jsx';
 import { StatusBadge } from '../../components/Publish.jsx';
 import RichText from '../../components/RichText.jsx';
 import { toast } from '../../components/toast.jsx';
-import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, PageLoader, ProgressBar, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
+import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, Modal, PageLoader, ProgressBar, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
+import { DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS, isHighlightColor } from '../../lib/highlights.js';
 import { useBookNavigation } from '../../lib/bookNavigation.js';
 import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
@@ -26,7 +28,7 @@ import { useClass } from './useClass.js';
 
 const READER_PREFS_KEY = 'discenda.readerPrefs';
 const BOOK_POSITION_END = '__end_of_book__';
-const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false, layout: 'single' };
+const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false, layout: 'single', highlightColour: DEFAULT_HIGHLIGHT_COLOR };
 // A two-page spread needs a landscape screen with room for two readable columns: a laptop, or a
 // tablet held sideways. A tablet held upright is narrow enough that two columns would be too thin
 // to read, so it keeps a single page even when its width passes the minimum.
@@ -162,6 +164,7 @@ function useReaderPrefs() {
         size: ['sm', 'md', 'lg'].includes(saved.size) ? saved.size : 'md',
         focus: Boolean(saved.focus),
         layout: saved.layout === 'two' ? 'two' : 'single',
+        highlightColour: isHighlightColor(saved.highlightColour) ? saved.highlightColour : DEFAULT_HIGHLIGHT_COLOR,
       };
     } catch {
       return DEFAULT_READER_PREFS;
@@ -275,92 +278,410 @@ function formatDuration(minutes) {
   return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
-function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false, showBookSpread = false, showFocusOnSmallScreens = false }) {
+function useReadingHighlights({ cls }) {
+  const queryClient = useQueryClient();
+  // A lesson is drawn from two queries — the module book and the single lesson — so both are
+  // refreshed, otherwise a mark made in chapter view would not appear until the page was reloaded.
+  const refresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['class', cls.id] });
+    queryClient.invalidateQueries({ queryKey: ['highlights'] });
+  }, [cls.id, queryClient]);
+
+  const add = useAction(({ lessonId, quote, context }) => api.post('/highlights', { lessonId, quote, context }), {
+    success: 'Highlighted.',
+    onSuccess: refresh,
+  });
+  const edit = useAction(({ id, note, colour: next }) => api.patch(`/highlights/${id}`, {
+    note: note?.trim() ? note.trim() : null,
+    ...(isHighlightColor(next) ? { colour: next } : {}),
+  }), {
+    onSuccess: () => {
+      toast.success('Highlight saved.');
+      refresh();
+    },
+  });
+  const remove = useAction((id) => api.delete(`/highlights/${id}`), {
+    success: 'Highlight removed.',
+    onSuccess: refresh,
+  });
+  const noteDialog = useRef(null);
+
+  return {
+    noteDialogRef: noteDialog,
+    noteMutation: edit,
+    actions: {
+      onHighlight: (lessonId) => ({ quote, context, colour: selected }) => add.mutate({ lessonId, quote, context, colour: selected }),
+      onNote: ({ id, note, colour: next }) => noteDialog.current?.({ id, note, colour: next }),
+      onRemove: (id) => remove.mutate(id),
+    },
+  };
+}
+
+/** The note dialog shared by both readers. */
+function HighlightNoteDialog({ dialogRef, mutation }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const [colour, setColour] = useState(DEFAULT_HIGHLIGHT_COLOR);
+  const [target, setTarget] = useState(null);
+  useEffect(() => {
+    dialogRef.current = ({ id, note: current, colour: next }) => {
+      setTarget(id);
+      setNote(current ?? '');
+      setColour(isHighlightColor(next) ? next : DEFAULT_HIGHLIGHT_COLOR);
+      setOpen(true);
+    };
+    return () => { dialogRef.current = null; };
+  }, [dialogRef]);
   return (
-    <div className="no-print grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-1.5" role="group" aria-label="Reading display options">
-      <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
-        <button
-          type="button"
-          onClick={() => onChange({ font: 'serif' })}
-          aria-pressed={prefs.font === 'serif'}
-          className={cn('rounded-md px-2 py-1 font-serif font-medium transition-colors', prefs.font === 'serif' ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
-          title="Book serif font"
+    <Modal open={open} onClose={() => setOpen(false)} title="Note on this highlight" footer={(
+      <>
+        <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+        <Button
+          loading={mutation.isPending}
+          onClick={() => mutation.mutate({ id: target, note, colour }, { onSuccess: () => setOpen(false) })}
         >
-          Serif
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange({ font: 'sans' })}
-          aria-pressed={prefs.font === 'sans'}
-          className={cn('rounded-md px-2 py-1 font-sans font-medium transition-colors', prefs.font === 'sans' ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
-          title="Clean sans-serif font"
-        >
-          Sans
-        </button>
+          Save note
+        </Button>
+      </>
+    )}>
+      <div className="grid gap-3">
+        <Field label="Your note" hint="Only you can see your highlights and notes.">
+          <Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} maxLength={500} placeholder="What do you want to remember about these words?" />
+        </Field>
+        <div className="reading-colour-picker" role="group" aria-label="Highlight colour">
+          {HIGHLIGHT_COLORS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className="reading-colour-swatch"
+              data-colour={option.value}
+              aria-pressed={colour === option.value}
+              aria-label={`${option.label} highlighter`}
+              onClick={() => setColour(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
-        <span className="px-1.5 text-faint" aria-hidden="true"><Type className="size-3.5" /></span>
-        {[
-          ['sm', 'A−', 'Smaller text'],
-          ['md', 'A', 'Default text size'],
-          ['lg', 'A+', 'Larger text'],
-        ].map(([val, label, title]) => (
-          <button
-            key={val}
-            type="button"
-            onClick={() => onChange({ size: val })}
-            aria-label={title}
-            aria-pressed={prefs.size === val}
-            title={title}
-            className={cn('min-w-8 rounded-md px-2 py-1 font-semibold transition-colors', prefs.size === val ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {showBookLayout && (
-        <Segmented
-          label="Book page layout"
-          // While a spread is not possible, the selected option must describe what is on screen.
-          // The stored preference is untouched, so the spread returns when the screen allows it.
-          value={showBookSpread ? prefs.layout : 'single'}
-          onChange={(layout) => onChange({ layout })}
-          size="sm"
-          className="hidden md:inline-flex md:w-auto"
-          options={[
-            { value: 'single', label: 'Single page', title: 'Show one book page at a time' },
-            {
-              value: 'two',
-              label: 'Two pages',
-              title: showBookSpread
-                ? 'Show a two-page book spread'
-                : 'A two-page spread needs a landscape screen: turn the tablet sideways or use a laptop',
-              disabled: !showBookSpread,
-            },
-          ]}
+    </Modal>
+  );
+}
+
+/**
+ * The note dialog for a whole module. Every chapter asks this one to open, so a book with many
+ * chapters still has a single dialog.
+ */
+function ModuleNoteDialog({ cls, onOpen }) {
+  const queryClient = useQueryClient();
+  const [request, setRequest] = useState(null);
+  useEffect(() => {
+    onOpen(() => (payload) => setRequest(payload ?? null));
+    return () => onOpen(null);
+  }, [onOpen]);
+  const mutation = useAction(
+    ({ id, note, colour: next }) => api.patch(`/highlights/${id}`, {
+      note: note?.trim() ? note.trim() : null,
+      ...(isHighlightColor(next) ? { colour: next } : {}),
+    }),
+    {
+      onSuccess: () => {
+        toast.success('Highlight saved.');
+        queryClient.invalidateQueries({ queryKey: ['class', cls.id] });
+        queryClient.invalidateQueries({ queryKey: ['highlights'] });
+      },
+    },
+  );
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    if (request) dialogRef.current?.({ id: request.id, note: request.note, colour: request.colour });
+  }, [request]);
+  return <HighlightNoteDialog dialogRef={dialogRef} mutation={mutation} />;
+}
+
+/**
+ * Lesson text with its highlights painted in, and a "Highlight" action when the reader selects words.
+ * The marks live inside the rendered text, so printing and the book's page columns see them too.
+ */
+function HighlightableText({ html, className, highlights, colour, canHighlight = true, onHighlight, onNote, onRemove, empty, scrollableTables = true, lessonTitle }) {
+  // A state ref, not a plain one: the marks are drawn only once the lesson text is really in the page.
+  const [rootEl, setRootEl] = useState(null);
+  const [painted, setPainted] = useState([]);
+  // A stable callback: the layer repaints whenever its props change, so a new function every render
+  // would repaint for ever.
+  const reportPainted = useCallback((ids) => {
+    setPainted((current) => (current.length === ids.length && current.every((id, index) => id === ids[index]) ? current : ids));
+  }, []);
+  const highlightList = highlights ?? [];
+  return (
+    <>
+      {/* The marks are painted inside the lesson text itself: the book measures every child of a
+          page, so an extra wrapper would change where the pages break. */}
+      <RichText
+        ref={setRootEl}
+        html={html}
+        className={className}
+        empty={empty}
+        scrollableTables={scrollableTables}
+        data-lesson-text={lessonTitle ?? ''}
+      />
+      {rootEl && (
+        <HighlightLayer
+          rootEl={rootEl}
+          highlights={highlightList}
+          colour={colour}
+          canHighlight={canHighlight}
+          onHighlight={onHighlight}
+          onNote={onNote}
+          onRemove={onRemove}
+          onPainted={reportPainted}
+          enabled={Boolean(html?.trim())}
         />
       )}
-      <Button
-        variant={prefs.focus ? 'soft' : 'ghost'}
-        size="sm"
-        icon={prefs.focus ? Minimize2 : Maximize2}
-        aria-pressed={prefs.focus}
-        onClick={() => onChange({ focus: !prefs.focus })}
-        className={showFocusOnSmallScreens ? 'inline-flex' : 'hidden lg:inline-flex'}
-      >
-        {prefs.focus ? 'Show contents' : 'Focus mode'}
-      </Button>
-      <Button
-        variant={isFullscreen ? 'soft' : 'ghost'}
-        size="sm"
-        icon={isFullscreen ? Shrink : Fullscreen}
-        aria-pressed={isFullscreen}
-        onClick={onToggleFullscreen}
-        title={isFullscreen ? 'Exit full screen (or press Escape)' : 'View lesson full screen'}
-        className="col-span-2 w-full justify-center sm:col-span-1 sm:w-auto"
-      >
-        {isFullscreen ? 'Exit full screen' : 'Full screen'}
-      </Button>
+      {/* The list is what makes a mark findable again: on a long chapter a colour alone is not. */}
+      {canHighlight && (
+        <LessonHighlights
+          highlights={highlightList}
+          painted={painted}
+          onJump={(highlight) => rootEl?.querySelector(`mark[data-reading-highlight="${highlight.id}"]`)?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })}
+          onRemove={(highlight) => onRemove?.(highlight.id)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * Everything one lesson's highlights need: the list with its colours, the actions that change it, and
+ * (when the caller has no dialog of its own) the note dialog. A highlight keeps the colour it was made
+ * with; the reading settings choose the colour of the next one.
+ */
+function ChapterHighlighting({ cls, lessonId, highlights, prefs, canHighlight = true, onAskForNote, children }) {
+  const store = useReadingHighlights({ cls });
+  const colour = isHighlightColor(prefs.highlightColour) ? prefs.highlightColour : DEFAULT_HIGHLIGHT_COLOR;
+  const coloured = useMemo(
+    () => (highlights ?? []).map((highlight) => ({ ...highlight, colour: isHighlightColor(highlight.colour) ? highlight.colour : colour })),
+    [highlights, colour],
+  );
+  // A long book draws many chapters, so only one dialog is used: the reader hands this chapter its
+  // own opener rather than every chapter drawing a modal of its own.
+  useEffect(() => {
+    onAskForNote?.(store.noteDialogRef.current);
+    return () => onAskForNote?.(null);
+  }, [onAskForNote, store.noteDialogRef]);
+
+  return (
+    <>
+      {children({
+        highlights: coloured,
+        colour,
+        canHighlight,
+        onHighlight: store.actions.onHighlight(lessonId),
+        onNote: store.actions.onNote,
+        onRemove: store.actions.onRemove,
+      })}
+      {!onAskForNote && <HighlightNoteDialog dialogRef={store.noteDialogRef} mutation={store.noteMutation} />}
+    </>
+  );
+}
+
+/**
+ * The words this reader marked in one lesson, in reading order. A highlight whose words have been
+ * edited out of the lesson no longer appears in the text, so the list names it rather than losing it
+ * silently.
+ */
+function LessonHighlights({ highlights, painted = [], onJump, onRemove }) {
+  if (!highlights?.length) return null;
+  const found = new Set(painted);
+  return (
+    <section className="reading-highlight-list no-print" aria-label="Your highlights">
+      <div className="reading-highlight-list-head">
+        <p className="reading-setting-title">
+          <Highlighter className="mr-1 inline size-3.5 text-brand" aria-hidden="true" />
+          Your highlights <span className="font-normal text-faint">({highlights.length})</span>
+        </p>
+        <span className="reading-setting-hint">Only you can see these</span>
+      </div>
+      <ul>
+        {highlights.map((highlight) => {
+          const inText = found.has(highlight.id);
+          return (
+          <li key={highlight.id} className="reading-highlight-list-item" data-missing={inText ? undefined : 'true'}>
+            <button
+              type="button"
+              className="reading-highlight-list-jump"
+              data-colour={isHighlightColor(highlight.colour) ? highlight.colour : undefined}
+              onClick={() => onJump?.(highlight)}
+              disabled={!inText}
+              title={inText
+                ? (highlight.note ? `Note: ${highlight.note}` : 'Go to these words')
+                : 'These words are no longer in this lesson'}
+            >
+              <span className="reading-highlight-list-quote">“{highlight.quote}”</span>
+              {highlight.note && <span className="reading-highlight-list-note">{highlight.note}</span>}
+              {!inText && <span className="reading-highlight-list-missing">No longer in this lesson</span>}
+            </button>
+            <button type="button" className="reading-highlight-list-remove" onClick={() => onRemove?.(highlight)} aria-label={`Remove highlight “${highlight.quote}”`}>
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+const READER_SIZES = [
+  { value: 'sm', label: 'A−', name: 'Smaller text', className: 'text-xs' },
+  { value: 'md', label: 'A', name: 'Default text size', className: 'text-sm' },
+  { value: 'lg', label: 'A+', name: 'Larger text', className: 'text-base' },
+];
+
+/** The three text sizes, drawn as one control so the size on screen is obvious at a glance. */
+function ReaderSizeScale({ value, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="Text size" className="inline-flex w-full max-w-full items-center justify-center rounded-lg border border-line bg-raised p-0.5 sm:justify-start">
+      {READER_SIZES.map((size) => {
+        const active = value === size.value;
+        return (
+          <button
+            key={size.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            aria-pressed={active}
+            aria-label={size.name}
+            title={size.name}
+            onClick={() => onChange(size.value)}
+            className={cn(
+              'min-w-9 flex-1 rounded-md px-2 py-1 font-semibold transition-colors sm:flex-none',
+              size.className,
+              active ? 'bg-surface text-brand shadow-sm' : 'text-soft hover:text-ink',
+            )}
+          >
+            {size.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One titled group of related settings inside the reading settings panel. */
+function SettingGroup({ icon: Icon, title, hint, children, className }) {
+  return (
+    <section className={cn('reading-setting-group', className)}>
+      <div className="reading-setting-heading">
+        <span className="reading-setting-icon"><Icon className="size-3.5" aria-hidden="true" /></span>
+        <div className="min-w-0">
+          <p className="reading-setting-title">{title}</p>
+          {hint && <p className="reading-setting-hint">{hint}</p>}
+        </div>
+      </div>
+      <div className="reading-setting-body">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * The reading settings: typeface, text size, page layout, highlighter colour, focus and full screen.
+ * Every choice is applied at once and kept for this reader on this device.
+ */
+export function ReaderSettings({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false, showBookSpread = false, canHighlight = true }) {
+  return (
+    <div className="reading-settings" role="group" aria-label="Reading display options">
+      <div className="reading-settings-grid">
+        <SettingGroup icon={BookOpen} title="Typeface">
+          <Segmented
+            label="Typeface"
+            value={prefs.font}
+            onChange={(font) => onChange({ font })}
+            options={[
+              { value: 'serif', label: 'Serif', title: 'A book typeface with serifs' },
+              { value: 'sans', label: 'Sans', title: 'A clean typeface without serifs' },
+            ]}
+          />
+        </SettingGroup>
+
+        <SettingGroup icon={Type} title="Text size">
+          <ReaderSizeScale value={prefs.size} onChange={(size) => onChange({ size })} />
+        </SettingGroup>
+
+        {showBookLayout && (
+          <div className="hidden md:block">
+          <SettingGroup
+            icon={Layers}
+            title="Pages"
+            hint={showBookSpread ? undefined : 'Two pages need a landscape screen'}
+          >
+            <Segmented
+              className="hidden md:inline-flex md:w-auto"
+              label="Book page layout"
+              // While a spread is not possible, the selected option must describe what is on screen.
+              // The stored preference is untouched, so the spread returns when the screen allows it.
+              value={showBookSpread ? prefs.layout : 'single'}
+              onChange={(layout) => onChange({ layout })}
+              options={[
+                { value: 'single', label: 'Single page', title: 'Show one page at a time' },
+                {
+                  value: 'two',
+                  label: 'Two pages',
+                  title: showBookSpread
+                    ? 'Show two pages side by side, like an open book'
+                    : 'A two-page spread needs a landscape screen: turn the tablet sideways or use a laptop',
+                  disabled: !showBookSpread,
+                },
+              ]}
+            />
+          </SettingGroup>
+          </div>
+        )}
+
+        {canHighlight && (
+          <SettingGroup icon={Highlighter} title="Highlighter" hint="Used for new highlights">
+            <div className="reading-colour-picker" role="group" aria-label="Highlighter colour">
+              {HIGHLIGHT_COLORS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  data-colour={option.value}
+                  className="reading-colour-swatch"
+                  aria-pressed={(prefs.highlightColour ?? DEFAULT_HIGHLIGHT_COLOR) === option.value}
+                  aria-label={`${option.label} highlighter`}
+                  title={`${option.label} highlighter`}
+                  onClick={() => onChange({ highlightColour: option.value })}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </SettingGroup>
+        )}
+      </div>
+
+      <div className="reading-settings-actions">
+        <Button
+          variant={prefs.focus ? 'soft' : 'secondary'}
+          size="sm"
+          icon={prefs.focus ? Minimize2 : Maximize2}
+          aria-pressed={prefs.focus}
+          onClick={() => onChange({ focus: !prefs.focus })}
+          title="Hide the contents list and the outer page, for distraction-free reading"
+        >
+          {prefs.focus ? 'Leave focus mode' : 'Focus mode'}
+        </Button>
+        <Button
+          variant={isFullscreen ? 'soft' : 'secondary'}
+          size="sm"
+          icon={isFullscreen ? Shrink : Fullscreen}
+          aria-pressed={isFullscreen}
+          onClick={onToggleFullscreen}
+          title={isFullscreen ? 'Exit full screen (or press Escape)' : 'Read in full screen'}
+        >
+          {isFullscreen ? 'Exit full screen' : 'Full screen'}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -496,27 +817,30 @@ export default function ModuleView() {
                     </summary>
                     <div className="book-reader-settings-panel">
                       {viewMode === 'book' && (
-                        <Select
-                          aria-label="Jump to chapter"
-                          value={params.get('chapter') ?? ''}
-                          onChange={(event) => setParams({ view: 'book', chapter: event.target.value })}
-                        >
-                          <option value="">Jump to chapter…</option>
-                          {mod.lessons.map((chapter) => (
-                            <option key={chapter.id} value={chapter.id}>
-                              Ch. {chapter.chapterNumber}: {chapter.title}
-                            </option>
-                          ))}
-                        </Select>
+                        <div className="reading-setting-select">
+                          <label htmlFor={`book-chapter-jump-${mod.id}`} className="reading-setting-title">Jump to chapter</label>
+                          <Select
+                            id={`book-chapter-jump-${mod.id}`}
+                            aria-label="Jump to chapter"
+                            value={params.get('chapter') ?? ''}
+                            onChange={(event) => setParams({ view: 'book', chapter: event.target.value })}
+                          >
+                            <option value="">Choose a chapter…</option>
+                            {mod.lessons.map((chapter) => (
+                              <option key={chapter.id} value={chapter.id}>
+                                Ch. {chapter.chapterNumber}: {chapter.title}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
                       )}
-                      <ReaderControls
+                      <ReaderSettings
                         prefs={prefs}
                         onChange={updatePrefs}
                         isFullscreen={isFullscreen}
                         onToggleFullscreen={toggleFullscreen}
                         showBookLayout={viewMode === 'book'}
                         showBookSpread={canShowSpread}
-                        showFocusOnSmallScreens={viewMode === 'book'}
                       />
                     </div>
                   </details>
@@ -543,15 +867,23 @@ export default function ModuleView() {
                       { value: 'book', label: 'Read as book', icon: BookOpen },
                     ]}
                   />
-                  <ReaderControls
-                    prefs={prefs}
-                    onChange={updatePrefs}
-                    isFullscreen={isFullscreen}
-                    onToggleFullscreen={toggleFullscreen}
-                    showBookLayout={viewMode === 'book'}
-                    showBookSpread={canShowSpread}
-                    showFocusOnSmallScreens={viewMode === 'book'}
-                  />
+                  <details className="book-reader-settings" data-testid="book-reader-settings">
+                    <summary aria-label="Open reading settings" title="Reading settings">
+                      <Type className="size-4" aria-hidden="true" />
+                      <span>Settings</span>
+                      <span className="reading-settings-summary-hint">{prefs.size === 'sm' ? 'A−' : prefs.size === 'lg' ? 'A+' : 'A'} · {prefs.font === 'serif' ? 'Serif' : 'Sans'}{prefs.focus ? ' · Focus' : ''}</span>
+                    </summary>
+                    <div className="book-reader-settings-panel">
+                      <ReaderSettings
+                        prefs={prefs}
+                        onChange={updatePrefs}
+                        isFullscreen={isFullscreen}
+                        onToggleFullscreen={toggleFullscreen}
+                        showBookLayout={viewMode === 'book'}
+                        showBookSpread={canShowSpread}
+                      />
+                    </div>
+                  </details>
                 </div>
               )}
             </div>
@@ -678,6 +1010,9 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
   const { cls, canManage, base } = useClass();
   const [params, setParams] = useSearchParams();
   const [savingId, setSavingId] = useState(null);
+  // The one note dialog of this book registers itself here, so any chapter can open it.
+  const noteOpenRef = useRef(null);
+  const registerNoteOpener = useCallback((handler) => { noteOpenRef.current = handler; }, []);
   const [location, setLocation] = useState(() => initialBookLocation(params, modSummary.lessons));
   const [resumePosition, setResumePosition] = useState(() => readBookPosition(user?.id, modSummary.id));
   const [resumePage, setResumePage] = useState(() => readBookPositionPage(user?.id, modSummary.id));
@@ -1382,12 +1717,23 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
                           )}
                         </header>
 
-                        <RichText
-                          html={ch.contentHtml}
-                          className={bookTextClasses(prefs)}
-                          scrollableTables={layout !== 'two'}
-                          empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
-                        />
+                        <ChapterHighlighting cls={cls} lessonId={ch.id} highlights={ch.highlights} prefs={prefs} canHighlight={visiblePage} onAskForNote={registerNoteOpener}>
+                          {({ highlights: chapterHighlights, colour, canHighlight, onHighlight, onNote, onRemove }) => (
+                            <HighlightableText
+                              html={ch.contentHtml}
+                              className={bookTextClasses(prefs)}
+                              highlights={chapterHighlights}
+                              colour={colour}
+                              canHighlight={canHighlight}
+                              onHighlight={onHighlight}
+                              onNote={onNote}
+                              onRemove={onRemove}
+                              scrollableTables={layout !== 'two'}
+                              lessonTitle={ch.title}
+                              empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
+                            />
+                          )}
+                        </ChapterHighlighting>
                         {ch.visual && <LearningVisual visual={ch.visual} />}
                         {ch.selfCheck && <QuickCheck check={ch.selfCheck} />}
 
@@ -1507,6 +1853,7 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
                 onNext={() => goToPage(Math.min(lastPage, navigationPageIndex + pageStep))}
                 position="bottom"
               />
+              <ModuleNoteDialog cls={cls} onOpen={registerNoteOpener} />
             </div>
           </div>
         );
@@ -1693,7 +2040,22 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                 )}
               </header>
 
-              <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
+              <ChapterHighlighting cls={cls} lessonId={lessonId} highlights={lesson.highlights} prefs={prefs}>
+                {({ highlights: lessonHighlights, colour, canHighlight, onHighlight, onNote, onRemove }) => (
+                  <HighlightableText
+                    html={lesson.contentHtml}
+                    className={bookTextClasses(prefs)}
+                    highlights={lessonHighlights}
+                    colour={colour}
+                    canHighlight={canHighlight}
+                    onHighlight={onHighlight}
+                    onNote={onNote}
+                    onRemove={onRemove}
+                    lessonTitle={lesson.title}
+                    empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>}
+                  />
+                )}
+              </ChapterHighlighting>
               {lesson.visual && <LearningVisual visual={lesson.visual} />}
               {lesson.selfCheck && <QuickCheck check={lesson.selfCheck} />}
 

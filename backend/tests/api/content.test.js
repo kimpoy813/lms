@@ -359,6 +359,58 @@ describe('resources', () => {
     expect((await students[0].delete('/api/bookmarks', { lessonId: lesson.id })).status).toBe(204);
     expect((await students[0].get('/api/bookmarks')).body.data).toHaveLength(0);
   });
+
+  it('keeps the highlights of a reader private, normalised and removable', async () => {
+    const { teacher, cls, students } = await classroom(2);
+    const mod = await mk(teacher, cls);
+    const lesson = await mkLesson(teacher, mod.id, { contentHtml: '<p>Cohesion keeps related logic together.</p>' });
+    const mark = (quote, extra = {}) => students[0].post('/api/highlights', { lessonId: lesson.id, quote, ...extra });
+
+    const made = await mark('  Cohesion   keeps\nrelated logic ', { context: 'keeps related logic together', colour: 'green' });
+    expect(made.status).toBe(201);
+    // Single spaces, as the reader's finder expects.
+    expect(made.body.data).toMatchObject({ quote: 'Cohesion keeps related logic', colour: 'green', note: null, lessonId: lesson.id });
+    const id = made.body.data.id;
+
+    // The book and the lesson both carry them; another reader sees none of it.
+    const book = await students[0].get(`/api/modules/${mod.id}/book`);
+    expect(book.body.data.chapters[0].highlights).toHaveLength(1);
+    expect((await students[0].get(`/api/lessons/${lesson.id}`)).body.data.highlights[0].id).toBe(id);
+    expect((await students[1].get(`/api/modules/${mod.id}/book`)).body.data.chapters[0].highlights).toEqual([]);
+    expect((await students[1].get(`/api/highlights?lessonId=${lesson.id}`)).body.data).toEqual([]);
+
+    // A note can be added, changed and cleared; someone else cannot touch the highlight.
+    expect((await students[0].patch(`/api/highlights/${id}`, { note: 'Exam hint' })).body.data.note).toBe('Exam hint');
+    expect((await students[0].patch(`/api/highlights/${id}`, { colour: 'pink' })).body.data.colour).toBe('pink');
+    expect((await students[0].patch(`/api/highlights/${id}`, { colour: 'chartreuse' })).status).toBe(422);
+    expect((await students[0].patch(`/api/highlights/${id}`, { note: null })).body.data.note).toBeNull();
+    expect((await students[1].patch(`/api/highlights/${id}`, { note: 'Mine now' })).status).toBe(404);
+    expect((await students[1].delete(`/api/highlights/${id}`)).status).toBe(204);
+    expect(await prisma.readingHighlight.count({ where: { id } })).toBe(1);
+
+    // The list of everything a reader marked, with where it lives.
+    const all = await students[0].get('/api/highlights');
+    expect(all.body.data).toHaveLength(1);
+    expect(all.body.data[0]).toMatchObject({ id, lessonTitle: lesson.title, moduleId: mod.id });
+
+    expect((await students[0].delete(`/api/highlights/${id}`)).status).toBe(204);
+    expect(await prisma.readingHighlight.count({ where: { userId: students[0].user.id } })).toBe(0);
+  });
+
+  it('refuses highlights that are empty or on a lesson the reader cannot open', async () => {
+    const { teacher, cls, students } = await classroom(1);
+    const mod = await mk(teacher, cls);
+    const first = await mkLesson(teacher, mod.id);
+    const second = await mkLesson(teacher, mod.id, { prerequisiteLessonId: first.id });
+    const outside = await mk(teacher, cls, { title: 'Not for them', status: 'DRAFT' });
+    const hidden = await mkLesson(teacher, outside.id);
+
+    expect((await students[0].post('/api/highlights', { lessonId: first.id, quote: '   ' })).status).toBe(422);
+    expect((await students[0].post('/api/highlights', { lessonId: first.id, quote: 'Words', colour: 'chartreuse' })).status).toBe(422);
+    expect((await students[0].post('/api/highlights', { lessonId: second.id, quote: 'Locked words' })).status).toBe(403);
+    expect((await students[0].post('/api/highlights', { lessonId: hidden.id, quote: 'Draft words' })).status).toBe(404);
+    expect((await (await actor('STUDENT')).post('/api/highlights', { lessonId: first.id, quote: 'Hello' })).status).toBe(404);
+  });
 });
 
 describe('announcements', () => {
