@@ -146,7 +146,7 @@ function setViewportWidth(width) {
   window.dispatchEvent(new Event('resize'));
 }
 
-function mockBookFlowLayout({ chapterStarts, endStart, width = 800, height = 500, layout = 'single' }) {
+function mockBookFlowLayout({ chapterStarts, endStart, chapterTopOffsets = {}, endTopOffset = 0, width = 800, height = 500, layout = 'single' }) {
   const originalWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
   const originalHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
   const originalBounds = Element.prototype.getBoundingClientRect;
@@ -176,7 +176,8 @@ function mockBookFlowLayout({ chapterStarts, endStart, width = 800, height = 500
       const columnWidth = activeLayout === 'two' ? (width - columnGap) / 2 : width;
       const flow = this.closest?.('.book-page-flow');
       const left = column * (columnWidth + columnGap) - (flow?.scrollLeft ?? 0);
-      return [{ left, top: 0, width: columnWidth, height }];
+      const top = chapterId ? chapterTopOffsets[chapterId] ?? 0 : endTopOffset;
+      return [{ left, top, width: columnWidth, height }];
     }
     return originalRects.call(this);
   };
@@ -451,6 +452,29 @@ describe('Module book-like reader & outline CTA', () => {
     expect(bookPageIndexForLocation(pages, { type: 'chapter', chapterId: 'next-chapter', page: 0 })).toBe(4);
   });
 
+  it('avoids adding an extra column break when the next chapter already starts at the top of the facing page', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    const restoreLayout = mockBookFlowLayout({
+      chapterStarts: { 'les-1': 1, 'les-2': 4 },
+      endStart: 5,
+      chapterTopOffsets: { 'les-1': 80, 'les-2': 0 },
+      layout: 'two',
+    });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+
+      expect(view.container.querySelector('#chapter-les-1').style.breakBefore).toBe('column');
+      expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('auto');
+      expect(view.container.querySelector('[data-book-end-start]').style.breakBefore).toBe('auto');
+      expect(view.container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 6');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+    }
+  });
+
   it('resumes within a long chapter and starts the next chapter only after its final page', async () => {
     window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
     window.localStorage.setItem('discenda.bookPosition.v1.stu-1.mod-1', 'les-1');
@@ -460,7 +484,9 @@ describe('Module book-like reader & outline CTA', () => {
     let view;
     try {
       view = renderAt('/classes/cls-1/modules/mod-1?view=book');
-      await flush();
+      await act(async () => {
+        await vi.waitFor(() => expect(view.container.querySelector('[data-testid="book-page-flow"]')).not.toBeNull());
+      });
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnWidth).toBe('392px');
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.columnCount).toBe('auto');
       expect(view.container.querySelector('[data-testid="book-page-flow"]').style.getPropertyValue('--book-page-width')).toBe('392px');
@@ -582,6 +608,24 @@ describe('Module book-like reader & outline CTA', () => {
     await flush();
     expect(pageNavigation.textContent).toContain('Page 2 of 4');
     expect(container.querySelector('[data-current-search]').textContent).toContain('chapter=les-1');
+    unmount();
+  });
+
+  it('keeps two-page book tables readable without advertising a disabled horizontal scroller', async () => {
+    setViewportWidth(1024);
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const tableRegion = container.querySelector('.rich-table-scroll');
+    expect(container.querySelector('[data-book-reader]').dataset.readerLayout).toBe('two');
+    expect(tableRegion).not.toBeNull();
+    expect(tableRegion.hasAttribute('role')).toBe(false);
+    expect(tableRegion.hasAttribute('tabindex')).toBe(false);
+    expect(tableRegion.hasAttribute('aria-label')).toBe(false);
+    expect(tableRegion.querySelector('table')).not.toBeNull();
     unmount();
   });
 
@@ -740,13 +784,13 @@ describe('Module book-like reader & outline CTA', () => {
     unmount();
   });
 
-  it('moves book controls into a floating tools panel when focus mode is enabled on a phone', async () => {
+  it('keeps immersive controls in a non-overlapping toolbar on a phone', async () => {
     setViewportWidth(390);
     const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
     await flush();
 
     expect(container.querySelector('[data-reader-toolbar]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="book-floating-tools"]')).toBeNull();
+    expect(container.querySelector('[data-testid="book-immersive-toolbar"]')).toBeNull();
     const focusButton = [...container.querySelectorAll('button')]
       .find((button) => button.textContent.trim() === 'Focus mode');
     expect(focusButton).toBeTruthy();
@@ -756,10 +800,13 @@ describe('Module book-like reader & outline CTA', () => {
     await flush();
 
     const reader = container.querySelector('[data-module-reader]');
-    const tools = container.querySelector('[data-testid="book-floating-tools"]');
+    const tools = container.querySelector('[data-testid="book-immersive-toolbar"]');
     expect(reader.dataset.readerImmersive).toBe('true');
     expect(container.querySelector('[data-reader-toolbar]')).toBeNull();
-    expect(tools.querySelector('summary[aria-label="Open reader controls"]')).not.toBeNull();
+    expect(tools.tagName).toBe('HEADER');
+    expect(tools.classList.contains('book-immersive-toolbar')).toBe(true);
+    expect(tools.textContent).toContain('Immersive reading');
+    expect(tools.querySelector('details[data-testid="book-reader-settings"] summary').textContent).toContain('Reading settings');
     expect(tools.querySelector('select[aria-label="Jump to chapter"]')).not.toBeNull();
     expect(tools.querySelector('[aria-label="Reading display options"]')).not.toBeNull();
     expect(container.querySelector('[data-book-navigation="top"]')).toBeNull();

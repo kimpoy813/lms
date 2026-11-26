@@ -46,7 +46,7 @@ jobs:
 
       - name: Run critical browser journeys on pull requests
         if: github.event_name == 'pull_request'
-        run: npm run test:e2e -- e2e/tests/auth.spec.js e2e/tests/quiz.spec.js
+        run: npm run test:e2e -- e2e/tests/auth.spec.js e2e/tests/quiz.spec.js e2e/tests/module-reader.spec.js
 
       - name: Run the full browser suite nightly or on demand
         if: github.event_name != 'pull_request'

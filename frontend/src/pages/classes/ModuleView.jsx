@@ -390,60 +390,64 @@ export default function ModuleView() {
           className={cn('min-w-0', isFullscreen && !immersiveBook && 'min-h-dvh overflow-y-auto bg-canvas p-3 sm:p-6')}
         >
           {immersiveBook ? (
-            <details className="no-print book-floating-tools" data-testid="book-floating-tools">
-              <summary className="book-floating-tools-trigger" aria-label="Open reader controls" title="Reader controls">
-                <MoreHorizontal className="size-5" aria-hidden="true" />
-                <span className="sr-only">Reader controls</span>
-              </summary>
-              <div className="book-floating-tools-panel">
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-brand">Immersive reading</p>
-                    <h2 className="mt-1 line-clamp-2 break-words text-sm font-semibold text-ink">{mod.title}</h2>
-                  </div>
-                  {canManage && <StatusBadge status={mod.status} publishAt={mod.publishAt} />}
-                </div>
-                <Link to={`${base}/modules`} className="inline-flex items-center gap-1 text-xs font-medium text-soft hover:text-brand">
-                  <ChevronLeft className="size-3.5" aria-hidden="true" />All lessons
+            <header className="no-print book-immersive-toolbar" data-testid="book-immersive-toolbar">
+              <div className="book-immersive-toolbar-heading">
+                <Link to={`${base}/modules`} aria-label="Back to all lessons" className="book-immersive-back">
+                  <ChevronLeft className="size-4" aria-hidden="true" />
+                  <span>All lessons</span>
                 </Link>
-                {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
-                  <div className="mt-3 space-y-3">
-                    <Segmented
-                      label="Module reading mode"
-                      value={viewMode}
-                      onChange={(next) => switchView(next, mod)}
-                      className="w-full"
-                      options={[
-                        { value: 'chapter', label: 'Chapter view', icon: BookText },
-                        { value: 'book', label: 'Read as book', icon: BookOpen },
-                      ]}
-                    />
-                    {viewMode === 'book' && (
-                      <Select
-                        aria-label="Jump to chapter"
-                        value={params.get('chapter') ?? ''}
-                        onChange={(event) => setParams({ view: 'book', chapter: event.target.value })}
-                      >
-                        <option value="">Jump to chapter…</option>
-                        {mod.lessons.map((chapter) => (
-                          <option key={chapter.id} value={chapter.id}>
-                            Ch. {chapter.chapterNumber}: {chapter.title}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
-                    <ReaderControls
-                      prefs={prefs}
-                      onChange={updatePrefs}
-                      isFullscreen={isFullscreen}
-                      onToggleFullscreen={toggleFullscreen}
-                      showBookLayout={viewMode === 'book'}
-                      showFocusOnSmallScreens={viewMode === 'book'}
-                    />
-                  </div>
-                )}
+                <span className="book-immersive-divider" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand">Immersive reading</p>
+                  <h2 className="line-clamp-1 text-sm font-semibold text-ink sm:text-base">{mod.title}</h2>
+                </div>
+                {canManage && <StatusBadge status={mod.status} publishAt={mod.publishAt} />}
               </div>
-            </details>
+              {!creating && mod.lessons.length > 0 && (canManage || !mod.locked) && (
+                <>
+                  <Segmented
+                    label="Module reading mode"
+                    value={viewMode}
+                    onChange={(next) => switchView(next, mod)}
+                    className="book-immersive-mode"
+                    options={[
+                      { value: 'chapter', label: 'Chapter view', icon: BookText },
+                      { value: 'book', label: 'Read as book', icon: BookOpen },
+                    ]}
+                  />
+                  <details className="book-reader-settings" data-testid="book-reader-settings">
+                    <summary aria-label="Open reading settings" title="Reading settings">
+                      <Type className="size-4" aria-hidden="true" />
+                      <span>Reading settings</span>
+                    </summary>
+                    <div className="book-reader-settings-panel">
+                      {viewMode === 'book' && (
+                        <Select
+                          aria-label="Jump to chapter"
+                          value={params.get('chapter') ?? ''}
+                          onChange={(event) => setParams({ view: 'book', chapter: event.target.value })}
+                        >
+                          <option value="">Jump to chapter…</option>
+                          {mod.lessons.map((chapter) => (
+                            <option key={chapter.id} value={chapter.id}>
+                              Ch. {chapter.chapterNumber}: {chapter.title}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                      <ReaderControls
+                        prefs={prefs}
+                        onChange={updatePrefs}
+                        isFullscreen={isFullscreen}
+                        onToggleFullscreen={toggleFullscreen}
+                        showBookLayout={viewMode === 'book'}
+                        showFocusOnSmallScreens={viewMode === 'book'}
+                      />
+                    </div>
+                  </details>
+                </>
+              )}
+            </header>
           ) : (
             <div className="no-print mb-4 space-y-3" data-reader-toolbar>
               <div className="flex min-w-0 items-center gap-2.5">
@@ -744,12 +748,36 @@ function BookReader({ modSummary, prefs, immersive = false }) {
       flow.style.setProperty('--book-page-width', `${columnWidth}px`);
       const flowRect = flow.getBoundingClientRect();
       const stride = columnWidth + gap;
+      const chapterElements = chapters.map((chapter) => chapterStartRefs.current.get(chapter.id));
+      const breakElements = [...chapterElements, endPageRef.current].filter(Boolean);
+      breakElements.forEach((element) => { element.style.breakBefore = 'auto'; });
+      const firstRectForElement = (element) => {
+        if (!element) return null;
+        const rects = element.getClientRects?.();
+        return (rects?.length ? rects[0] : null) ?? element.getBoundingClientRect?.() ?? null;
+      };
       const pageForElement = (element, fallback) => {
-        if (!element) return fallback;
-        const rect = element.getClientRects?.()[0] ?? element.getBoundingClientRect?.();
+        const rect = firstRectForElement(element);
         if (!rect || !Number.isFinite(rect.left)) return fallback;
         return Math.max(0, Math.round((rect.left - flowRect.left + flow.scrollLeft) / stride));
       };
+
+      // A forced column break is only needed when a chapter would otherwise begin partway down
+      // a page. If the previous chapter already flowed to the next column, forcing another break
+      // here creates exactly the blank right-hand pages readers reported.
+      let previousStart = -1;
+      [...chapterElements, endPageRef.current].forEach((element, index) => {
+        if (!element) return;
+        const fallback = index < chapters.length ? index + 1 : chapters.length + 1;
+        const naturalColumn = pageForElement(element, fallback);
+        const rect = firstRectForElement(element);
+        const topOffset = rect ? rect.top - flowRect.top + flow.scrollTop : 0;
+        const startsMidColumn = topOffset > Math.max(6, rootFontSize * 0.4);
+        const repeatsPreviousColumn = naturalColumn <= previousStart;
+        if (startsMidColumn || repeatsPreviousColumn) element.style.breakBefore = 'column';
+        previousStart = Math.max(previousStart, pageForElement(element, fallback));
+      });
+
       const chapterStarts = chapters.map((chapter, index) => (
         pageForElement(chapterStartRefs.current.get(chapter.id), index + 1)
       ));
@@ -760,7 +788,10 @@ function BookReader({ modSummary, prefs, immersive = false }) {
     const scheduleMeasure = () => {
       if (disposed) return;
       if (frame) cancelFrame(frame);
-      frame = requestFrame(measure);
+      frame = requestFrame(() => {
+        frame = 0;
+        measure();
+      });
     };
 
     measure();
@@ -769,10 +800,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
     const fontSet = document.fonts;
     fontSet?.addEventListener?.('loadingdone', scheduleMeasure);
     const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleMeasure) : null;
-    if (resizeObserver) {
-      resizeObserver.observe(flow);
-      flow.querySelectorAll('[data-book-chapter-start], [data-book-end-start]').forEach((element) => resizeObserver.observe(element));
-    }
+    resizeObserver?.observe(flow);
 
     return () => {
       disposed = true;
@@ -1253,6 +1281,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
                         <RichText
                           html={ch.contentHtml}
                           className={bookTextClasses(prefs)}
+                          scrollableTables={layout !== 'two'}
                           empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
                         />
                         {ch.visual && <LearningVisual visual={ch.visual} />}

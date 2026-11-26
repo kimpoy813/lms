@@ -31,7 +31,7 @@ export const sanitizeHtml = (html) =>
     FORBID_ATTR: ['style', 'id', 'name'],
   });
 
-function makeTablesScrollable(html) {
+function makeTablesScrollable(html, scrollableTables = true) {
   if (!/<table\b/i.test(html ?? '') || typeof document === 'undefined') return html;
   const template = document.createElement('template');
   template.innerHTML = html;
@@ -45,12 +45,18 @@ function makeTablesScrollable(html) {
     } else {
       wrapper.classList.add('rich-table-scroll');
     }
-    wrapper.setAttribute('role', 'region');
-    wrapper.setAttribute('tabindex', '0');
-    const caption = table.querySelector('caption')?.textContent?.trim();
-    wrapper.setAttribute('aria-label', caption
-      ? `Scrollable table: ${caption}`
-      : 'Scrollable table. Scroll horizontally to view all columns.');
+    if (scrollableTables) {
+      wrapper.setAttribute('role', 'region');
+      wrapper.setAttribute('tabindex', '0');
+      const caption = table.querySelector('caption')?.textContent?.trim();
+      wrapper.setAttribute('aria-label', caption
+        ? `Scrollable table: ${caption}`
+        : 'Scrollable table. Scroll horizontally to view all columns.');
+    } else {
+      wrapper.removeAttribute('role');
+      wrapper.removeAttribute('tabindex');
+      wrapper.removeAttribute('aria-label');
+    }
   }
   return template.innerHTML;
 }
@@ -58,8 +64,8 @@ function makeTablesScrollable(html) {
 /** True when the HTML has no visible content ("<p></p>"). */
 export const isEmptyHtml = (html) => !html || html.replace(/<(?!img|iframe)[^>]*>/gi, '').replace(/&nbsp;/g, ' ').trim() === '';
 
-export default function RichText({ html, className, empty = null }) {
-  const clean = useMemo(() => makeTablesScrollable(sanitizeHtml(html)), [html]);
+export default function RichText({ html, className, empty = null, scrollableTables = true }) {
+  const clean = useMemo(() => makeTablesScrollable(sanitizeHtml(html), scrollableTables), [html, scrollableTables]);
   if (isEmptyHtml(clean)) return empty;
   return <div className={cn('rich', className)} dangerouslySetInnerHTML={{ __html: clean }} />;
 }

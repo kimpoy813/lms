@@ -253,9 +253,9 @@
   .quiz-guarded input, .quiz-guarded textarea, .quiz-guarded [contenteditable] { -webkit-user-select: text; user-select: text; }
   .quiz-guarded img { -webkit-user-drag: none; }
 
-  /* Each CSS column is a device-sized book page. The chapter sections share one continuous
-     column-flow stream, but each page block is constrained to one measured column so two-page
-     mode cannot center a single full-spread column between the page edges. */
+  /* Each CSS column is a device-sized book page. Chapter boundaries are measured in the reader
+     and only forced to a new column when they would otherwise begin mid-page; this avoids blank
+     spread pages when a chapter already ended at a natural column break. */
   .book-reader-surface { overscroll-behavior-x: contain; }
   .book-page-spread {
     position: relative;
@@ -284,7 +284,7 @@
     break-inside: auto;
   }
   .book-page-flow > .book-chapter,
-  .book-page-flow > .book-end-page { break-before: column; }
+  .book-page-flow > .book-end-page { break-before: auto; }
   .book-page-card {
     height: auto;
     min-width: 0;
@@ -297,16 +297,22 @@
   .book-page-flow .rich-book h3,
   .book-page-flow .rich-book h4,
   .book-page-flow .rich-book blockquote,
-  .book-page-flow .rich-book table,
   .book-page-flow .rich-book pre,
   .book-page-flow .rich-book img,
   .book-page-flow .rich-book iframe {
     break-inside: avoid-column;
   }
+  .book-page-flow .rich-book table { break-inside: auto; }
+  .book-page-flow .rich-book tr { break-inside: avoid-column; }
   .book-page-flow .rich-book h1,
   .book-page-flow .rich-book h2,
   .book-page-flow .rich-book h3,
   .book-page-flow .rich-book h4 { break-after: avoid-column; }
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .rich-table-scroll,
+  .book-page-spread[data-layout="two"] .book-page-flow .rich-book .tableWrapper {
+    max-width: 100%;
+    overflow: visible;
+  }
   .book-page-spread[data-layout="two"] .book-page-flow .rich-book .rich-table-scroll > table,
   .book-page-spread[data-layout="two"] .book-page-flow .rich-book .tableWrapper > table {
     width: 100%;
@@ -458,7 +464,6 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
   flex: 1 1 auto;
   flex-direction: column;
   gap: 0.75rem;
-  padding-right: 4.25rem;
 }
 [data-module-reader][data-reader-immersive="true"] [data-book-content] > * { margin-block: 0; }
 [data-module-reader][data-reader-immersive="true"] [data-book-navigation="top"] { display: none; }
@@ -473,74 +478,82 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
   max-height: none;
   flex: 1 1 0;
 }
-.book-floating-tools {
-  position: fixed;
-  z-index: 20;
-  top: 50%;
-  right: max(0.75rem, env(safe-area-inset-right));
-  transform: translateY(-50%);
-}
-.book-floating-tools-trigger {
+.book-immersive-toolbar {
   display: grid;
-  width: 2.75rem;
-  height: 2.75rem;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
-  border-radius: 9999px;
-  background: color-mix(in srgb, var(--surface) 95%, transparent);
-  color: var(--soft);
-  box-shadow: var(--shadow-lg);
-  list-style: none;
-  backdrop-filter: blur(14px);
-  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.65rem 0.85rem;
+  flex: 0 0 auto;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+  padding: 0.65rem 0.8rem;
+  box-shadow: var(--shadow);
 }
-.book-floating-tools-trigger::-webkit-details-marker { display: none; }
-.book-floating-tools-trigger:hover,
-.book-floating-tools[open] > .book-floating-tools-trigger {
-  border-color: color-mix(in srgb, var(--brand) 38%, var(--line));
+.book-immersive-toolbar-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+}
+.book-immersive-back {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.15rem;
+  color: var(--soft);
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: color 150ms ease;
+}
+.book-immersive-back:hover { color: var(--brand); }
+.book-immersive-divider { width: 1px; height: 2rem; flex: 0 0 auto; background: var(--line); }
+.book-immersive-mode { max-width: 100%; }
+.book-reader-settings { min-width: 0; }
+.book-reader-settings > summary {
+  display: inline-flex;
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--surface);
+  padding: 0.45rem 0.75rem;
+  color: var(--soft);
+  font-size: 0.75rem;
+  font-weight: 600;
+  list-style: none;
+  white-space: nowrap;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+.book-reader-settings > summary::-webkit-details-marker { display: none; }
+.book-reader-settings > summary:hover,
+.book-reader-settings[open] > summary {
+  border-color: color-mix(in srgb, var(--brand) 36%, var(--line));
   background: var(--brand-soft);
   color: var(--brand);
 }
-.book-floating-tools-trigger:active { transform: scale(0.96); }
-.book-floating-tools-panel {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 0.75rem);
-  width: min(24rem, calc(100vw - 6rem));
-  max-height: min(82vh, 44rem);
-  max-height: min(82dvh, 44rem);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  transform: translateY(-50%);
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: color-mix(in srgb, var(--surface) 97%, transparent);
-  padding: 1rem;
-  color: var(--ink);
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(18px);
+.book-reader-settings[open] { grid-column: 1 / -1; }
+.book-reader-settings-panel {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
 }
 @media (max-width: 767px) {
-  [data-module-reader][data-reader-immersive="true"] [data-book-content] { padding-right: 0; }
-  [data-module-reader][data-reader-immersive="true"] [data-book-navigation="bottom"] {
-    width: calc(100% - 3.5rem);
-    margin-right: 3.5rem;
-  }
-  .book-floating-tools {
-    top: auto;
-    right: max(0.75rem, env(safe-area-inset-right));
-    bottom: max(0.5rem, env(safe-area-inset-bottom));
-    transform: none;
-  }
-  .book-floating-tools-panel {
-    top: auto;
-    right: 0;
-    bottom: calc(100% + 0.65rem);
-    width: min(24rem, calc(100vw - 1.5rem));
-    max-height: calc(100vh - 5rem);
-    max-height: calc(100dvh - 5rem);
-    transform: none;
-  }
+  .book-immersive-toolbar { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .book-immersive-toolbar-heading,
+  .book-immersive-mode,
+  .book-reader-settings { grid-column: 1; }
+  .book-immersive-mode { width: 100%; justify-content: stretch; }
+  .book-immersive-mode > button { flex: 1 1 0; }
+  .book-reader-settings > summary { width: 100%; }
+  .book-reader-settings-panel { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media print {
