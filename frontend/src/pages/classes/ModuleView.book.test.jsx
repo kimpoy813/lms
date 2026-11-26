@@ -728,6 +728,34 @@ describe('Module book-like reader & outline CTA', () => {
     unmount();
   });
 
+  it('moves book controls into a floating tools panel when focus mode is enabled on a phone', async () => {
+    setViewportWidth(390);
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await flush();
+
+    expect(container.querySelector('[data-reader-toolbar]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="book-floating-tools"]')).toBeNull();
+    const focusButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.trim() === 'Focus mode');
+    expect(focusButton).toBeTruthy();
+    expect(focusButton.className).not.toContain('hidden lg:inline-flex');
+
+    act(() => focusButton.click());
+    await flush();
+
+    const reader = container.querySelector('[data-module-reader]');
+    const tools = container.querySelector('[data-testid="book-floating-tools"]');
+    expect(reader.dataset.readerImmersive).toBe('true');
+    expect(container.querySelector('[data-reader-toolbar]')).toBeNull();
+    expect(tools.querySelector('summary[aria-label="Open reader controls"]')).not.toBeNull();
+    expect(tools.querySelector('select[aria-label="Jump to chapter"]')).not.toBeNull();
+    expect(tools.querySelector('[aria-label="Reading display options"]')).not.toBeNull();
+    expect(container.querySelector('[data-book-navigation="top"]')).toBeNull();
+    expect(container.querySelector('[data-book-navigation="bottom"]')).not.toBeNull();
+
+    unmount();
+  });
+
   it('renders a cohesive book view with cover, table of contents, sequential chapters, typography controls, and completion trigger', async () => {
     const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
     await act(async () => {

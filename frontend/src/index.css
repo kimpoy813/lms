@@ -384,7 +384,165 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
   background-attachment: local, local, scroll, scroll;
 }
 
+/* The book's focus mode becomes a true viewport reader: the page flow gets every
+   available pixel, while its controls live in a compact side dock or bottom dock. */
+[data-module-reader][data-reader-immersive="true"] {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: max(0.5rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+  background: var(--canvas);
+  color: var(--ink);
+  isolation: isolate;
+  overscroll-behavior: contain;
+}
+[data-module-reader][data-reader-immersive="true"]::backdrop { background: var(--canvas); }
+[data-module-reader][data-reader-immersive="true"] [data-book-reader] {
+  display: flex;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+[data-module-reader][data-reader-immersive="true"] [data-book-reader] > aside { display: none; }
+[data-module-reader][data-reader-immersive="true"] [data-book-content] {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-right: 4.25rem;
+}
+[data-module-reader][data-reader-immersive="true"] [data-book-content] > * { margin-block: 0; }
+[data-module-reader][data-reader-immersive="true"] [data-book-navigation="top"] { display: none; }
+[data-module-reader][data-reader-immersive="true"] [data-book-navigation="bottom"] {
+  width: 100%;
+  flex: 0 0 auto;
+  margin: 0;
+}
+[data-module-reader][data-reader-immersive="true"] .book-page-spread {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  flex: 1 1 0;
+}
+.book-floating-tools {
+  position: fixed;
+  z-index: 20;
+  top: 50%;
+  right: max(0.75rem, env(safe-area-inset-right));
+  transform: translateY(-50%);
+}
+.book-floating-tools-trigger {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
+  color: var(--soft);
+  box-shadow: var(--shadow-lg);
+  list-style: none;
+  backdrop-filter: blur(14px);
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.book-floating-tools-trigger::-webkit-details-marker { display: none; }
+.book-floating-tools-trigger:hover,
+.book-floating-tools[open] > .book-floating-tools-trigger {
+  border-color: color-mix(in srgb, var(--brand) 38%, var(--line));
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.book-floating-tools-trigger:active { transform: scale(0.96); }
+.book-floating-tools-panel {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 0.75rem);
+  width: min(24rem, calc(100vw - 6rem));
+  max-height: min(82vh, 44rem);
+  max-height: min(82dvh, 44rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  padding: 1rem;
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+}
+@media (max-width: 767px) {
+  [data-module-reader][data-reader-immersive="true"] [data-book-content] { padding-right: 0; }
+  [data-module-reader][data-reader-immersive="true"] [data-book-navigation="bottom"] {
+    width: calc(100% - 3.5rem);
+    margin-right: 3.5rem;
+  }
+  .book-floating-tools {
+    top: auto;
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    transform: none;
+  }
+  .book-floating-tools-panel {
+    top: auto;
+    right: 0;
+    bottom: calc(100% + 0.65rem);
+    width: min(24rem, calc(100vw - 1.5rem));
+    max-height: calc(100vh - 5rem);
+    max-height: calc(100dvh - 5rem);
+    transform: none;
+  }
+}
+
 @media print {
+  html, body { overflow: visible !important; }
+  [data-module-reader][data-reader-immersive="true"] {
+    position: static !important;
+    inset: auto !important;
+    z-index: auto !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: transparent !important;
+    isolation: auto !important;
+  }
+  [data-module-reader][data-reader-immersive="true"] [data-book-reader] {
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
+  [data-module-reader][data-reader-immersive="true"] [data-book-content] {
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
   .no-print { display: none !important; }
   .reader-scaled-content { zoom: 1 !important; }
   body { background: #fff; }
