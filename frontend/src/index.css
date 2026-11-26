@@ -262,13 +262,15 @@
     min-width: 0;
     height: clamp(18rem, calc(100dvh - 18rem), 58rem);
     overflow: hidden;
-    border-radius: 1rem;
     perspective: 1600px;
   }
   .book-page-flow {
+    position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
     overflow: hidden;
+    column-count: auto;
     column-width: var(--book-column-width, 48rem);
     column-gap: var(--book-column-gap, 1.5rem);
     column-fill: auto;
@@ -303,10 +305,21 @@
   .book-page-flow .rich-book h2,
   .book-page-flow .rich-book h3,
   .book-page-flow .rich-book h4 { break-after: avoid-column; }
-  .book-page-spread[data-layout="two"]::before {
+  .book-page-spread[data-layout="two"]::after {
     content: "";
     position: absolute;
     z-index: 2;
+    inset-block: 0.5rem;
+    left: 50%;
+    width: 1rem;
+    transform: translateX(-50%);
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--raised) 75%, var(--surface)) 50%, transparent);
+  }
+  .book-page-spread[data-layout="two"]::before {
+    content: "";
+    position: absolute;
+    z-index: 3;
     inset-block: 0.75rem;
     left: 50%;
     width: 1px;
@@ -315,7 +328,8 @@
     background: linear-gradient(transparent, color-mix(in srgb, var(--line) 85%, transparent) 12%, color-mix(in srgb, var(--line) 85%, transparent) 88%, transparent);
     box-shadow: 0 0 12px color-mix(in srgb, var(--ink) 10%, transparent);
   }
-  .book-page-spread[data-layout="two"][data-page-count="1"]::before { display: none; }
+  .book-page-spread[data-layout="two"][data-page-count="1"]::before,
+  .book-page-spread[data-layout="two"][data-page-count="1"]::after { display: none; }
   .book-turn-sheet {
     position: absolute;
     z-index: 5;

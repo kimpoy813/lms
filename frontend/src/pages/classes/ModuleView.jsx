@@ -734,8 +734,10 @@ function BookReader({ modSummary, prefs, immersive = false }) {
       }
 
       const rootFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
-      const gap = layout === 'two' ? 0 : rootFontSize * 1.5;
+      const columnCount = layout === 'two' ? 2 : 'auto';
+      const gap = layout === 'two' ? rootFontSize : rootFontSize * 1.5;
       const columnWidth = layout === 'two' ? Math.max(1, (width - gap) / 2) : width;
+      flow.style.columnCount = String(columnCount);
       flow.style.columnWidth = `${columnWidth}px`;
       flow.style.columnGap = `${gap}px`;
       const flowRect = flow.getBoundingClientRect();
@@ -1031,7 +1033,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
                 />
               )}
               <div
-                className="book-page-spread"
+                className="book-page-spread rounded-2xl border border-line bg-surface shadow-card"
                 data-layout={layout}
                 data-page-count={visiblePageIndices.length}
                 data-total-pages={pageTotal}
