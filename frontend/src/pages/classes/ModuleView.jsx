@@ -734,10 +734,11 @@ function BookReader({ modSummary, prefs, immersive = false }) {
       }
 
       const rootFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
-      const columnCount = layout === 'two' ? 2 : 'auto';
       const gap = layout === 'two' ? rootFontSize : rootFontSize * 1.5;
       const columnWidth = layout === 'two' ? Math.max(1, (width - gap) / 2) : width;
-      flow.style.columnCount = String(columnCount);
+      // The width and gap define the visible one- or two-page tracks. Keep the count automatic
+      // so the continuous book stream can overflow into later page columns as content requires.
+      flow.style.columnCount = 'auto';
       flow.style.columnWidth = `${columnWidth}px`;
       flow.style.columnGap = `${gap}px`;
       flow.style.setProperty('--book-page-width', `${columnWidth}px`);
