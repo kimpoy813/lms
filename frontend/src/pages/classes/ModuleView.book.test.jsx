@@ -475,6 +475,34 @@ describe('Module book-like reader & outline CTA', () => {
     }
   });
 
+  it('does not force a chapter into a new page when the preceding column contains no reading text', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    const rangePrototype = Object.getPrototypeOf(document.createRange());
+    const originalRangeRects = Object.getOwnPropertyDescriptor(rangePrototype, 'getClientRects');
+    Object.defineProperty(rangePrototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 3 * 408 + 8, top: 80, width: 120, height: 18 }],
+    });
+    const restoreLayout = mockBookFlowLayout({
+      chapterStarts: { 'les-1': 1, 'les-2': 4 },
+      endStart: 5,
+      chapterTopOffsets: { 'les-1': 80, 'les-2': 80 },
+      layout: 'two',
+    });
+    let view;
+    try {
+      view = renderAt('/classes/cls-1/modules/mod-1?view=book');
+      await flush();
+
+      expect(view.container.querySelector('#chapter-les-2').style.breakBefore).toBe('auto');
+    } finally {
+      view?.unmount();
+      restoreLayout();
+      if (originalRangeRects) Object.defineProperty(rangePrototype, 'getClientRects', originalRangeRects);
+      else delete rangePrototype.getClientRects;
+    }
+  });
+
   it('resumes within a long chapter and starts the next chapter only after its final page', async () => {
     window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
     window.localStorage.setItem('discenda.bookPosition.v1.stu-1.mod-1', 'les-1');

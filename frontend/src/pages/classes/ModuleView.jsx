@@ -761,10 +761,31 @@ function BookReader({ modSummary, prefs, immersive = false }) {
         if (!rect || !Number.isFinite(rect.left)) return fallback;
         return Math.max(0, Math.round((rect.left - flowRect.left + flow.scrollLeft) / stride));
       };
+      const hasEarlierTextInColumn = (element, column) => {
+        const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (element.contains(node)) break;
+          if (!node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const rects = range.getClientRects?.();
+          const found = rects
+            ? [...rects].some((rect) => (
+              rect.width > 1
+              && rect.height > 1
+              && Math.floor((rect.left - flowRect.left + flow.scrollLeft) / stride) === column
+            ))
+            : true;
+          range.detach?.();
+          if (found) return true;
+        }
+        return false;
+      };
 
-      // A forced column break is only needed when a chapter would otherwise begin partway down
-      // a page. If the previous chapter already flowed to the next column, forcing another break
-      // here creates exactly the blank right-hand pages readers reported.
+      // Only break before a chapter when real content already occupies that column. A fragmented
+      // card can leave a little trailing padding in an otherwise empty column; treating that as
+      // content pushes the next chapter past it and leaves a blank page in the two-page spread.
       let previousStart = -1;
       [...chapterElements, endPageRef.current].forEach((element, index) => {
         if (!element) return;
@@ -774,7 +795,9 @@ function BookReader({ modSummary, prefs, immersive = false }) {
         const topOffset = rect ? rect.top - flowRect.top + flow.scrollTop : 0;
         const startsMidColumn = topOffset > Math.max(6, rootFontSize * 0.4);
         const repeatsPreviousColumn = naturalColumn <= previousStart;
-        if (startsMidColumn || repeatsPreviousColumn) element.style.breakBefore = 'column';
+        const shouldStartNewColumn = (startsMidColumn || repeatsPreviousColumn)
+          && hasEarlierTextInColumn(element, naturalColumn);
+        if (shouldStartNewColumn) element.style.breakBefore = 'column';
         previousStart = Math.max(previousStart, pageForElement(element, fallback));
       });
 
