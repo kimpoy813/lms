@@ -1,10 +1,10 @@
 // Class analytics for the teacher: how the class is doing and who may need help.
 // "At risk" is a transparent rule (thresholds set by the administrator), never a hidden score.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, BarChart3, BookOpen, CheckCircle2, GraduationCap, Mail, TrendingDown, UserCheck } from 'lucide-react';
+import { AlertTriangle, BarChart3, BookOpen, CheckCircle2, GraduationCap, Mail, Search, TrendingDown, UserCheck } from 'lucide-react';
 import { lazy, Suspense, useState } from 'react';
 import { Link } from 'react-router';
-import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, QueryState, Segmented, Skeleton, StatCard } from '../../components/ui.jsx';
+import { Avatar, Badge, Button, Card, CardHeader, cn, EmptyState, ProgressiveList, QueryState, SearchInput, Segmented, Skeleton, StatCard } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { formatDay, formatPercent, plural } from '../../lib/format.js';
 import { useClass } from './useClass.js';
@@ -14,6 +14,7 @@ const Charts = lazy(() => import('./AnalyticsCharts.jsx'));
 export default function Analytics() {
   const { cls, canManage, base } = useClass();
   const [filter, setFilter] = useState('ALL');
+  const [search, setSearch] = useState('');
   const query = useQuery({ queryKey: ['class', cls.id, 'analytics'], queryFn: () => api.get(`${base}/analytics`), enabled: canManage });
   if (!canManage) return <EmptyState title="Analytics are for the teacher" />;
   return (
@@ -21,7 +22,11 @@ export default function Analytics() {
       {(a) => {
         const { summary: s, thresholds: t } = a;
         if (s.students === 0) return <Card><EmptyState icon={BarChart3} title="No students yet" description="Analytics appear once students join and work is graded." /></Card>;
-        const shown = a.students.filter((x) => filter === 'ALL' || (filter === 'RISK' ? x.risk.level !== 'NONE' : x.risk.level === 'NONE'));
+        const term = search.trim().toLowerCase();
+        const shown = a.students.filter((x) => (
+          (filter === 'ALL' || (filter === 'RISK' ? x.risk.level !== 'NONE' : x.risk.level === 'NONE'))
+          && (!term || `${x.name} ${x.studentNumber ?? ''}`.toLowerCase().includes(term))
+        ));
         return (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -53,30 +58,34 @@ export default function Analytics() {
               <Card className="lg:col-span-2">
                 <CardHeader title="Average score by assessment" description="Lower averages may point to a topic worth reviewing" />
                 {a.assessments.length === 0 ? <p className="text-sm text-faint">Nothing has been graded yet.</p> : (
-                  <ul className="space-y-2.5">
-                    {a.assessments.map((x) => (
+                  <ProgressiveList items={a.assessments} initialCount={5} moreLabel="assessment" className="space-y-2.5">
+                    {(x) => (
                       <li key={x.id} className="grid grid-cols-[minmax(0,1fr)_5rem_3rem] items-center gap-2.5 text-sm sm:grid-cols-[minmax(0,1fr)_7rem_3.5rem] sm:gap-3">
                         <span className="min-w-0"><span className="block truncate text-ink">{x.title}</span><span className="text-xs text-faint">{plural(x.graded, 'score')}</span></span>
                         <span className="h-2 overflow-hidden rounded-full bg-raised"><span className={cn('block h-full rounded-full', x.average < 60 ? 'bg-bad' : x.average < t.gradeBelow ? 'bg-warn' : 'bg-ok')} style={{ width: `${x.average ?? 0}%` }} /></span>
                         <span className="text-right font-semibold tabular-nums text-ink">{x.average === null ? '—' : formatPercent(x.average, 0)}</span>
                       </li>
-                    ))}
-                  </ul>
+                    )}
+                  </ProgressiveList>
                 )}
               </Card>
             </div>
 
             <Card padded={false}>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-                <div>
+              <div className="flex flex-col gap-3 border-b border-line px-5 py-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="min-w-0">
                   <h2 className="text-[15px] font-semibold text-ink">Students</h2>
                   <p className="text-[13px] text-faint">Flagged when the running grade is below {t.gradeBelow}%, attendance is below {t.attendanceBelow}%, or {t.missingAtLeast}+ submissions are missing.</p>
+                  <p className="mt-1 text-xs text-faint" aria-live="polite">{shown.length === 1 ? '1 student matches the current filters' : `${shown.length} students match the current filters`}</p>
                 </div>
-                <Segmented size="sm" label="Show" value={filter} onChange={setFilter} options={[{ value: 'ALL', label: 'Everyone' }, { value: 'RISK', label: 'May need help' }, { value: 'OK', label: 'On track' }]} />
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                  <SearchInput value={search} onChange={setSearch} placeholder="Search students by name or ID…" className="w-full sm:w-64" />
+                  <Segmented size="sm" label="Show" value={filter} onChange={setFilter} options={[{ value: 'ALL', label: 'Everyone' }, { value: 'RISK', label: 'May need help' }, { value: 'OK', label: 'On track' }]} />
+                </div>
               </div>
-              {shown.length === 0 ? <EmptyState compact icon={CheckCircle2} title={filter === 'RISK' ? 'No one is flagged' : 'No students in this group'} /> : (
-                <ul className="divide-y divide-line">
-                  {shown.map((x) => (
+              {shown.length === 0 ? <EmptyState compact icon={search.trim() ? Search : CheckCircle2} title={search.trim() ? 'No students match your search' : filter === 'RISK' ? 'No one is flagged' : 'No students in this group'} description={search.trim() ? 'Try a different name or student number.' : null} /> : (
+                <ProgressiveList items={shown} initialCount={6} moreLabel="student" className="divide-y divide-line">
+                  {(x) => (
                     <li key={x.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3">
                       <Avatar name={x.name} size={36} />
                       <div className="min-w-0 flex-1 basis-52">
@@ -93,8 +102,8 @@ export default function Analytics() {
                       </dl>
                       <Button to={`/messages?to=${x.id}`} variant="secondary" size="sm" icon={Mail}>Message</Button>
                     </li>
-                  ))}
-                </ul>
+                  )}
+                </ProgressiveList>
               )}
               <p className="border-t border-line px-5 py-3 text-xs text-faint">These flags are a prompt to check in with a student, not a judgement. They are visible only to you and the administrator. <Link to={`${base}/gradebook`} className="text-brand hover:underline">Open the gradebook</Link></p>
             </Card>
