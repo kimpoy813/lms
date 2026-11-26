@@ -2,7 +2,7 @@
 // Teachers write and edit chapters here; students read them like a textbook and mark chapters as completed.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BookOpen, BookText, Check, CheckCircle2, ChevronLeft, Circle, ClipboardList, Clock, Download, FilePlus2, FileQuestion, Fullscreen, HelpCircle, Layers, Lock, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Printer, RotateCcw, Save, Share2, Shrink, Sparkles, Target, Trash2, Type, Undo2, WifiOff } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { AlsoPostToClasses, PostToClassesModal } from '../../components/ClassTargets.jsx';
@@ -52,6 +52,100 @@ function writeBookPosition(userId, moduleId, position) {
   } catch {
     // Reading still works if storage is unavailable or full.
   }
+}
+
+function bookPositionPageKey(userId, moduleId) {
+  const key = bookPositionKey(userId, moduleId);
+  return key ? `${key}.page` : null;
+}
+
+function readBookPositionPage(userId, moduleId) {
+  const key = bookPositionPageKey(userId, moduleId);
+  if (!key || typeof window === 'undefined') return 0;
+  try {
+    const page = Number.parseInt(window.localStorage?.getItem(key) ?? '0', 10);
+    return Number.isFinite(page) && page > 0 ? page : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeBookPositionPage(userId, moduleId, page) {
+  const key = bookPositionPageKey(userId, moduleId);
+  if (!key || typeof window === 'undefined') return;
+  try {
+    if (page > 0) window.localStorage?.setItem(key, String(page));
+    else window.localStorage?.removeItem(key);
+  } catch {
+    // Reading still works if storage is unavailable or full.
+  }
+}
+
+export function makeBookPageMap(chapters, chapterStarts = [], endStart = null) {
+  const sourceChapters = chapters ?? [];
+  let previousStart = 0;
+  const normalizedStarts = sourceChapters.map((chapter, index) => {
+    const fallbackStart = index + 1;
+    const measuredStart = Number.isFinite(Number(chapterStarts[index]))
+      ? Math.floor(Number(chapterStarts[index]))
+      : fallbackStart;
+    const start = Math.max(previousStart + 1, measuredStart);
+    previousStart = start;
+    return start;
+  });
+  const measuredEnd = Number.isFinite(Number(endStart)) ? Math.floor(Number(endStart)) : 0;
+  const endPage = Math.max(previousStart + 1, measuredEnd, sourceChapters.length + 1);
+  const firstChapterPage = normalizedStarts[0] ?? endPage;
+  const pages = Array.from(
+    { length: Math.max(1, firstChapterPage) },
+    (_, page) => ({ type: 'cover', page }),
+  );
+
+  sourceChapters.forEach((chapter, chapterIndex) => {
+    const start = normalizedStarts[chapterIndex];
+    const nextStart = normalizedStarts[chapterIndex + 1] ?? endPage;
+    for (let page = start; page < nextStart; page += 1) {
+      pages.push({ type: 'chapter', chapterId: chapter.id, page: page - start });
+    }
+  });
+  pages.push({ type: 'end' });
+  return pages;
+}
+
+export function bookPageIndexForLocation(pageMap, location) {
+  if (location?.type === 'end') return pageMap.length - 1;
+  if (location?.type !== 'chapter' && location?.type !== 'cover') return 0;
+  let lastMatchingPage = -1;
+  for (let index = 0; index < pageMap.length; index += 1) {
+    const page = pageMap[index];
+    if (page.type !== location.type) continue;
+    if (location.type === 'chapter' && page.chapterId !== location.chapterId) continue;
+    if ((page.page ?? 0) === (location.page ?? 0)) return index;
+    lastMatchingPage = index;
+  }
+  return lastMatchingPage >= 0 ? lastMatchingPage : 0;
+}
+
+function bookLocationForPage(page) {
+  if (page?.type === 'chapter') return { type: 'chapter', chapterId: page.chapterId, page: page.page };
+  if (page?.type === 'cover') return { type: 'cover', page: page.page ?? 0 };
+  return { type: page?.type === 'end' ? 'end' : 'cover', page: 0 };
+}
+
+function sameBookLocation(a, b) {
+  if (a?.type !== b?.type) return false;
+  if (a?.type === 'chapter') return a.chapterId === b.chapterId && a.page === b.page;
+  return a?.type !== 'cover' || a.page === b.page;
+}
+
+export function initialBookLocation(params, lessons) {
+  if (params.get('end') === '1') return { type: 'end' };
+  const requestedPage = Number.parseInt(params.get('page') || '1', 10);
+  const page = Number.isFinite(requestedPage) && requestedPage > 1 ? requestedPage - 1 : 0;
+  const chapterId = params.get('chapter');
+  const chapterExists = (lessons ?? []).some((chapter) => chapter.id === chapterId);
+  if (!chapterExists) return { type: 'cover', page };
+  return { type: 'chapter', chapterId, page };
 }
 
 function useReaderPrefs() {
@@ -430,37 +524,92 @@ function BookReader({ modSummary, prefs }) {
   const { cls, canManage, base } = useClass();
   const [params, setParams] = useSearchParams();
   const [savingId, setSavingId] = useState(null);
-  const lastPage = (modSummary.lessons?.length ?? 0) + 1;
-  const initialChapterIndex = (modSummary.lessons ?? []).findIndex((chapter) => chapter.id === params.get('chapter'));
-  const [pageIndex, setPageIndex] = useState(() => (
-    params.get('end') === '1' ? lastPage : initialChapterIndex >= 0 ? initialChapterIndex + 1 : 0
-  ));
+  const [location, setLocation] = useState(() => initialBookLocation(params, modSummary.lessons));
   const [resumePosition, setResumePosition] = useState(() => readBookPosition(user?.id, modSummary.id));
+  const [resumePage, setResumePage] = useState(() => readBookPositionPage(user?.id, modSummary.id));
   const [turnDirection, setTurnDirection] = useState(null);
   const [turnId, setTurnId] = useState(0);
+  const [measuredPagination, setMeasuredPagination] = useState(null);
   const canShowSpread = useBookSpreadViewport();
   const layout = prefs.layout === 'two' && canShowSpread ? 'two' : 'single';
   const pageStep = layout === 'two' ? 2 : 1;
+  const pageStartRef = useRef(null);
+  const flowRef = useRef(null);
+  const chapterStartRefs = useRef(new Map());
+  const endPageRef = useRef(null);
+
+  const [offlineMap, setOfflineMap] = useState(() => {
+    const map = {};
+    for (const l of modSummary.lessons ?? []) map[l.id] = isLessonSavedOffline(user?.id, l.id);
+    return map;
+  });
+  const [offlineBook, setOfflineBook] = useState(() => getOfflineModuleBook(user?.id, modSummary.id));
+
+  useEffect(() => {
+    setOfflineBook(getOfflineModuleBook(user?.id, modSummary.id));
+  }, [modSummary.id, user?.id]);
+
+  const bookQuery = useQuery({
+    queryKey: ['class', cls.id, 'modules', modSummary.id, 'book'],
+    queryFn: () => api.get(`/modules/${modSummary.id}/book`),
+  });
+  const readingOffline = Boolean(bookQuery.isError && bookQuery.error?.code === 'NETWORK' && offlineBook);
+  const effectiveQuery = readingOffline
+    ? { ...bookQuery, isError: false, isSuccess: true, data: offlineBook.book }
+    : bookQuery;
+  const readerReady = Boolean(effectiveQuery.data);
+  const chapters = useMemo(
+    () => effectiveQuery.data?.chapters ?? modSummary.lessons ?? [],
+    [effectiveQuery.data?.chapters, modSummary.lessons],
+  );
+  const fallbackPageMap = useMemo(() => makeBookPageMap(chapters), [chapters]);
+  const pageMapReady = measuredPagination?.chapters === chapters;
+  const measuredColumnWidth = measuredPagination?.columnWidth ?? 0;
+  const pageMap = pageMapReady ? measuredPagination.pageMap : fallbackPageMap;
+  const pageIndex = bookPageIndexForLocation(pageMap, location);
+  const lastPage = pageMap.length - 1;
   const navigationPageIndex = layout === 'two' ? Math.floor(pageIndex / pageStep) * pageStep : pageIndex;
   const canPreviousPage = navigationPageIndex > 0;
   const canNextPage = navigationPageIndex + pageStep <= lastPage;
-  const pageStartRef = useRef(null);
+
+  const updateUrlForLocation = useCallback((nextLocation) => {
+    const nextParams = { view: 'book' };
+    if (nextLocation.type === 'end') nextParams.end = '1';
+    else if (nextLocation.type === 'chapter') {
+      nextParams.chapter = nextLocation.chapterId;
+      if (nextLocation.page > 0) nextParams.page = String(nextLocation.page + 1);
+    } else if (nextLocation.page > 0) {
+      nextParams.page = String(nextLocation.page + 1);
+    }
+    setParams(nextParams, { replace: true });
+  }, [setParams]);
+
+  const persistLocation = (nextLocation) => {
+    const nextPosition = nextLocation.type === 'end'
+      ? BOOK_POSITION_END
+      : nextLocation.type === 'chapter'
+        ? nextLocation.chapterId
+        : null;
+    const nextResumePage = nextLocation.type === 'chapter' ? nextLocation.page + 1 : 0;
+    writeBookPosition(user?.id, modSummary.id, nextPosition);
+    writeBookPositionPage(user?.id, modSummary.id, nextResumePage);
+    setResumePosition(nextPosition);
+    setResumePage(nextResumePage);
+    updateUrlForLocation(nextLocation);
+  };
+
   const goToPage = (nextPage) => {
     if (nextPage < 0 || nextPage > lastPage || nextPage === pageIndex) return;
+    const nextLocation = bookLocationForPage(pageMap[nextPage]);
     const nextNavigationPageIndex = layout === 'two' ? Math.floor(nextPage / pageStep) * pageStep : nextPage;
     if (nextNavigationPageIndex !== navigationPageIndex) {
       setTurnDirection(nextNavigationPageIndex > navigationPageIndex ? 'next' : 'previous');
       setTurnId((current) => current + 1);
     }
-    setPageIndex(nextPage);
-    const nextPosition = nextPage === lastPage ? BOOK_POSITION_END : nextPage === 0 ? null : modSummary.lessons?.[nextPage - 1]?.id ?? null;
-    writeBookPosition(user?.id, modSummary.id, nextPosition);
-    setResumePosition(nextPosition);
-    const nextParams = { view: 'book' };
-    if (nextPosition === BOOK_POSITION_END) nextParams.end = '1';
-    else if (nextPosition) nextParams.chapter = nextPosition;
-    setParams(nextParams, { replace: true });
+    setLocation(nextLocation);
+    persistLocation(nextLocation);
   };
+
   const pageNavigation = useBookNavigation({
     canPrevious: canPreviousPage,
     canNext: canNextPage,
@@ -469,30 +618,99 @@ function BookReader({ modSummary, prefs }) {
   });
 
   useEffect(() => {
-    if (pageIndex === 0) return;
-    const position = pageIndex === lastPage ? BOOK_POSITION_END : modSummary.lessons?.[pageIndex - 1]?.id;
-    if (!position) return;
-    writeBookPosition(user?.id, modSummary.id, position);
-    setResumePosition((current) => (current === position ? current : position));
-  }, [lastPage, modSummary.id, modSummary.lessons, pageIndex, user?.id]);
+    const urlLocation = initialBookLocation(params, modSummary.lessons);
+    if (!sameBookLocation(location, urlLocation)) setLocation(urlLocation);
+  }, [location, modSummary.lessons, params]);
 
-  const [offlineMap, setOfflineMap] = useState(() => {
-    const map = {};
-    for (const l of modSummary.lessons ?? []) map[l.id] = isLessonSavedOffline(user?.id, l.id);
-    return map;
-  });
+  useEffect(() => {
+    if (!pageMapReady || measuredColumnWidth <= 0) return;
+    const normalizedLocation = bookLocationForPage(pageMap[pageIndex]);
+    if (!sameBookLocation(location, normalizedLocation)) {
+      setLocation(normalizedLocation);
+      updateUrlForLocation(normalizedLocation);
+    }
+  }, [location, measuredColumnWidth, pageIndex, pageMap, pageMapReady, updateUrlForLocation]);
 
-  const bookQuery = useQuery({
-    queryKey: ['class', cls.id, 'modules', modSummary.id, 'book'],
-    queryFn: () => api.get(`/modules/${modSummary.id}/book`),
-  });
-  const offlineBook = getOfflineModuleBook(user?.id, modSummary.id);
-  const readingOffline = Boolean(bookQuery.isError && bookQuery.error?.code === 'NETWORK' && offlineBook);
-  const effectiveQuery = readingOffline
-    ? { ...bookQuery, isError: false, isSuccess: true, data: offlineBook.book }
-    : bookQuery;
+  useEffect(() => {
+    if (!readerReady || !pageMapReady || location.type === 'cover') return;
+    const nextPosition = location.type === 'end' ? BOOK_POSITION_END : location.chapterId;
+    const nextResumePage = location.type === 'chapter' ? location.page + 1 : 0;
+    writeBookPosition(user?.id, modSummary.id, nextPosition);
+    writeBookPositionPage(user?.id, modSummary.id, nextResumePage);
+    setResumePosition((current) => (current === nextPosition ? current : nextPosition));
+    setResumePage((current) => (current === nextResumePage ? current : nextResumePage));
+  }, [location, modSummary.id, pageMapReady, readerReady, user?.id]);
 
-  const readerReady = Boolean(effectiveQuery.data);
+  useLayoutEffect(() => {
+    if (!readerReady) return undefined;
+    const flow = flowRef.current;
+    if (!flow) return undefined;
+
+    let disposed = false;
+    let frame = 0;
+    const requestFrame = window.requestAnimationFrame?.bind(window) ?? ((callback) => window.setTimeout(callback, 0));
+    const cancelFrame = window.cancelAnimationFrame?.bind(window) ?? window.clearTimeout.bind(window);
+    const measure = () => {
+      if (disposed) return;
+      const width = flow.clientWidth;
+      const height = flow.clientHeight;
+      if (width <= 0 || height <= 0) {
+        setMeasuredPagination({ chapters, pageMap: fallbackPageMap, columnWidth: 0, gap: 0, stride: 0 });
+        return;
+      }
+
+      const rootFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+      const gap = layout === 'two' ? 0 : rootFontSize * 1.5;
+      const columnWidth = layout === 'two' ? Math.max(1, (width - gap) / 2) : width;
+      flow.style.columnWidth = `${columnWidth}px`;
+      flow.style.columnGap = `${gap}px`;
+      const flowRect = flow.getBoundingClientRect();
+      const stride = columnWidth + gap;
+      const pageForElement = (element, fallback) => {
+        if (!element) return fallback;
+        const rect = element.getClientRects?.()[0] ?? element.getBoundingClientRect?.();
+        if (!rect || !Number.isFinite(rect.left)) return fallback;
+        return Math.max(0, Math.round((rect.left - flowRect.left + flow.scrollLeft) / stride));
+      };
+      const chapterStarts = chapters.map((chapter, index) => (
+        pageForElement(chapterStartRefs.current.get(chapter.id), index + 1)
+      ));
+      const endStart = pageForElement(endPageRef.current, chapters.length + 1);
+      const pageMap = makeBookPageMap(chapters, chapterStarts, endStart);
+      setMeasuredPagination({ chapters, pageMap, columnWidth, gap, stride });
+    };
+    const scheduleMeasure = () => {
+      if (disposed) return;
+      if (frame) cancelFrame(frame);
+      frame = requestFrame(measure);
+    };
+
+    measure();
+    window.addEventListener('resize', scheduleMeasure);
+    flow.addEventListener('load', scheduleMeasure, true);
+    const fontSet = document.fonts;
+    fontSet?.addEventListener?.('loadingdone', scheduleMeasure);
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleMeasure) : null;
+    if (resizeObserver) {
+      resizeObserver.observe(flow);
+      flow.querySelectorAll('[data-book-chapter-start], [data-book-end-start]').forEach((element) => resizeObserver.observe(element));
+    }
+
+    return () => {
+      disposed = true;
+      if (frame) cancelFrame(frame);
+      window.removeEventListener('resize', scheduleMeasure);
+      flow.removeEventListener('load', scheduleMeasure, true);
+      fontSet?.removeEventListener?.('loadingdone', scheduleMeasure);
+      resizeObserver?.disconnect();
+    };
+  }, [chapters, fallbackPageMap, layout, prefs.font, prefs.size, readerReady]);
+
+  useLayoutEffect(() => {
+    const flow = flowRef.current;
+    if (!flow || !pageMapReady || !measuredPagination?.stride) return;
+    flow.scrollLeft = navigationPageIndex * measuredPagination.stride;
+  }, [layout, measuredPagination, navigationPageIndex, pageMapReady]);
 
   useEffect(() => {
     if (!readerReady) return;
@@ -500,8 +718,23 @@ function BookReader({ modSummary, prefs }) {
   }, [pageIndex, readerReady]);
 
   useEffect(() => {
-    setPageIndex((current) => Math.min(current, lastPage));
-  }, [lastPage]);
+    const flow = flowRef.current;
+    if (!flow) return undefined;
+    let restoreScrollLeft = 0;
+    const beforePrint = () => {
+      restoreScrollLeft = flow.scrollLeft;
+      flow.scrollLeft = 0;
+    };
+    const afterPrint = () => {
+      flow.scrollLeft = restoreScrollLeft;
+    };
+    window.addEventListener('beforeprint', beforePrint);
+    window.addEventListener('afterprint', afterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', beforePrint);
+      window.removeEventListener('afterprint', afterPrint);
+    };
+  }, [readerReady]);
 
   const invalidate = [['class', cls.id], ['dashboard']];
   const toggleComplete = useAction(({ lessonId, done }) => (
@@ -517,10 +750,12 @@ function BookReader({ modSummary, prefs }) {
       if (offlineMap[ch.id]) {
         await removeOfflineLesson(user?.id, ch.id);
         setOfflineMap((m) => ({ ...m, [ch.id]: false }));
+        setOfflineBook(getOfflineModuleBook(user?.id, modSummary.id));
         toast.info('Removed offline copy from this device.');
       } else {
         const entry = await saveLessonOffline(user?.id, { mod, lesson: ch });
         setOfflineMap((m) => ({ ...m, [ch.id]: true }));
+        setOfflineBook(getOfflineModuleBook(user?.id, modSummary.id));
         toast.success(`Saved Chapter ${ch.chapterNumber} offline${entry.cachedFiles > 0 ? ` (${entry.cachedFiles} file${entry.cachedFiles === 1 ? '' : 's'} cached)` : ''}.`);
       }
     } catch (err) {
@@ -541,41 +776,63 @@ function BookReader({ modSummary, prefs }) {
         const totalReadTime = formatDuration(book.totalEstimatedMinutes || chapters.reduce((s, c) => s + (Number(c.estimatedMinutes) || 0), 0));
         const completedCount = chapters.filter((c) => c.completed).length;
         const progressPercent = chapters.length ? Math.round((completedCount / chapters.length) * 100) : 0;
-        const resumeChapterIndex = chapters.findIndex((chapter) => chapter.id === resumePosition);
-        const resumePageIndex = resumePosition === BOOK_POSITION_END ? chapters.length + 1 : resumeChapterIndex >= 0 ? resumeChapterIndex + 1 : 0;
-        const resumeChapter = resumeChapterIndex >= 0 ? chapters[resumeChapterIndex] : null;
-        const activeChapter = pageIndex > 0 && pageIndex <= chapters.length ? chapters[pageIndex - 1] : null;
-        const pageTotal = chapters.length + 2;
-        const visiblePageCount = Math.min(pageStep, Math.max(1, lastPage - navigationPageIndex + 1));
+        const resumeChapter = chapters.find((chapter) => chapter.id === resumePosition) ?? null;
+        const resumeLocation = resumePosition === BOOK_POSITION_END
+          ? { type: 'end' }
+          : resumeChapter
+            ? { type: 'chapter', chapterId: resumeChapter.id, page: Math.max(0, resumePage - 1) }
+            : null;
+        const resumePageIndex = resumeLocation ? bookPageIndexForLocation(pageMap, resumeLocation) : 0;
+        const activePage = pageMap[pageIndex];
+        const activeChapter = activePage?.type === 'chapter'
+          ? chapters.find((chapter) => chapter.id === activePage.chapterId) ?? null
+          : null;
+        const pageTotal = pageMap.length;
+        const visiblePageCount = Math.min(pageStep, Math.max(1, pageTotal - navigationPageIndex));
         const visiblePageIndices = Array.from({ length: visiblePageCount }, (_, offset) => navigationPageIndex + offset);
         const pageEndIndex = visiblePageIndices[visiblePageIndices.length - 1] ?? navigationPageIndex;
-        const labelForPage = (index) => index === 0
-          ? 'Module cover'
-          : index <= chapters.length
-            ? `Chapter ${chapters[index - 1].chapterNumber} of ${chapters.length}: ${chapters[index - 1].title}`
-            : `End of ${book.title}`;
-        const announcementForPage = (index) => index === 0
-          ? `Module cover: ${book.title}`
-          : index <= chapters.length
-            ? `Chapter ${chapters[index - 1].chapterNumber} of ${chapters.length}: ${chapters[index - 1].title}`
-            : `End of ${book.title}`;
+        const pageAt = (index) => pageMap[index] ?? pageMap[0];
+        const labelForPage = (index) => {
+          const page = pageAt(index);
+          if (page?.type === 'end') return `End of ${book.title}`;
+          if (page?.type === 'chapter') {
+            const chapter = chapters.find((item) => item.id === page.chapterId);
+            return chapter
+              ? `Chapter ${chapter.chapterNumber} of ${chapters.length}: ${chapter.title}${page.page > 0 ? ' (continued)' : ''}`
+              : 'Chapter';
+          }
+          return page?.page > 0 ? 'Module cover (continued)' : 'Module cover';
+        };
+        const announcementForPage = (index) => {
+          const page = pageAt(index);
+          if (page?.type === 'end') return `End of ${book.title}`;
+          if (page?.type === 'chapter') {
+            const chapter = chapters.find((item) => item.id === page.chapterId);
+            return chapter
+              ? `Chapter ${chapter.chapterNumber} of ${chapters.length}: ${chapter.title}${page.page > 0 ? `, page ${page.page + 1}` : ''}`
+              : 'Chapter';
+          }
+          return page?.page > 0 ? `Module cover, page ${page.page + 1}` : `Module cover: ${book.title}`;
+        };
         const pageLabel = labelForPage(navigationPageIndex);
         const pageRangeLabel = pageEndIndex > navigationPageIndex
           ? `Pages ${navigationPageIndex + 1}–${pageEndIndex + 1} of ${pageTotal}`
           : `Page ${navigationPageIndex + 1} of ${pageTotal}`;
         const pageAnnouncement = `${pageRangeLabel}: ${visiblePageIndices.map(announcementForPage).join('; ')}`;
         const isPageVisible = (index) => visiblePageIndices.includes(index);
+        const isCoverVisible = visiblePageIndices.some((index) => pageAt(index)?.type === 'cover');
+        const isChapterVisible = (chapterId) => visiblePageIndices.some((index) => {
+          const page = pageAt(index);
+          return page?.type === 'chapter' && page.chapterId === chapterId;
+        });
+        const firstPageForChapter = (chapterId) => pageMap.findIndex((page) => page.type === 'chapter' && page.chapterId === chapterId);
+        const endPageIndex = pageMap.findIndex((page) => page.type === 'end');
         const spreadSideForPage = (index) => layout === 'two' && isPageVisible(index)
           ? (index === navigationPageIndex ? 'left' : 'right')
           : undefined;
-        const spreadCardClasses = (side) => side === 'left'
-          ? '!rounded-r-none !border-r-0'
-          : side === 'right'
-            ? '!rounded-l-none !border-l-0'
-            : '';
         const scrollToChapter = (id) => {
-          const index = chapters.findIndex((chapter) => chapter.id === id);
-          if (index >= 0) goToPage(index + 1);
+          const index = bookPageIndexForLocation(pageMap, { type: 'chapter', chapterId: id, page: 0 });
+          goToPage(index);
         };
 
         return (
@@ -700,16 +957,21 @@ function BookReader({ modSummary, prefs }) {
                 className="book-page-spread"
                 data-layout={layout}
                 data-page-count={visiblePageIndices.length}
+                data-total-pages={pageTotal}
                 data-testid="book-page-spread"
               >
-              {/* Module Title / Front-Matter Page */}
-              <article
-                className={cn('book-page', !isPageVisible(0) && 'hidden print:block')}
-                data-book-page="0"
-                data-spread-side={spreadSideForPage(0)}
-                aria-hidden={!isPageVisible(0)}
-              >
-              <Card className={cn('book-page-card overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none', spreadCardClasses(spreadSideForPage(0)))}>
+                <div className="book-page-flow" ref={flowRef} data-testid="book-page-flow">
+                  {/* The cover and every chapter stay in one flowing book stream so columns never
+                      advance into the next chapter until the current chapter has fully ended. */}
+                  <article
+                    className="book-page book-cover"
+                    data-book-page="0"
+                    data-book-cover-start
+                    data-spread-side={spreadSideForPage(0)}
+                    aria-hidden={!isCoverVisible}
+                    inert={!isCoverVisible}
+                  >
+              <Card className="book-page-card border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none">
                 <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
@@ -736,7 +998,7 @@ function BookReader({ modSummary, prefs }) {
                         <p className="mt-0.5 truncate text-xs text-soft">{resumeChapter ? `Chapter ${resumeChapter.chapterNumber}: ${resumeChapter.title}` : `End of ${book.title}`}</p>
                       </div>
                       <Button variant="secondary" size="sm" icon={ArrowRight} onClick={() => goToPage(resumePageIndex)}>
-                        {resumePageIndex === chapters.length + 1 ? 'Return to end' : 'Continue reading'}
+                        {pageMap[resumePageIndex]?.type === 'end' ? 'Return to end' : 'Continue reading'}
                       </Button>
                     </div>
                   )}
@@ -799,27 +1061,32 @@ function BookReader({ modSummary, prefs }) {
               </Card>
               </article>
 
-              {/* Inactive chapter pages stay mounted for printing, but only the selected page is visible while reading. */}
               {chapters.map((ch, idx) => {
                 const nextChapter = chapters[idx + 1];
                 const locked = !canManage && ch.locked;
-                const chapterPageIndex = idx + 1;
-                const visiblePage = isPageVisible(chapterPageIndex);
+                const chapterPageIndex = firstPageForChapter(ch.id);
+                const visiblePage = isChapterVisible(ch.id);
                 const spreadSide = spreadSideForPage(chapterPageIndex);
-                const pageClassName = cn('book-page book-chapter scroll-mt-24', !visiblePage && 'hidden print:block');
-                const pageCardClassName = cn('book-page-card', spreadCardClasses(spreadSide));
+                const pageClassName = 'book-page book-chapter scroll-mt-24';
+                const registerChapterStart = (node) => {
+                  if (node) chapterStartRefs.current.set(ch.id, node);
+                  else chapterStartRefs.current.delete(ch.id);
+                };
 
                 if (locked) {
                   return (
                     <article
                       key={ch.id}
+                      ref={registerChapterStart}
                       id={`chapter-${ch.id}`}
                       className={pageClassName}
                       data-book-page={chapterPageIndex}
+                      data-book-chapter-start={ch.id}
                       data-spread-side={spreadSide}
                       aria-hidden={!visiblePage}
+                      inert={!visiblePage}
                     >
-                      <Card className={cn(pageCardClassName, 'border-dashed bg-raised/35 p-4 sm:p-6')}>
+                      <Card className="book-page-card border-dashed bg-raised/35 p-4 sm:p-6">
                         <div className="reader-scaled-content mx-auto flex max-w-[68ch] items-start gap-3" data-reader-size={prefs.size}>
                           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-raised text-faint"><Lock className="size-4" aria-hidden="true" /></span>
                           <div className="min-w-0 flex-1">
@@ -836,15 +1103,18 @@ function BookReader({ modSummary, prefs }) {
                 return (
                   <article
                     key={ch.id}
+                    ref={registerChapterStart}
                     id={`chapter-${ch.id}`}
                     className={pageClassName}
                     data-book-page={chapterPageIndex}
+                    data-book-chapter-start={ch.id}
                     data-spread-side={spreadSide}
                     aria-hidden={!visiblePage}
+                    inert={!visiblePage}
                   >
-                    <Card className={cn(pageCardClassName, 'p-4 sm:p-6 print:border-0 print:shadow-none')}>
+                    <Card className="book-page-card p-4 sm:p-6 print:border-0 print:shadow-none">
                       <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
-                        <header className="mb-6 border-b border-line pb-5">
+                        <header className="book-page-keep-together mb-6 border-b border-line pb-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
@@ -893,7 +1163,7 @@ function BookReader({ modSummary, prefs }) {
                             </div>
                           </div>
                           {ch.objectives?.length > 0 && (
-                            <ul className="mt-3.5 space-y-1 text-sm text-soft">
+                            <ul className="book-page-keep-together mt-3.5 space-y-1 text-sm text-soft">
                               {ch.objectives.map((o) => <li key={o} className="flex gap-2"><Target className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />{o}</li>)}
                             </ul>
                           )}
@@ -923,7 +1193,7 @@ function BookReader({ modSummary, prefs }) {
                         )}
 
                         {!canManage && (
-                          <footer className="no-print mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+                          <footer className="book-page-keep-together no-print mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
                             {ch.completed ? (
                               <span className="inline-flex items-center gap-2.5 text-sm font-medium text-ok">
                                 <CheckCircle2 className="size-5" aria-hidden="true" />
@@ -973,12 +1243,15 @@ function BookReader({ modSummary, prefs }) {
 
               {/* End-of-Module Epilogue */}
               <article
-                className={cn('book-page', !isPageVisible(lastPage) && 'hidden')}
-                data-book-page={lastPage}
-                data-spread-side={spreadSideForPage(lastPage)}
-                aria-hidden={!isPageVisible(lastPage)}
+                ref={endPageRef}
+                className="book-page book-end-page"
+                data-book-page={endPageIndex}
+                data-book-end-start
+                data-spread-side={spreadSideForPage(endPageIndex)}
+                aria-hidden={!isPageVisible(endPageIndex)}
+                inert={!isPageVisible(endPageIndex)}
               >
-              <Card className={cn('book-page-card no-print bg-raised/40 p-4 sm:p-6', spreadCardClasses(spreadSideForPage(lastPage)))}>
+              <Card className="book-page-card no-print bg-raised/40 p-4 sm:p-6">
                 <div className="reader-scaled-content mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4" data-reader-size={prefs.size}>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-ink">
@@ -999,6 +1272,7 @@ function BookReader({ modSummary, prefs }) {
                 </div>
               </Card>
               </article>
+                </div>
               {turnId > 0 && turnDirection && (
                 <div
                   key={turnId}

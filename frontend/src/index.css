@@ -253,33 +253,56 @@
   .quiz-guarded input, .quiz-guarded textarea, .quiz-guarded [contenteditable] { -webkit-user-select: text; user-select: text; }
   .quiz-guarded img { -webkit-user-drag: none; }
 
-  /* Keep native touch scrolling intact, including horizontal tables inside a reader. */
+  /* Each CSS column is a device-sized book page. The chapter sections all share one
+     column-flow stream, so later chapters cannot begin until the current chapter is complete. */
   .book-reader-surface { overscroll-behavior-x: contain; }
   .book-page-spread {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1.5rem;
     position: relative;
     isolation: isolate;
     min-width: 0;
+    height: clamp(18rem, calc(100dvh - 18rem), 58rem);
+    overflow: hidden;
+    border-radius: 1rem;
     perspective: 1600px;
   }
-  .book-page-spread[data-layout="two"] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0;
+  .book-page-flow {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    column-width: var(--book-column-width, 48rem);
+    column-gap: var(--book-column-gap, 1.5rem);
+    column-fill: auto;
+    overscroll-behavior-x: contain;
   }
-  .book-page-spread > .book-page { min-width: 0; }
-  .book-page-card { height: 100%; min-width: 0; }
-  .book-page-spread[data-layout="two"] > .book-page[data-spread-side="left"] .book-page-card {
-    border-top-right-radius: 0 !important;
-    border-bottom-right-radius: 0 !important;
-    border-right-color: color-mix(in srgb, var(--line) 72%, transparent);
+  .book-page-flow > .book-page {
+    display: block;
+    min-width: 0;
+    break-inside: auto;
   }
-  .book-page-spread[data-layout="two"] > .book-page[data-spread-side="right"] .book-page-card {
-    border-top-left-radius: 0 !important;
-    border-bottom-left-radius: 0 !important;
-    border-left-width: 0 !important;
+  .book-page-flow > .book-chapter,
+  .book-page-flow > .book-end-page { break-before: column; }
+  .book-page-card {
+    height: auto;
+    min-width: 0;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
+  .book-page-keep-together,
+  .book-page-flow .rich-book h1,
+  .book-page-flow .rich-book h2,
+  .book-page-flow .rich-book h3,
+  .book-page-flow .rich-book h4,
+  .book-page-flow .rich-book blockquote,
+  .book-page-flow .rich-book table,
+  .book-page-flow .rich-book pre,
+  .book-page-flow .rich-book img,
+  .book-page-flow .rich-book iframe {
+    break-inside: avoid-column;
+  }
+  .book-page-flow .rich-book h1,
+  .book-page-flow .rich-book h2,
+  .book-page-flow .rich-book h3,
+  .book-page-flow .rich-book h4 { break-after: avoid-column; }
   .book-page-spread[data-layout="two"]::before {
     content: "";
     position: absolute;
@@ -293,16 +316,6 @@
     box-shadow: 0 0 12px color-mix(in srgb, var(--ink) 10%, transparent);
   }
   .book-page-spread[data-layout="two"][data-page-count="1"]::before { display: none; }
-  .book-page-spread[data-layout="two"][data-page-count="1"] > .book-page {
-    grid-column: 1 / -1;
-    width: min(100%, 50%);
-    justify-self: center;
-  }
-  .book-page-spread[data-layout="two"][data-page-count="1"] .book-page-card {
-    border-radius: 1rem !important;
-    border-left-width: 1px !important;
-    border-right-width: 1px !important;
-  }
   .book-turn-sheet {
     position: absolute;
     z-index: 5;
@@ -375,11 +388,23 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
   .no-print { display: none !important; }
   .reader-scaled-content { zoom: 1 !important; }
   body { background: #fff; }
-  .book-page-spread { display: block !important; perspective: none; }
+  .book-page-spread { display: block !important; height: auto !important; overflow: visible !important; perspective: none; }
   .book-page-spread::before, .book-turn-sheet { display: none !important; }
-  .book-page-spread[data-layout="two"][data-page-count="1"] > .book-page { width: auto !important; }
-  .book-chapter { break-inside: avoid-page; }
-  .book-chapter + .book-chapter { break-before: page; }
+  .book-page-flow {
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    column-width: auto !important;
+    column-count: auto !important;
+    column-gap: 0 !important;
+    column-fill: balance !important;
+  }
+  .book-page-flow > .book-page { break-inside: auto !important; }
+  .book-page-flow > .book-chapter,
+  .book-page-flow > .book-end-page { break-before: auto !important; }
+  .book-page-flow > .book-chapter + .book-chapter { break-before: page !important; }
+  .book-page-flow > .book-chapter { break-inside: avoid-page !important; }
+  .book-page-card { height: auto !important; box-decoration-break: slice; -webkit-box-decoration-break: slice; }
   /* A quiz with strict rules is not printed (nor saved as a PDF, which is the same thing). */
   html.quiz-guard body > * { display: none !important; }
   html.quiz-guard body::after { content: "A quiz cannot be printed while it is being answered."; display: block; padding: 2rem; font: 600 1rem/1.5 system-ui, sans-serif; color: #000; }
