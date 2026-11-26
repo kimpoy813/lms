@@ -166,10 +166,11 @@ setup, so the Vercel project needs no build settings.
 
    The optional services ([below](#optional-services)) are configured the same way.
 4. **Deploy** (push to the production branch). The build
-   (`scripts/vercel-build.mjs`) generates the database client, builds the web app, then — for
-   production deployments only — creates or updates the tables and makes sure the role
-   permissions, the default grading scale and the first administrator exist. If the database
-   step fails, the build fails and the previous deployment stays live
+   (`scripts/vercel-build.mjs`) generates the database client, checks that Node can import and
+   initialize the backend, builds the web app, then — for production deployments only — creates
+   or updates the tables and makes sure the role permissions, the default grading scale and
+   the first administrator exist. If the database step fails, the build fails and the previous
+   deployment stays live
    ([If a migration fails](#if-a-migration-fails)). With `CODE_RUNNER_PROVIDER=vercel-sandbox` it
    then makes sure the machine image for checking programs exists and runs a small program in
    every language; that step never stops a deployment.

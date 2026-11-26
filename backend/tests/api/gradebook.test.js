@@ -310,6 +310,9 @@ describe('publishing, locking and finalising', () => {
     const { teacher, cls, quiz, exam, grade } = await simpleBook(1);
     await grade(0, quiz.id, 45);
     await grade(0, exam.id, 90);
+    const invalidPeriod = await teacher.get(`${gb(cls)}/export?format=csv&periodId=missing`);
+    expect(invalidPeriod.status).toBe(422);
+    expect(invalidPeriod.body.error).toMatchObject({ code: 'VALIDATION_ERROR', details: { fields: { periodId: 'Choose a grading period from this class.' } } });
     const csv = await teacher.get(`${gb(cls)}/export?format=csv`);
     expect(csv.status).toBe(200);
     const [header, row] = csv.text.replace(/^\uFEFF/, '').split('\r\n'); // the BOM makes Excel read UTF-8
