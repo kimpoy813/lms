@@ -582,3 +582,56 @@ test('keeps both pages of a spread filled at a fractional reader width', async (
     await api.dispose();
   }
 });
+
+// Two thin columns are hard to read on a tablet held upright, so the spread is offered on landscape
+// screens only: a laptop, or a tablet turned sideways.
+test('offers a two-page spread on landscape screens only', async ({ page }) => {
+  test.setTimeout(180_000);
+  await signIn(page, 'teacher');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('teacher', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+    expect(demoModule, 'the demo class includes its first reading module').toBeTruthy();
+
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: false, layout: 'two',
+    })));
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book`);
+
+    const reader = page.locator('[data-book-reader]');
+    const spread = page.locator('[data-testid="book-page-spread"]');
+    const twoPages = page.locator('[role="radiogroup"][aria-label="Book page layout"] [role="radio"]')
+      .filter({ hasText: 'Two pages' });
+    await expect(reader).toBeVisible();
+
+    // A tablet held upright: one page, and the spread choice explains why it is unavailable.
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'single');
+    await expect(spread).toHaveAttribute('data-page-count', '1');
+    await expect(twoPages).toBeDisabled();
+    await expect(twoPages).toHaveAttribute('title', /landscape/);
+
+    // Turned sideways (or on a laptop) the saved spread comes back by itself.
+    await page.setViewportSize({ width: 1180, height: 820 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+    await expect(twoPages).toBeEnabled();
+    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+
+    // A laptop keeps its spread.
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'two');
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+
+    // A phone-sized screen stays on one page.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(reader).toHaveAttribute('data-reader-layout', 'single');
+    await expect(spread).toHaveAttribute('data-page-count', '1');
+  } finally {
+    await api.dispose();
+  }
+});

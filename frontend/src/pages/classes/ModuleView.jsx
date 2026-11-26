@@ -27,7 +27,11 @@ import { useClass } from './useClass.js';
 const READER_PREFS_KEY = 'discenda.readerPrefs';
 const BOOK_POSITION_END = '__end_of_book__';
 const DEFAULT_READER_PREFS = { font: 'serif', size: 'md', focus: false, layout: 'single' };
+// A two-page spread needs a landscape screen with room for two readable columns: a laptop, or a
+// tablet held sideways. A tablet held upright is narrow enough that two columns would be too thin
+// to read, so it keeps a single page even when its width passes the minimum.
 const BOOK_SPREAD_MIN_WIDTH = 768;
+const BOOK_SPREAD_MIN_RATIO = 1.05;
 
 function bookPositionKey(userId, moduleId) {
   return userId && moduleId ? `discenda.bookPosition.v1.${userId}.${moduleId}` : null;
@@ -228,18 +232,27 @@ function bookColumnCount(flow, stride) {
   return measured ? offsets.size : null;
 }
 
+export function canShowBookSpread(width, height) {
+  if (!(width >= BOOK_SPREAD_MIN_WIDTH)) return false;
+  return !(height > 0) || width >= height * BOOK_SPREAD_MIN_RATIO;
+}
+
 function useBookSpreadViewport() {
   const [canShowSpread, setCanShowSpread] = useState(() => (
-    typeof window !== 'undefined' && window.innerWidth >= BOOK_SPREAD_MIN_WIDTH
+    typeof window !== 'undefined' && canShowBookSpread(window.innerWidth, window.innerHeight)
   ));
 
   useEffect(() => {
     const updateViewport = () => {
-      setCanShowSpread(window.innerWidth >= BOOK_SPREAD_MIN_WIDTH);
+      setCanShowSpread(canShowBookSpread(window.innerWidth, window.innerHeight));
     };
     window.addEventListener('resize', updateViewport);
+    window.addEventListener('orientationchange', updateViewport);
     updateViewport();
-    return () => window.removeEventListener('resize', updateViewport);
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('orientationchange', updateViewport);
+    };
   }, []);
 
   return canShowSpread;
@@ -262,7 +275,7 @@ function formatDuration(minutes) {
   return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
-function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false, showFocusOnSmallScreens = false }) {
+function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, showBookLayout = false, showBookSpread = false, showFocusOnSmallScreens = false }) {
   return (
     <div className="no-print grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-1.5" role="group" aria-label="Reading display options">
       <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
@@ -308,13 +321,22 @@ function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen, sho
       {showBookLayout && (
         <Segmented
           label="Book page layout"
-          value={prefs.layout}
+          // While a spread is not possible, the selected option must describe what is on screen.
+          // The stored preference is untouched, so the spread returns when the screen allows it.
+          value={showBookSpread ? prefs.layout : 'single'}
           onChange={(layout) => onChange({ layout })}
           size="sm"
           className="hidden md:inline-flex md:w-auto"
           options={[
             { value: 'single', label: 'Single page', title: 'Show one book page at a time' },
-            { value: 'two', label: 'Two pages', title: 'Show a two-page book spread' },
+            {
+              value: 'two',
+              label: 'Two pages',
+              title: showBookSpread
+                ? 'Show a two-page book spread'
+                : 'A two-page spread needs a landscape screen: turn the tablet sideways or use a laptop',
+              disabled: !showBookSpread,
+            },
           ]}
         />
       )}
@@ -349,6 +371,7 @@ export default function ModuleView() {
   const { moduleId } = useParams();
   const [params, setParams] = useSearchParams();
   const [prefs, updatePrefs] = useReaderPrefs();
+  const canShowSpread = useBookSpreadViewport();
   const readerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const query = useQuery({ queryKey: ['class', cls.id, 'modules', moduleId], queryFn: () => api.get(`/modules/${moduleId}`) });
@@ -492,6 +515,7 @@ export default function ModuleView() {
                         isFullscreen={isFullscreen}
                         onToggleFullscreen={toggleFullscreen}
                         showBookLayout={viewMode === 'book'}
+                        showBookSpread={canShowSpread}
                         showFocusOnSmallScreens={viewMode === 'book'}
                       />
                     </div>
@@ -525,6 +549,7 @@ export default function ModuleView() {
                     isFullscreen={isFullscreen}
                     onToggleFullscreen={toggleFullscreen}
                     showBookLayout={viewMode === 'book'}
+                    showBookSpread={canShowSpread}
                     showFocusOnSmallScreens={viewMode === 'book'}
                   />
                 </div>
@@ -534,7 +559,7 @@ export default function ModuleView() {
           {!canManage && mod.locked ? (
             <Card><EmptyState icon={Lock} title="This module is locked" description={mod.lockedReason} action={<Button to={`${base}/modules`}>Back to lessons</Button>} /></Card>
           ) : viewMode === 'book' && mod.lessons.length > 0 ? (
-            <BookReader key={mod.id} modSummary={mod} prefs={prefs} immersive={immersiveBook} />
+            <BookReader key={mod.id} modSummary={mod} prefs={prefs} immersive={immersiveBook} canShowSpread={canShowSpread} />
           ) : (
             <div className={cn('grid grid-cols-1 gap-5', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
               <LessonList mod={mod} activeId={creating ? null : lessonId} focus={prefs.focus} />
@@ -648,7 +673,7 @@ function BookPageNavigation({ label, page, pageEnd = page, total, canPrevious, c
   );
 }
 
-function BookReader({ modSummary, prefs, immersive = false }) {
+function BookReader({ modSummary, prefs, immersive = false, canShowSpread: spreadAllowed = true }) {
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const [params, setParams] = useSearchParams();
@@ -659,8 +684,7 @@ function BookReader({ modSummary, prefs, immersive = false }) {
   const [turnDirection, setTurnDirection] = useState(null);
   const [turnId, setTurnId] = useState(0);
   const [measuredPagination, setMeasuredPagination] = useState(null);
-  const canShowSpread = useBookSpreadViewport();
-  const layout = prefs.layout === 'two' && canShowSpread ? 'two' : 'single';
+  const layout = prefs.layout === 'two' && spreadAllowed ? 'two' : 'single';
   const pageStep = layout === 'two' ? 2 : 1;
   const pageStartRef = useRef(null);
   const flowRef = useRef(null);

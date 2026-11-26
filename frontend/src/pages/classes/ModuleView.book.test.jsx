@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Modules from './Modules.jsx';
-import ModuleView, { bookPageIndexForLocation, initialBookLocation, makeBookPageMap } from './ModuleView.jsx';
+import ModuleView, { bookPageIndexForLocation, canShowBookSpread, initialBookLocation, makeBookPageMap } from './ModuleView.jsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 Element.prototype.scrollIntoView = vi.fn();
@@ -141,9 +141,16 @@ function CurrentSearch() {
   return <output data-current-search>{useLocation().search}</output>;
 }
 
-function setViewportWidth(width) {
+// The reader offers two-page spreads on landscape screens only, so every test needs a shape:
+// `setViewport(820)` on its own means a landscape tablet (820 x 600), not a portrait one.
+function setViewport(width, height = 600) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: height });
   window.dispatchEvent(new Event('resize'));
+}
+
+function setViewportWidth(width) {
+  setViewport(width, 600);
 }
 
 function mockBookFlowLayout({ chapterStarts, endStart, chapterTopOffsets = {}, endTopOffset = 0, width = 800, height = 500, layout = 'single' }) {
@@ -234,7 +241,7 @@ function dispatchTouch(target, type, { x, y }) {
 describe('Module book-like reader & outline CTA', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    setViewportWidth(1024);
+    setViewport(1024, 768);
     mockClassContext.canManage = false;
     mockClassContext.user = { id: 'stu-1', role: 'STUDENT' };
     mockGet.mockImplementation(async (url) => {
@@ -818,6 +825,58 @@ describe('Module book-like reader & outline CTA', () => {
     expect(window.localStorage.getItem('discenda.readerPrefs')).toContain('"layout":"two"');
 
     act(() => setViewportWidth(820));
+    await flush();
+    expect(reader.dataset.readerLayout).toBe('two');
+    expect(spread.dataset.pageCount).toBe('2');
+    expect([...spread.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0', '1']);
+    expect(container.querySelector('nav[aria-label="Book page navigation"]').textContent).toContain('Pages 1–2 of 4');
+    unmount();
+  });
+
+  it('offers a two-page spread only on a landscape screen with room for both pages', () => {
+    // Laptops and desktops.
+    expect(canShowBookSpread(1366, 768)).toBe(true);
+    expect(canShowBookSpread(1024, 768)).toBe(true);
+    expect(canShowBookSpread(768, 600)).toBe(true);
+    // A tablet held sideways: more width than height.
+    expect(canShowBookSpread(1024, 768)).toBe(true);
+    expect(canShowBookSpread(1180, 820)).toBe(true);
+    // A tablet held upright, or a phone: not enough room for two readable columns.
+    expect(canShowBookSpread(768, 1024)).toBe(false);
+    expect(canShowBookSpread(820, 1180)).toBe(false);
+    expect(canShowBookSpread(834, 1112)).toBe(false);
+    expect(canShowBookSpread(390, 844)).toBe(false);
+    // Narrower than the minimum width is never a spread, however tall it is.
+    expect(canShowBookSpread(767, 400)).toBe(false);
+    // A viewport that reports no height (an unusual embedding) keeps the previous width rule.
+    expect(canShowBookSpread(1024, 0)).toBe(true);
+  });
+
+  it('keeps a portrait tablet on a single page and turns the spread on when it is held sideways', async () => {
+    window.localStorage.setItem('discenda.readerPrefs', JSON.stringify({ font: 'serif', size: 'md', focus: false, layout: 'two' }));
+    setViewport(820, 1180);
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const spread = container.querySelector('[data-testid="book-page-spread"]');
+    expect(reader.dataset.readerLayout).toBe('single');
+    expect(spread.dataset.pageCount).toBe('1');
+    expect([...spread.querySelectorAll('.book-page[aria-hidden="false"]')].map((page) => page.dataset.bookPage)).toEqual(['0']);
+
+    // The saved preference is not thrown away: the choice is remembered, just not usable yet.
+    const layoutOptions = [...container.querySelectorAll('[role="radiogroup"][aria-label="Book page layout"] [role="radio"]')];
+    const twoPages = layoutOptions.find((button) => button.textContent.trim() === 'Two pages');
+    const singlePage = layoutOptions.find((button) => button.textContent.trim() === 'Single page');
+    expect(twoPages.disabled).toBe(true);
+    expect(twoPages.getAttribute('title')).toContain('landscape');
+    // The visible choice describes the page on screen; the saved preference is kept for later.
+    expect(singlePage.getAttribute('aria-checked')).toBe('true');
+    expect(twoPages.getAttribute('aria-checked')).toBe('false');
+
+    act(() => setViewport(1180, 820));
     await flush();
     expect(reader.dataset.readerLayout).toBe('two');
     expect(spread.dataset.pageCount).toBe('2');
