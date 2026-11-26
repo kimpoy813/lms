@@ -10,6 +10,11 @@
 | A running production site | `npm run smoke -- <address>` | about 30 checks, a few seconds | The site's address |
 | The code runner on a real Vercel account | `npm run judge:check` | 29 checks, about a minute | Vercel credentials; starts eight machines ([below](#the-code-runner-against-a-real-account)) |
 
+GitHub Actions runs the sign-in/permissions and quiz browser journeys on pull requests. The full
+Playwright suite runs nightly at 02:17 UTC and on manual dispatch. The workflow starts the same
+demo app and embedded PostgreSQL used by `npm run dev`, and uploads Playwright diagnostics if a
+run fails.
+
 ## API and unit tests
 
 `backend/tests/unit/` tests the pure rules — grade computation, late penalties, quiz scoring and

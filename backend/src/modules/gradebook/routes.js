@@ -1,14 +1,18 @@
 // Gradebook API: structure, scores, overrides, publishing, locking, finalisation, exports,
 // student view and grade appeals.
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
+import { env } from '../../config/env.js';
 import { lockKey, prisma } from '../../db/prisma.js';
 import { AppError, conflict, fieldErrors, notFound } from '../../lib/errors.js';
-import { exportFormat, sendTable } from '../../lib/exporter.js';
+import { exportFormat, safeFilename, sendBuffer, sendTable } from '../../lib/exporter.js';
+import { fillGradebookTemplate, GradebookTemplateError } from '../../lib/gradebookTemplate.js';
 import { created, fullName, idParams, noContent, ok, patchOf, round, zId, zOptionalDateTime, zTitle } from '../../lib/http.js';
 import { plainText } from '../../lib/sanitize.js';
 import { dateKey } from '../../lib/time.js';
 import { assertPermission, requireAuth, requireRole } from '../../middleware/auth.js';
+import { uploadLimiter } from '../../middleware/rateLimit.js';
 import { validate } from '../../middleware/validate.js';
 import { audit } from '../../services/audit.js';
 import { classStudentIds, enrolledStudentIds, notify } from '../../services/notifications.js';
@@ -17,6 +21,7 @@ import { assertClassWritable, classLabel, loadClassAccess, requireClassManager, 
 import { quizOutcome } from '../quizzes/attemptScore.js';
 import { OVERALL_SCOPE, validateStructure } from './compute.js';
 import { STRUCTURE_TEMPLATES } from './defaults.js';
+import { gradebookExportTable } from './export.js';
 import { buildClassRanking, regenerateStudentRankingCode, setCustomStudentRankingCode } from './ranking.js';
 import { assertItemOpen, categoryOptions, computeClassGrades, finalSnapshot, loadStructure, recordGrade, studentGradeView } from './service.js';
 
@@ -26,6 +31,18 @@ export const gradesRouter = Router(); // /grades
 gradesRouter.use(requireAuth);
 
 const classParams = idParams('classId');
+const gradebookExportOptions = z.object({ by: z.enum(['items', 'weights', 'all']).default('items'), periodId: zId.optional() });
+const MAX_TEMPLATE_BYTES = Math.min(4 * 1024 * 1024, env.maxUploadBytes);
+const TEMPLATE_LIMIT_LABEL = MAX_TEMPLATE_BYTES >= 1024 * 1024
+  ? `${Number((MAX_TEMPLATE_BYTES / (1024 * 1024)).toFixed(2))} MB`
+  : `${Math.ceil(MAX_TEMPLATE_BYTES / 1024)} KB`;
+const templateUploadParser = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_TEMPLATE_BYTES, files: 1, fields: 2, fieldSize: 1_000, parts: 3 } }).single('file');
+const templateUpload = (req, res, next) => {
+  templateUploadParser(req, res, (err) => {
+    if (err?.code === 'LIMIT_FILE_SIZE') return next(new AppError(413, 'FILE_TOO_LARGE', `The template exceeds the ${TEMPLATE_LIMIT_LABEL} upload limit.`));
+    next(err);
+  });
+};
 const CATEGORY_KINDS = ['QUIZ', 'ASSIGNMENT', 'ACTIVITY', 'LABORATORY', 'PROJECT', 'EXAM', 'PARTICIPATION', 'ATTENDANCE', 'CUSTOM'];
 const reasonField = z.string().trim().min(5, 'Give a reason (at least 5 characters)').max(500);
 
@@ -33,6 +50,12 @@ async function managed(req, { writable = true } = {}) {
   const access = await requireClassManager(req.user, req.valid.params.classId);
   if (writable) assertClassWritable(access.cls);
   return access.cls;
+}
+
+async function authorizeGradebookTemplate(req, res, next) {
+  req.gradebookTemplateClass = await managed(req, { writable: false });
+  await assertPermission(req.user, 'grades.export');
+  next();
 }
 
 function assertNotFinalized(cls) {
@@ -897,113 +920,18 @@ classGradebookRouter.get('/publishing-log', validate({ params: classParams }), a
 });
 
 // ── Export ───────────────────────────────────────────────────────────────────
+const gradebookExportQuery = gradebookExportOptions.extend({ format: exportFormat });
+
 classGradebookRouter.get(
   '/export',
-  validate({
-    params: classParams,
-    query: z.object({
-      format: exportFormat,
-      by: z.enum(['items', 'weights', 'all']).default('items'),
-      periodId: zId.optional(),
-    }),
-  }),
+  validate({ params: classParams, query: gradebookExportQuery }),
   async (req, res) => {
     const cls = await managed(req, { writable: false });
     await assertPermission(req.user, 'grades.export');
     const { format, by, periodId } = req.valid.query;
     const data = await matrix(cls, { includeWeights: by !== 'items' });
-    const tz = await getTimeZone();
-    const cell = (entry) => (!entry ? '' : entry.status === 'GRADED' ? entry.score : entry.status === 'MISSING' ? 'M' : entry.status === 'EXEMPT' ? 'EX' : '');
-    const decimals = data.class.gradeRounding ?? 2;
-    const wtd = (percent, weight) => (percent === null || percent === undefined || !(weight > 0) ? '' : round((percent * weight) / 100, decimals));
-
-    let selectedPeriods = data.structure.periods;
-    let scopedPeriod = null;
-    if (periodId) {
-      scopedPeriod = data.structure.periods.find((p) => p.id === periodId) ?? null;
-      if (!scopedPeriod) throw fieldErrors({ periodId: 'Choose a grading period from this class.' });
-      selectedPeriods = [scopedPeriod];
-    }
-
-    // A PDF page cannot hold one column per graded item, so item scores appear in CSV/XLSX while PDF uses weights or period summaries.
-    const detailed = format !== 'pdf';
-    const multiPeriod = selectedPeriods.length > 1;
-    const hasDropped = data.students.some((s) => s.enrollmentStatus === 'DROPPED');
-
-    const periodColumns = (p) => {
-      const pPrefix = multiPeriod ? `${p.name} · ` : '';
-      if (by === 'items') {
-        return [
-          ...(detailed
-            ? p.categories.flatMap((c) => c.items.map((i) => ({ header: `${multiPeriod ? `${p.name} · ` : ''}${i.title} (${i.maxPoints})`, value: (s) => cell(s.entries[i.id]), width: 16, align: 'right' })))
-            : []),
-          ...(multiPeriod ? [{ header: `${p.name} %`, value: (s) => s.periods[p.id]?.percent ?? '', width: 12, pdfWidth: 1, align: 'right' }] : []),
-        ];
-      }
-      const cols = [];
-      for (const c of p.categories) {
-        if (by === 'all' && detailed) {
-          for (const i of c.items) {
-            cols.push({ header: `${pPrefix}${i.title} (${i.maxPoints})`, value: (s) => cell(s.entries[i.id]), width: 16, align: 'right' });
-          }
-        }
-        if (detailed) {
-          cols.push({ header: `${pPrefix}${c.name} (${c.weight}%) %`, value: (s) => s.weightPeriods[p.id]?.categories[c.id]?.percent ?? '', width: 16, align: 'right' });
-          if (c.weight > 0) {
-            cols.push({ header: `${pPrefix}${c.name} Wtd (${c.weight}%)`, value: (s) => wtd(s.weightPeriods[p.id]?.categories[c.id]?.percent, c.weight), width: 17, align: 'right' });
-          }
-        } else {
-          cols.push({
-            header: `${pPrefix}${c.name} (${c.weight}%)`,
-            value: (s) => {
-              const cat = s.weightPeriods[p.id]?.categories[c.id];
-              if (cat?.percent === null || cat?.percent === undefined) return '';
-              return c.weight > 0 ? `${cat.percent}% (${wtd(cat.percent, c.weight)})` : `${cat.percent}%`;
-            },
-            width: 16,
-            pdfWidth: 1.3,
-            align: 'right',
-          });
-        }
-      }
-      if (multiPeriod) {
-        if (detailed) {
-          cols.push({ header: `${p.name} (${p.weight}%) %`, value: (s) => s.periods[p.id]?.percent ?? '', width: 15, align: 'right' });
-          if (p.weight > 0) {
-            cols.push({ header: `${p.name} Wtd (${p.weight}%)`, value: (s) => wtd(s.periods[p.id]?.percent, p.weight), width: 16, align: 'right' });
-          }
-        } else {
-          cols.push({
-            header: `${p.name} (${p.weight}%)`,
-            value: (s) => {
-              const pg = s.periods[p.id];
-              if (pg?.percent === null || pg?.percent === undefined) return '';
-              return p.weight > 0 ? `${pg.percent}% (${wtd(pg.percent, p.weight)})` : `${pg.percent}%`;
-            },
-            width: 16,
-            pdfWidth: 1.25,
-            align: 'right',
-          });
-        }
-      }
-      return cols;
-    };
-
-    const finalCell = (s) => (scopedPeriod ? s.periods[scopedPeriod.id] : s.overall);
-    const columns = [
-      { header: 'Student No.', value: (s) => s.studentNumber ?? '', pdfWidth: 1.3 },
-      { header: 'Name', value: (s) => `${s.lastName}, ${s.firstName}`, width: 28, pdfWidth: 2.6 },
-      ...(hasDropped ? [{ header: 'Status', value: (s) => (s.enrollmentStatus === 'DROPPED' ? 'Dropped' : 'Enrolled'), width: 11, pdfWidth: 1.0 }] : []),
-      ...selectedPeriods.flatMap(periodColumns),
-      { header: scopedPeriod ? `${scopedPeriod.name} (${scopedPeriod.weight}%) %` : 'Final %', value: (s) => finalCell(s)?.percent ?? '', width: 12, pdfWidth: 1, align: 'right' },
-      { header: 'Grade', value: (s) => finalCell(s)?.label ?? '', width: 8, pdfWidth: 0.8, align: 'center' },
-      { header: 'Remark', value: (s) => `${finalCell(s)?.remark ?? ''}${finalCell(s)?.isOverridden ? ' (override)' : ''}`, width: 16, pdfWidth: 1.3 },
-    ];
-
-    const modeTitle = by === 'weights' ? 'Grades by Weights' : by === 'all' ? 'Complete Grades & Weights' : 'Grades';
-    const modeSlug = by === 'weights' ? 'grades-by-weights' : by === 'all' ? 'grades-complete' : 'grades';
-    const periodSlug = scopedPeriod ? `-${scopedPeriod.name}` : '';
-    const periodSuffixTitle = scopedPeriod ? ` · ${scopedPeriod.name} (${scopedPeriod.weight}%)` : '';
+    const timeZone = await getTimeZone();
+    const { table, scopedPeriod } = gradebookExportTable(cls, data, { format, by, periodId, timeZone });
 
     await audit(req, {
       action: 'grades.export',
@@ -1013,25 +941,53 @@ classGradebookRouter.get(
       summary: `Exported the gradebook (${format.toUpperCase()}, ${by}${scopedPeriod ? `, ${scopedPeriod.name}` : ''})`,
       after: { format, by, ...(scopedPeriod ? { periodId: scopedPeriod.id, periodName: scopedPeriod.name } : {}) },
     });
+    await sendTable(res, format, table);
+  },
+);
 
-    await sendTable(res, format, {
-      filename: `${modeSlug}-${cls.course.code}${cls.section ? `-${cls.section.name}` : ''}${periodSlug}`,
-      title: `${modeTitle} — ${classLabel(cls)}${periodSuffixTitle}`,
-      subtitle: `${cls.course.title} · ${cls.semester.name}, ${cls.semester.academicYear.name}`,
-      meta: [
-        `${data.stats.students} enrolled${hasDropped ? ` · ${data.stats.dropped} dropped` : ''} · ${cls.gradesFinalizedAt ? `Finalised ${dateKey(cls.gradesFinalizedAt, tz)}` : 'NOT FINAL — grades may still change'}`,
-        `Scale: ${data.class.gradingScale?.name ?? 'none'}${by === 'weights' ? ' · Category/Period columns show % and weighted contribution (Wtd)' : ' · M = missing, EX = exempt'} · Generated ${dateKey(new Date(), tz)} (${tz})`,
-      ],
-      columns,
-      rows: data.students,
-      landscape: multiPeriod || by !== 'items',
-      footer: 'Confidential student record — handle in accordance with the Data Privacy Act of 2012 (RA 10173).',
-      summary: [
-        ...selectedPeriods.map((p) => `${p.name} (${p.weight}%): ${p.categories.map((c) => `${c.name} ${c.weight}%`).join(', ')}`),
-        data.class.transmutationBase > 0 ? `Transmutation base ${data.class.transmutationBase}.` : 'No transmutation.',
-        data.class.treatMissingAsZero ? 'Missing work counts as zero.' : 'Missing work is not counted.',
-      ],
+classGradebookRouter.post(
+  '/export-template',
+  validate({ params: classParams, query: gradebookExportOptions }),
+  authorizeGradebookTemplate,
+  uploadLimiter,
+  templateUpload,
+  async (req, res) => {
+    const cls = req.gradebookTemplateClass;
+    if (!req.file) throw fieldErrors({ file: 'Choose an Excel .xlsx or Word .docx grade template.' });
+
+    const uploadName = String(req.file.originalname ?? '').split(/[\\/]/).pop() || '';
+    const lowerName = uploadName.toLowerCase();
+    const extension = lowerName.endsWith('.xlsx') ? '.xlsx' : lowerName.endsWith('.docx') ? '.docx' : null;
+    if (!extension) throw new AppError(415, 'UNSUPPORTED_TEMPLATE', 'Upload an Excel .xlsx workbook or a Word .docx document.');
+
+    const { by, periodId } = req.valid.query;
+    const data = await matrix(cls, { includeWeights: by !== 'items' });
+    const timeZone = await getTimeZone();
+    // Template columns use the complete spreadsheet labels even when the usual download is PDF or CSV.
+    const { table, scopedPeriod } = gradebookExportTable(cls, data, { format: 'xlsx', by, periodId, timeZone });
+    let filled;
+    try {
+      filled = await fillGradebookTemplate(req.file.buffer, extension, table.columns, table.rows);
+    } catch (err) {
+      if (err instanceof GradebookTemplateError) throw new AppError(422, 'INVALID_GRADE_TEMPLATE', err.message);
+      throw new AppError(422, 'INVALID_GRADE_TEMPLATE', 'The template could not be processed. Make sure it is a valid, unencrypted .xlsx or .docx file.');
+    }
+
+    await audit(req, {
+      action: 'grades.export',
+      entityType: 'Class',
+      entityId: cls.id,
+      classId: cls.id,
+      summary: `Filled the ${extension === '.xlsx' ? 'Excel' : 'Word'} grade template (${by}${scopedPeriod ? `, ${scopedPeriod.name}` : ''})`,
+      after: { format: extension.slice(1), template: true, by, ...(scopedPeriod ? { periodId: scopedPeriod.id, periodName: scopedPeriod.name } : {}) },
     });
+
+    const stem = uploadName.replace(/\.(?:xlsx|docx)$/i, '');
+    const filename = `${safeFilename(stem).slice(0, 70)}-filled-grades${extension}`;
+    const contentType = extension === '.xlsx'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    sendBuffer(res, filled.buffer, filename, contentType);
   },
 );
 

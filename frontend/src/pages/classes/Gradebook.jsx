@@ -545,6 +545,9 @@ function ExportDialog({ structure, activePeriodId, onClose }) {
   const [format, setFormat] = useState('xlsx');
   const [periodId, setPeriodId] = useState('');
   const [downloading, setDownloading] = useState(false);
+  const [templateFile, setTemplateFile] = useState(null);
+  const [filling, setFilling] = useState(false);
+  const busy = downloading || filling;
 
   const selectedPeriods = periodId ? structure.periods.filter((p) => p.id === periodId) : structure.periods;
   const activePeriod = structure.periods.find((p) => p.id === activePeriodId);
@@ -566,21 +569,54 @@ function ExportDialog({ structure, activePeriodId, onClose }) {
     }
   };
 
+  const fillTemplate = async () => {
+    if (!templateFile) return;
+    setFilling(true);
+    try {
+      const slug = by === 'weights' ? 'gradebook-by-weights' : by === 'all' ? 'gradebook-complete' : 'gradebook';
+      const extension = templateFile.name.toLowerCase().endsWith('.docx') ? 'docx' : 'xlsx';
+      await api.downloadForm(
+        `${base}/gradebook/export-template`,
+        { file: templateFile },
+        { by, ...(periodId ? { periodId } : {}) },
+        `${slug}-filled-grades.${extension}`,
+      );
+      toast.success('Your filled grade template has been downloaded.');
+      onClose();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setFilling(false);
+    }
+  };
+
   return (
     <Modal
       open
-      onClose={downloading ? undefined : onClose}
+      onClose={busy ? undefined : onClose}
       title="Export student grades"
-      description="Choose whether to export category & period weighted breakdowns, individual column scores, or both."
-      size="sm"
+      description="Download a gradebook export or fill your own Excel or Word template."
+      size="md"
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose} disabled={downloading}>Cancel</Button>
-          <Button icon={Download} loading={downloading} onClick={download}>Download {format.toUpperCase()}</Button>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button icon={Download} loading={filling} disabled={!templateFile || downloading} onClick={fillTemplate}>Fill template</Button>
+          <Button icon={Download} loading={downloading} disabled={filling} onClick={download}>Download {format.toUpperCase()}</Button>
         </>
       )}
     >
       <div className="space-y-4">
+        <div className="rounded-xl border border-line bg-raised p-3">
+          <h3 className="text-sm font-semibold text-ink">Fill your own template</h3>
+          <p className="mt-1 text-xs leading-relaxed text-faint">Choose an .xlsx workbook or .docx document up to 4 MB. Matching gradebook headers are filled by student number (or a unique name when there is no student-number column), and missing students are added. Word templates need a table with a header row.</p>
+          <Field label="Excel or Word template" className="mt-3">
+            <Input
+              type="file"
+              accept=".xlsx,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={(event) => setTemplateFile(event.target.files?.[0] ?? null)}
+            />
+          </Field>
+        </div>
         <Field label="Export mode">
           <div className="space-y-2">
             {[

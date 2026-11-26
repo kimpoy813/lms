@@ -8,10 +8,11 @@ import Gradebook from './Gradebook.jsx';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 Element.prototype.scrollIntoView = vi.fn();
 
-const { mockData, mockPatch, mockDelete, mockDownload } = vi.hoisted(() => ({
+const { mockData, mockPatch, mockDelete, mockDownload, mockDownloadForm } = vi.hoisted(() => ({
   mockPatch: vi.fn().mockResolvedValue({}),
   mockDelete: vi.fn().mockResolvedValue({}),
   mockDownload: vi.fn().mockResolvedValue(undefined),
+  mockDownloadForm: vi.fn().mockResolvedValue('template-filled-grades.xlsx'),
   mockData: {
     class: {
       id: 'cls-1',
@@ -116,6 +117,7 @@ vi.mock('../../lib/api.js', () => ({
     patch: mockPatch,
     delete: mockDelete,
     download: mockDownload,
+    downloadForm: mockDownloadForm,
   },
 }));
 
@@ -215,6 +217,42 @@ describe('Gradebook weighted export and column edit/delete', () => {
       'gradebook-by-weights.xlsx',
     );
 
+    cleanup();
+  });
+
+  it('lets the teacher upload and download a populated Word or Excel grade template', async () => {
+    mockDownloadForm.mockClear();
+    const { container, cleanup } = renderGradebook();
+    await flush();
+
+    const exportBtn = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Export'));
+    act(() => exportBtn.click());
+    await flush();
+
+    expect(document.body.textContent).toContain('Fill your own template');
+    expect(document.body.textContent).toContain('Word templates need a table with a header row.');
+    const input = document.body.querySelector('input[type="file"]');
+    const file = new File(['template bytes'], 'registrar.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const fillButton = [...document.body.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent.includes('Fill template'));
+    expect(fillButton.disabled).toBe(false);
+    await act(async () => {
+      fillButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockDownloadForm).toHaveBeenCalledWith(
+      '/classes/cls-1/gradebook/export-template',
+      { file },
+      { by: 'weights' },
+      'gradebook-by-weights-filled-grades.docx',
+    );
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     cleanup();
   });
 });
