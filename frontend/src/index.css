@@ -184,6 +184,15 @@
   .rich-book { line-height: 1.8; font-size: 1rem; max-width: 68ch; }
   .rich-book-sm { line-height: 1.72; }
   .rich-book-lg { line-height: 1.82; }
+  /* Scale the complete reading surface, not just its rich-text paragraph wrapper. This also
+     reaches chapter titles, objectives, diagrams, and quick checks on touch devices. */
+  .reader-scaled-content { zoom: 1; }
+  .reader-scaled-content[data-reader-size="sm"] { zoom: 0.875; }
+  .reader-scaled-content[data-reader-size="lg"] { zoom: 1.25; }
+  @supports not (zoom: 1) {
+    .reader-scaled-content[data-reader-size="sm"] .rich-book { font-size: 0.875rem; }
+    .reader-scaled-content[data-reader-size="lg"] .rich-book { font-size: 1.25rem; }
+  }
   .rich-book h1, .rich-book h2 { font-size: 1.45em; line-height: 1.3; }
   .rich-book pre { font-size: 0.9em; }
   .rich-book-serif { font-family: Georgia, Cambria, "Times New Roman", Times, serif; }
@@ -277,6 +286,7 @@ html.quiz-guard, html.quiz-guard body { overscroll-behavior-y: contain; }
 
 @media print {
   .no-print { display: none !important; }
+  .reader-scaled-content { zoom: 1 !important; }
   body { background: #fff; }
   .book-chapter { break-inside: avoid-page; }
   .book-chapter + .book-chapter { break-before: page; }

@@ -89,10 +89,6 @@ function bookTextClasses(prefs) {
   );
 }
 
-function bookTextStyle(prefs) {
-  return { fontSize: prefs.size === 'sm' ? '0.875rem' : prefs.size === 'lg' ? '1.25rem' : '1rem' };
-}
-
 function formatDuration(minutes) {
   const m = Number(minutes) || 0;
   if (m <= 0) return null;
@@ -629,7 +625,7 @@ function BookReader({ modSummary, prefs }) {
               />
               {/* Module Title / Front-Matter Page */}
               <Card className={cn('overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none', pageIndex !== 0 && 'hidden print:block', pageIndex === 0 && turnDirection && `book-page-turn-${turnDirection}`)}>
-                <div className="mx-auto max-w-[68ch]">
+                <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
                       <BookOpen className="size-4" aria-hidden="true" />
@@ -728,7 +724,7 @@ function BookReader({ modSummary, prefs }) {
                   return (
                     <article key={ch.id} id={`chapter-${ch.id}`} className={pageClassName}>
                       <Card className="border-dashed bg-raised/35 p-4 sm:p-6">
-                        <div className="mx-auto flex max-w-[68ch] items-start gap-3">
+                        <div className="reader-scaled-content mx-auto flex max-w-[68ch] items-start gap-3" data-reader-size={prefs.size}>
                           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-raised text-faint"><Lock className="size-4" aria-hidden="true" /></span>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold uppercase tracking-wider text-faint">Chapter {ch.chapterNumber} of {chapters.length} · Locked</p>
@@ -744,7 +740,7 @@ function BookReader({ modSummary, prefs }) {
                 return (
                   <article key={ch.id} id={`chapter-${ch.id}`} className={pageClassName}>
                     <Card className="p-4 sm:p-6 print:border-0 print:shadow-none">
-                      <div className="mx-auto max-w-[68ch]">
+                      <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
                         <header className="mb-6 border-b border-line pb-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="min-w-0">
@@ -803,7 +799,6 @@ function BookReader({ modSummary, prefs }) {
                         <RichText
                           html={ch.contentHtml}
                           className={bookTextClasses(prefs)}
-                          style={bookTextStyle(prefs)}
                           empty={<p className="text-sm text-faint">{canManage ? 'This chapter has no content yet. Choose Edit to write it.' : 'This chapter has no content yet.'}</p>}
                         />
                         {ch.visual && <LearningVisual visual={ch.visual} />}
@@ -875,7 +870,7 @@ function BookReader({ modSummary, prefs }) {
 
               {/* End-of-Module Epilogue */}
               <Card className={cn('no-print bg-raised/40 p-4 sm:p-6', pageIndex !== chapters.length + 1 && 'hidden', pageIndex === chapters.length + 1 && turnDirection && `book-page-turn-${turnDirection}`)}>
-                <div className="mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4">
+                <div className="reader-scaled-content mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4" data-reader-size={prefs.size}>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-ink">
                       {!canManage && progressPercent === 100
@@ -1023,7 +1018,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
             </Alert>
           )}
           <Card className="p-4 sm:p-6 print:border-0 print:shadow-none">
-            <div className="mx-auto max-w-[68ch]">
+            <div className="reader-scaled-content mx-auto max-w-[68ch]" data-reader-size={prefs.size}>
               <header className="mb-6 border-b border-line pb-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -1089,7 +1084,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                 )}
               </header>
 
-              <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} style={bookTextStyle(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
+              <RichText html={lesson.contentHtml} className={bookTextClasses(prefs)} empty={<p className="text-sm text-faint">{canManage ? 'This lesson has no content yet. Choose Edit to write it.' : 'This lesson has no content yet.'}</p>} />
               {lesson.visual && <LearningVisual visual={lesson.visual} />}
               {lesson.selfCheck && <QuickCheck check={lesson.selfCheck} />}
 
