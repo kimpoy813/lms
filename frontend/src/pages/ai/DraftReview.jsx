@@ -58,11 +58,13 @@ function Review({ draft, onBack, configured }) {
     onSuccess: (saved) => { setDirty(false); client.setQueryData(['ai', 'generated', draft.id], (old) => ({ ...old, ...saved })); client.invalidateQueries({ queryKey: ['ai', 'requests'] }); },
   });
   const discard = useAction(() => api.post(`/ai/generated/${draft.id}/reject`), { invalidate: [['ai']], success: 'Draft discarded.', onSuccess: onBack });
+  const requestBack = () => { if (dirty) setDialog('leave'); else onBack(); };
 
   return (
     <>
-      <PageHeader back={{ to: '/ai', label: 'AI studio' }} eyebrow="AI draft — review before use" title={c.title || 'Untitled module'} description={`${draft.request.topic}${draft.request.classLabel ? ` · ${draft.request.classLabel}` : ''} · updated ${relativeTime(draft.updatedAt)}${draft.model ? ` · ${draft.model}` : ''}`}
+      <PageHeader eyebrow="AI draft — review before use" title={c.title || 'Untitled module'} description={`${draft.request.topic}${draft.request.classLabel ? ` · ${draft.request.classLabel}` : ''} · updated ${relativeTime(draft.updatedAt)}${draft.model ? ` · ${draft.model}` : ''}`}
         actions={<>
+          <Button variant="ghost" icon={ChevronLeft} onClick={requestBack}>AI studio</Button>
           <Button variant="ghost" icon={Download} onClick={() => api.download(`/ai/generated/${draft.id}/export`, { format: 'docx' }, 'module.docx').catch((e) => toast.error(e.message))}>Word</Button>
           <Button variant="ghost" icon={Download} onClick={() => api.download(`/ai/generated/${draft.id}/export`, { format: 'pdf' }, 'module.pdf').catch((e) => toast.error(e.message))}>PDF</Button>
           {!locked && <Button variant="secondary" icon={Save} loading={save.isPending} disabled={!dirty} onClick={() => save.mutate()}>{dirty ? 'Save changes' : 'Saved'}</Button>}
@@ -188,7 +190,7 @@ function Review({ draft, onBack, configured }) {
             <CardHeader title="Assessment questions" description="Select the questions you want, then create a draft quiz or examination right away or save them to a question bank." />
             <QuestionDrafts
               drafts={questions}
-              setDrafts={(next) => { setQuestions(next); setDirty(true); }}
+              setDrafts={(next) => { setQuestions((current) => typeof next === 'function' ? next(current) : next); setDirty(true); }}
               defaultBankTitle={c.title?.slice(0, 120)}
               quiz={{
                 kind: 'QUIZ',
@@ -234,6 +236,7 @@ function Review({ draft, onBack, configured }) {
         />
       )}
       <ConfirmDialog open={dialog === 'discard'} onClose={() => setDialog(null)} onConfirm={() => discard.mutate()} loading={discard.isPending} title="Discard this draft?" confirmLabel="Discard">The draft is marked as discarded and nothing is added to any class.</ConfirmDialog>
+      <ConfirmDialog open={dialog === 'leave'} onClose={() => setDialog(null)} onConfirm={() => { setDirty(false); onBack(); }} title="Leave without saving?" confirmLabel="Leave without saving">You have edits that are not saved to this AI draft. Save your changes first, or leave and discard them.</ConfirmDialog>
     </>
   );
 }
