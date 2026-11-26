@@ -216,6 +216,93 @@ test('two-page book spreads fill both sides, wrap tables, and keep settings out 
   }
 });
 
+test('keeps the initial two-page module-cover spread populated', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1228, height: 690 });
+  await signIn(page, 'teacher');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('teacher', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+    expect(demoModule, 'the demo class includes its first reading module').toBeTruthy();
+
+    const [moduleSummary, book] = await Promise.all([
+      api.get(`/modules/${demoModule.id}`),
+      api.get(`/modules/${demoModule.id}/book`),
+    ]);
+    const chapters = Array.from({ length: 10 }, (_, index) => ({
+      ...book.chapters[0],
+      id: `cover-spread-chapter-${index + 1}`,
+      moduleId: demoModule.id,
+      title: `Security chapter ${index + 1}`,
+      chapterNumber: index + 1,
+      kind: 'LESSON',
+      status: 'DRAFT',
+      estimatedMinutes: 48,
+      objectives: [],
+      contentHtml: `<h3>Chapter ${index + 1}</h3><p>${PAGE_TEXT.repeat(10)}</p>`,
+      resources: [],
+      visual: null,
+      selfCheck: null,
+      completed: false,
+      bookmarked: false,
+      locked: false,
+      lockedReason: null,
+    }));
+    let fixtureSummary = {
+      ...moduleSummary,
+      title: 'Module 1: Introduction to Information Assurance and Security',
+      description: 'A concise module overview for the opening spread.',
+      status: 'DRAFT',
+      locked: false,
+      lessonCount: chapters.length,
+      lessons: chapters.map((chapter, index) => ({ ...chapter, position: index })),
+      objectives: [],
+      resources: [],
+    };
+    let fixtureBook = { ...book, ...fixtureSummary, chapters, totalEstimatedMinutes: 480 };
+    await page.route(`**/api/modules/${demoModule.id}`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureSummary }),
+    }));
+    await page.route(`**/api/modules/${demoModule.id}/book`, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: fixtureBook }),
+    }));
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: true, layout: 'two',
+    })));
+
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book`);
+    const spread = page.locator('[data-testid="book-page-spread"]');
+    const navigation = page.getByRole('navigation', { name: 'Book page navigation' });
+    await expect(page.locator('[data-book-reader]')).toHaveAttribute('data-reader-layout', 'two');
+    await expect(navigation).toContainText('Module cover');
+    await expect(navigation).toContainText('Pages 1–2 of');
+    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+    await expect.poll(() => visibleTextOnSpreadSide(page, 'Chapters in this module', 'right')).toBe(true);
+
+    // Match the cover copy visible in the user report as well: a long summary should continue
+    // across the spread instead of leaving the facing page empty.
+    fixtureSummary = {
+      ...fixtureSummary,
+      description: 'In an increasingly interconnected world, information has become one of the most valuable assets of individuals, organizations, and governments. However, the technologies that make information easier to collect, process, store, and exchange also expose it to numerous threats, including unauthorized access, data manipulation, system disruption, and cyberattacks. This module introduces the fundamental principles of Information Assurance and Security, emphasizing the confidentiality, integrity, and availability of information, the nature of common security threats, and the strategies used to protect computing environments. Through practical examples, realistic scenarios, and analytical activities, students will develop a security-oriented mindset that they can apply to software development, database management, networking, research, and professional computing practice. The module is designed for approximately 480 minutes or eight hours of structured learning, combining foundational concepts with applied activities and practical review.',
+    };
+    fixtureBook = { ...fixtureBook, ...fixtureSummary };
+    await page.reload();
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+    await expect.poll(() => visibleSpreadHasTextInBothPages(page)).toEqual({ left: true, right: true });
+    await expect.poll(() => visibleTextOnSpreadSide(page, 'develop a security-oriented mindset', 'right')).toBe(true);
+  } finally {
+    await api.dispose();
+  }
+});
+
 test('keeps the screenshot-derived chapter 9 spread populated at pages 155–156 of 165', async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 1000 });

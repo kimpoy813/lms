@@ -285,6 +285,13 @@
   }
   .book-page-flow > .book-chapter,
   .book-page-flow > .book-end-page { break-before: auto; }
+  @media screen {
+    /* Give the module cover a useful facing page when its summary fits on one page. */
+    .book-page-spread[data-layout="two"] .book-cover-toc {
+      -webkit-column-break-before: always;
+      break-before: column;
+    }
+  }
   .book-page-card {
     height: auto;
     min-width: 0;
