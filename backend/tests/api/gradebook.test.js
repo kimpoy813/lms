@@ -1,3 +1,4 @@
+import ExcelJS from 'exceljs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { actor, classroom, clearSetting, defaultScale, prepare, prisma, setSetting } from '../helpers/index.js';
 
@@ -388,6 +389,52 @@ describe('publishing, locking and finalising', () => {
     const binary = (res, cb) => { const c = []; res.on('data', (d) => c.push(d)); res.on('end', () => cb(null, Buffer.concat(c))); };
     expect((await teacher.get(`${gb(cls)}/export?format=xlsx&by=weights`).buffer(true).parse(binary)).body.subarray(0, 2).toString()).toBe('PK');
     expect((await teacher.get(`${gb(cls)}/export?format=pdf&by=weights`).buffer(true).parse(binary)).body.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('fills an uploaded Excel grade template for the class and appends students missing from it', async () => {
+    const { teacher, cls, students, quiz, exam, grade } = await simpleBook(2);
+    await grade(0, quiz.id, 45);
+    await grade(0, exam.id, 90);
+    const matrix = (await teacher.get(gb(cls))).body.data;
+    const firstStudent = matrix.students.find((student) => student.id === students[0].user.id);
+    const secondStudent = matrix.students.find((student) => student.id === students[1].user.id);
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Registrar template');
+    sheet.addRow(['Student Number', 'Student Name', 'Quiz 1 (50)', 'Final %', 'Grade']);
+    sheet.addRow([firstStudent.studentNumber, 'Old template name', 0, 0, 'old']);
+    const template = Buffer.from(await workbook.xlsx.writeBuffer());
+    const binary = (res, cb) => { const chunks = []; res.on('data', (chunk) => chunks.push(chunk)); res.on('end', () => cb(null, Buffer.concat(chunks))); };
+    const request = (client) => client.agent.post(`${gb(cls)}/export-template?by=items`).set('x-csrf-token', client.csrf);
+
+    const forbidden = await request(students[0]).attach('file', template, 'grades.xlsx');
+    expect(forbidden.status).toBe(403);
+
+    const response = await request(teacher).attach('file', template, 'teacher-template.xlsx').buffer(true).parse(binary);
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('spreadsheetml.sheet');
+    expect(response.headers['content-disposition']).toContain('teacher-template-filled-grades.xlsx');
+    const output = new ExcelJS.Workbook();
+    await output.xlsx.load(response.body);
+    const filled = output.getWorksheet('Registrar template');
+    expect(filled.getRow(2).values.slice(1)).toEqual([
+      firstStudent.studentNumber,
+      `${firstStudent.lastName}, ${firstStudent.firstName}`,
+      45,
+      90,
+      '1.75',
+    ]);
+    expect(filled.getRow(3).values.slice(1)).toEqual([
+      secondStudent.studentNumber,
+      `${secondStudent.lastName}, ${secondStudent.firstName}`,
+      '',
+      '',
+      '',
+    ]);
+    expect(await prisma.auditLog.count({ where: { classId: cls.id, action: 'grades.export' } })).toBe(1);
+
+    const unsupported = await request(teacher).attach('file', Buffer.from('bad'), 'grades.csv');
+    expect(unsupported.status).toBe(415);
+    expect(unsupported.body.error.code).toBe('UNSUPPORTED_TEMPLATE');
   });
 
   it('lets teachers edit or delete manual, assignment, and quiz columns cleanly from the gradebook', async () => {

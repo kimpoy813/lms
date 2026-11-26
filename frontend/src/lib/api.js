@@ -109,6 +109,23 @@ async function json(method, path, options) {
   return { data: payload.data, meta: payload.meta ?? null };
 }
 
+async function saveDownload(res, fallbackName) {
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const plain = /filename="?([^";]+)"?/i.exec(disposition);
+  const name = utf ? decodeURIComponent(utf[1]) : plain ? plain[1] : fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return name;
+}
+
 export const api = {
   get: async (path, query, options) => (await json('GET', path, { ...options, query })).data,
   /** Like get, but returns { data, meta } (pagination and other list metadata). */
@@ -160,20 +177,18 @@ export const api = {
   /** Download a protected file or export and hand it to the browser's "save" flow. */
   async download(path, query, fallbackName = 'download') {
     const res = await send('GET', path, { query });
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') ?? '';
-    const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
-    const plain = /filename="?([^";]+)"?/i.exec(disposition);
-    const name = utf ? decodeURIComponent(utf[1]) : plain ? plain[1] : fallbackName;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    return name;
+    return saveDownload(res, fallbackName);
+  },
+
+  /** POST an uploaded template and download the populated file returned by the server. */
+  async downloadForm(path, fields, query, fallbackName = 'download') {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(fields)) {
+      if (value instanceof File) form.append(name, value, value.name);
+      else form.append(name, value);
+    }
+    const res = await send('POST', path, { form, query });
+    return saveDownload(res, fallbackName);
   },
 };
 
