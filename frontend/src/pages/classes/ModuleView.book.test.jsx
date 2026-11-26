@@ -459,9 +459,15 @@ describe('Module book-like reader & outline CTA', () => {
     let reader = container.querySelector('[data-lesson-reader]');
     expect(reader.getAttribute('tabindex')).toBe('0');
     expect(container.textContent).toContain('Foundations of Modularity');
+    const largerText = container.querySelector('button[aria-label="Larger text"]');
+    act(() => largerText.click());
+    await flush();
+    expect(container.querySelector('.rich-book').className).toContain('rich-book-lg');
+
     act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
     await flush();
     expect(container.textContent).toContain('Dependency Rules & Pitfalls');
+    expect(container.querySelector('.rich-book').className).toContain('rich-book-lg');
 
     reader = container.querySelector('[data-lesson-reader]');
     act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })));
@@ -515,6 +521,22 @@ describe('Module book-like reader & outline CTA', () => {
       sansBtn.click();
     });
     expect(container.querySelector('.rich-book').className).not.toContain('rich-book-serif');
+
+    // Text-size controls should visibly select distinct reader classes and persist the choice.
+    const smallerText = container.querySelector('button[aria-label="Smaller text"]');
+    const defaultText = container.querySelector('button[aria-label="Default text size"]');
+    const largerText = container.querySelector('button[aria-label="Larger text"]');
+    expect(smallerText).toBeTruthy();
+    expect(defaultText.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => { largerText.click(); });
+    expect(rich.className).toContain('rich-book-lg');
+    expect(largerText.getAttribute('aria-pressed')).toBe('true');
+    expect(JSON.parse(window.localStorage.getItem('discenda.readerPrefs')).size).toBe('lg');
+    await act(async () => { smallerText.click(); });
+    expect(rich.className).toContain('rich-book-sm');
+    await act(async () => { defaultText.click(); });
+    expect(rich.className).not.toContain('rich-book-sm');
+    expect(rich.className).not.toContain('rich-book-lg');
 
     // Mark Chapter 1 completed directly inside book view
     const completeBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Mark Chapter 1 as completed'));

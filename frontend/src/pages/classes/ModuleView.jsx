@@ -124,17 +124,18 @@ function ReaderControls({ prefs, onChange, isFullscreen, onToggleFullscreen }) {
       <div className="inline-flex w-full items-center justify-center rounded-lg border border-line bg-surface p-0.5 text-xs sm:w-auto sm:justify-start">
         <span className="px-1.5 text-faint" aria-hidden="true"><Type className="size-3.5" /></span>
         {[
-          ['sm', 'S', 'Smaller text'],
-          ['md', 'M', 'Default text size'],
-          ['lg', 'L', 'Larger text'],
+          ['sm', 'A−', 'Smaller text'],
+          ['md', 'A', 'Default text size'],
+          ['lg', 'A+', 'Larger text'],
         ].map(([val, label, title]) => (
           <button
             key={val}
             type="button"
             onClick={() => onChange({ size: val })}
+            aria-label={title}
             aria-pressed={prefs.size === val}
             title={title}
-            className={cn('rounded-md px-2 py-1 font-semibold transition-colors', prefs.size === val ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
+            className={cn('min-w-8 rounded-md px-2 py-1 font-semibold transition-colors', prefs.size === val ? 'bg-brand-soft text-brand' : 'text-soft hover:text-ink')}
           >
             {label}
           </button>
