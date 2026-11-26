@@ -58,8 +58,8 @@ function makeTablesScrollable(html) {
 /** True when the HTML has no visible content ("<p></p>"). */
 export const isEmptyHtml = (html) => !html || html.replace(/<(?!img|iframe)[^>]*>/gi, '').replace(/&nbsp;/g, ' ').trim() === '';
 
-export default function RichText({ html, className, style, empty = null }) {
+export default function RichText({ html, className, empty = null }) {
   const clean = useMemo(() => makeTablesScrollable(sanitizeHtml(html)), [html]);
   if (isEmptyHtml(clean)) return empty;
-  return <div className={cn('rich', className)} style={style} dangerouslySetInnerHTML={{ __html: clean }} />;
+  return <div className={cn('rich', className)} dangerouslySetInnerHTML={{ __html: clean }} />;
 }
