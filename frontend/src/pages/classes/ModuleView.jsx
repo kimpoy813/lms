@@ -14,6 +14,7 @@ import { toast } from '../../components/toast.jsx';
 import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconButton, Input, Menu, MenuItem, PageLoader, ProgressBar, QueryState, Segmented, Select, Textarea } from '../../components/ui.jsx';
 import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
+import { useBookNavigation } from '../../lib/bookNavigation.js';
 import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
 import AssignmentDialog from './AssignmentDialog.jsx';
@@ -244,7 +245,7 @@ export default function ModuleView() {
           {!canManage && mod.locked ? (
             <Card><EmptyState icon={Lock} title="This module is locked" description={mod.lockedReason} action={<Button to={`${base}/modules`}>Back to lessons</Button>} /></Card>
           ) : viewMode === 'book' && mod.lessons.length > 0 ? (
-            <BookReader modSummary={mod} prefs={prefs} />
+            <BookReader key={mod.id} modSummary={mod} prefs={prefs} />
           ) : (
             <div className={cn('grid grid-cols-1 gap-5', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
               <LessonList mod={mod} activeId={creating ? null : lessonId} focus={prefs.focus} />
@@ -332,11 +333,46 @@ function LessonList({ mod, activeId, focus = false }) {
   );
 }
 
+function BookPageNavigation({ label, page, total, canPrevious, canNext, onPrevious, onNext, showHint = false, helpId }) {
+  return (
+    <div className="no-print">
+      <nav aria-label="Book page navigation" className="flex items-center justify-between gap-2 rounded-xl border border-line bg-surface/80 p-2 sm:px-3 sm:py-2.5">
+        <Button variant="secondary" size="sm" icon={ArrowLeft} disabled={!canPrevious} onClick={onPrevious} aria-label="Previous page" className="shrink-0">
+          Previous
+        </Button>
+        <span className="min-w-0 text-center text-xs font-medium text-soft">
+          <span className="block truncate">{label}</span>
+          <span className="block text-faint tabular-nums">Page {page} of {total}</span>
+        </span>
+        <Button variant="secondary" size="sm" icon={ArrowRight} disabled={!canNext} onClick={onNext} aria-label="Next page" className="shrink-0">
+          Next
+        </Button>
+      </nav>
+      {showHint && <p id={helpId} className="mt-1.5 text-center text-xs text-faint">Swipe left or right, use a horizontal trackpad gesture, or focus the reader and press ← / →.</p>}
+    </div>
+  );
+}
+
 function BookReader({ modSummary, prefs }) {
   const { user } = useAuth();
   const { cls, canManage, base } = useClass();
   const [, setParams] = useSearchParams();
   const [savingId, setSavingId] = useState(null);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [turnDirection, setTurnDirection] = useState(null);
+  const pageStartRef = useRef(null);
+  const lastPage = (modSummary.lessons?.length ?? 0) + 1;
+  const goToPage = (nextPage) => {
+    if (nextPage < 0 || nextPage > lastPage || nextPage === pageIndex) return;
+    setTurnDirection(nextPage > pageIndex ? 'next' : 'previous');
+    setPageIndex(nextPage);
+  };
+  const pageNavigation = useBookNavigation({
+    canPrevious: pageIndex > 0,
+    canNext: pageIndex < lastPage,
+    onPrevious: () => goToPage(pageIndex - 1),
+    onNext: () => goToPage(pageIndex + 1),
+  });
   const [offlineMap, setOfflineMap] = useState(() => {
     const map = {};
     for (const l of modSummary.lessons ?? []) map[l.id] = isLessonSavedOffline(user?.id, l.id);
@@ -352,6 +388,17 @@ function BookReader({ modSummary, prefs }) {
   const effectiveQuery = readingOffline
     ? { ...bookQuery, isError: false, isSuccess: true, data: offlineBook.book }
     : bookQuery;
+
+  const readerReady = Boolean(effectiveQuery.data);
+
+  useEffect(() => {
+    if (!readerReady) return;
+    pageStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [pageIndex, readerReady]);
+
+  useEffect(() => {
+    setPageIndex((current) => Math.min(current, lastPage));
+  }, [lastPage]);
 
   const invalidate = [['class', cls.id], ['dashboard']];
   const toggleComplete = useAction(({ lessonId, done }) => (
@@ -380,12 +427,6 @@ function BookReader({ modSummary, prefs }) {
     }
   };
 
-  const scrollToChapter = (id) => {
-    if (!id) return;
-    const el = document.getElementById(`chapter-${id}`);
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   if (effectiveQuery.isError && effectiveQuery.error?.code === 'MODULE_LOCKED') {
     return <Card><EmptyState icon={Lock} title="This module is locked" description={effectiveQuery.error.message} /></Card>;
   }
@@ -397,9 +438,34 @@ function BookReader({ modSummary, prefs }) {
         const totalReadTime = formatDuration(book.totalEstimatedMinutes || chapters.reduce((s, c) => s + (Number(c.estimatedMinutes) || 0), 0));
         const completedCount = chapters.filter((c) => c.completed).length;
         const progressPercent = chapters.length ? Math.round((completedCount / chapters.length) * 100) : 0;
+        const activeChapter = pageIndex > 0 && pageIndex <= chapters.length ? chapters[pageIndex - 1] : null;
+        const pageLabel = pageIndex === 0
+          ? 'Module cover'
+          : activeChapter
+            ? `Chapter ${activeChapter.chapterNumber} of ${chapters.length}: ${activeChapter.title}`
+            : `End of ${book.title}`;
+        const pageAnnouncement = pageIndex === 0
+          ? `Module cover: ${book.title}`
+          : activeChapter
+            ? `Chapter ${activeChapter.chapterNumber} of ${chapters.length}: ${activeChapter.title}`
+            : `End of ${book.title}`;
+        const scrollToChapter = (id) => {
+          const index = chapters.findIndex((chapter) => chapter.id === id);
+          if (index >= 0) goToPage(index + 1);
+        };
 
         return (
-          <div className={cn('grid min-w-0 grid-cols-1 gap-4 sm:gap-6', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}>
+          <div
+            ref={pageStartRef}
+            data-book-reader
+            role="region"
+            tabIndex={0}
+            aria-label={`Book reader: ${book.title}`}
+            aria-describedby={`book-page-turn-help-${modSummary.id}`}
+            {...pageNavigation}
+            className={cn('book-reader-surface grid min-w-0 grid-cols-1 gap-4 sm:gap-6', prefs.focus ? 'mx-auto max-w-4xl' : 'lg:grid-cols-[18rem_minmax(0,1fr)]')}
+          >
+            <p className="sr-only" aria-live="polite" aria-atomic="true">{pageAnnouncement}</p>
             <aside className={cn('no-print lg:sticky lg:top-32 lg:self-start', prefs.focus && 'lg:hidden')}>
               <div className="lg:hidden">
                 <Card padded={false} className="overflow-hidden">
@@ -419,15 +485,12 @@ function BookReader({ modSummary, prefs }) {
                   <div className="p-3">
                     <Select
                       aria-label="Jump to chapter"
-                      defaultValue=""
-                      onChange={(e) => {
-                        scrollToChapter(e.target.value);
-                        e.target.value = '';
-                      }}
+                      value={activeChapter ? String(pageIndex - 1) : ''}
+                      onChange={(e) => goToPage(Number(e.target.value) + 1)}
                     >
                       <option value="" disabled>Jump to chapter…</option>
-                      {chapters.map((ch) => (
-                        <option key={ch.id} value={ch.id}>
+                      {chapters.map((ch, index) => (
+                        <option key={ch.id} value={index}>
                           Ch. {ch.chapterNumber}: {ch.title}{!canManage && ch.completed ? ' (done)' : !canManage && ch.locked ? ' (locked)' : ''}
                         </option>
                       ))}
@@ -458,9 +521,10 @@ function BookReader({ modSummary, prefs }) {
                               e.preventDefault();
                               scrollToChapter(ch.id);
                             }}
+                            aria-current={activeChapter?.id === ch.id ? 'page' : undefined}
                             className={cn(
                               'flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors',
-                              locked ? 'text-faint hover:bg-raised/60' : 'text-ink hover:bg-raised',
+                              activeChapter?.id === ch.id ? 'bg-brand-soft text-brand' : locked ? 'text-faint hover:bg-raised/60' : 'text-ink hover:bg-raised',
                             )}
                           >
                             {canManage ? (
@@ -492,9 +556,19 @@ function BookReader({ modSummary, prefs }) {
                   You are offline. Showing chapters saved on this device {relativeTime(offlineBook.savedAt)}.
                 </Alert>
               )}
-
+              <BookPageNavigation
+                label={pageLabel}
+                page={pageIndex + 1}
+                total={chapters.length + 2}
+                canPrevious={pageIndex > 0}
+                canNext={pageIndex < chapters.length + 1}
+                onPrevious={() => goToPage(pageIndex - 1)}
+                onNext={() => goToPage(pageIndex + 1)}
+                showHint
+                helpId={`book-page-turn-help-${modSummary.id}`}
+              />
               {/* Module Title / Front-Matter Page */}
-              <Card className="overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none">
+              <Card className={cn('overflow-hidden border-t-4 border-t-brand p-4 sm:p-6 print:border-0 print:shadow-none', pageIndex !== 0 && 'hidden print:block', pageIndex === 0 && turnDirection && `book-page-turn-${turnDirection}`)}>
                 <div className="mx-auto max-w-[68ch]">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
@@ -533,11 +607,12 @@ function BookReader({ modSummary, prefs }) {
                         <li key={ch.id}>
                           <a
                             href={`#chapter-${ch.id}`}
+                            aria-current={activeChapter?.id === ch.id ? 'page' : undefined}
                             onClick={(e) => {
                               e.preventDefault();
                               scrollToChapter(ch.id);
                             }}
-                            className="flex items-start gap-3 px-3 py-3 text-sm transition-colors hover:bg-raised sm:px-3.5"
+                            className={cn('flex items-start gap-3 px-3 py-3 text-sm transition-colors hover:bg-raised sm:px-3.5', activeChapter?.id === ch.id && 'bg-brand-soft/60')}
                           >
                             <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand-soft text-xs font-bold tabular-nums text-brand">
                               {ch.chapterNumber}
@@ -570,14 +645,16 @@ function BookReader({ modSummary, prefs }) {
                 </div>
               </Card>
 
-              {/* Chapters rendered sequentially like pages of a book */}
+              {/* Inactive chapter pages stay mounted for printing, but only the selected page is visible while reading. */}
               {chapters.map((ch, idx) => {
                 const nextChapter = chapters[idx + 1];
                 const locked = !canManage && ch.locked;
+                const visiblePage = pageIndex === idx + 1;
+                const pageClassName = cn('book-chapter scroll-mt-24', !visiblePage && 'hidden print:block', visiblePage && turnDirection && `book-page-turn-${turnDirection}`);
 
                 if (locked) {
                   return (
-                    <article key={ch.id} id={`chapter-${ch.id}`} className="book-chapter scroll-mt-24">
+                    <article key={ch.id} id={`chapter-${ch.id}`} className={pageClassName}>
                       <Card className="border-dashed bg-raised/35 p-4 sm:p-6">
                         <div className="mx-auto flex max-w-[68ch] items-start gap-3">
                           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-raised text-faint"><Lock className="size-4" aria-hidden="true" /></span>
@@ -593,7 +670,7 @@ function BookReader({ modSummary, prefs }) {
                 }
 
                 return (
-                  <article key={ch.id} id={`chapter-${ch.id}`} className="book-chapter scroll-mt-24">
+                  <article key={ch.id} id={`chapter-${ch.id}`} className={pageClassName}>
                     <Card className="p-4 sm:p-6 print:border-0 print:shadow-none">
                       <div className="mx-auto max-w-[68ch]">
                         <header className="mb-6 border-b border-line pb-5">
@@ -724,7 +801,7 @@ function BookReader({ modSummary, prefs }) {
               })}
 
               {/* End-of-Module Epilogue */}
-              <Card className="no-print bg-raised/40 p-4 sm:p-6">
+              <Card className={cn('no-print bg-raised/40 p-4 sm:p-6', pageIndex !== chapters.length + 1 && 'hidden', pageIndex === chapters.length + 1 && turnDirection && `book-page-turn-${turnDirection}`)}>
                 <div className="mx-auto flex max-w-[68ch] flex-wrap items-center justify-between gap-4">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-ink">
@@ -744,6 +821,15 @@ function BookReader({ modSummary, prefs }) {
                   </div>
                 </div>
               </Card>
+              <BookPageNavigation
+                label={pageLabel}
+                page={pageIndex + 1}
+                total={chapters.length + 2}
+                canPrevious={pageIndex > 0}
+                canNext={pageIndex < chapters.length + 1}
+                onPrevious={() => goToPage(pageIndex - 1)}
+                onNext={() => goToPage(pageIndex + 1)}
+              />
             </div>
           </div>
         );
@@ -762,12 +848,25 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
   const [assignmentNotice, setAssignmentNotice] = useState(null);
   const [savedOffline, setSavedOffline] = useState(() => isLessonSavedOffline(user?.id, lessonId));
   const [savingOffline, setSavingOffline] = useState(false);
+  const lessonReaderRef = useRef(null);
   const query = useQuery({ queryKey: ['class', cls.id, 'lesson', lessonId], queryFn: () => api.get(`/lessons/${lessonId}`) });
   const offlineEntry = getOfflineLesson(user?.id, lessonId);
   const readingOffline = Boolean(query.isError && query.error?.code === 'NETWORK' && offlineEntry);
   const effectiveQuery = readingOffline
     ? { ...query, isError: false, isSuccess: true, data: offlineEntry.lesson }
     : query;
+  const loadedLesson = effectiveQuery.data;
+  const canGoPrevious = Boolean(loadedLesson?.previous);
+  const canGoNext = Boolean(loadedLesson?.next && (canManage || !loadedLesson.next.locked));
+  const goToLesson = (target) => {
+    if (target) navigate(`${base}/modules/${mod.id}?lesson=${target.id}`);
+  };
+  const pageNavigation = useBookNavigation({
+    canPrevious: canGoPrevious,
+    canNext: canGoNext,
+    onPrevious: () => goToLesson(loadedLesson?.previous),
+    onNext: () => goToLesson(loadedLesson?.next),
+  });
   const invalidate = [['class', cls.id], ['dashboard']];
   const complete = useAction((done) => (done ? api.post(`/lessons/${lessonId}/complete`) : api.delete(`/lessons/${lessonId}/complete`)), { invalidate });
   const bookmark = useAction((on) => (on ? api.post('/bookmarks', { lessonId }) : api.delete('/bookmarks', { lessonId })), { invalidate: [['class', cls.id, 'lesson', lessonId], ['bookmarks']] });
@@ -782,6 +881,11 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
   useEffect(() => {
     setSavedOffline(isLessonSavedOffline(user?.id, lessonId));
   }, [user?.id, lessonId]);
+
+  useEffect(() => {
+    if (loadedLesson?.id !== lessonId) return;
+    lessonReaderRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [loadedLesson?.id, lessonId]);
 
   useEffect(() => {
     setEditing(canManage && params.get('edit') === '1');
@@ -817,7 +921,16 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
   return (
     <QueryState query={effectiveQuery}>
       {(lesson) => editing ? <LessonEditor mod={mod} lesson={lesson} onDone={closeEditor} /> : (
-        <article>
+        <article
+          ref={lessonReaderRef}
+          data-lesson-reader
+          role="region"
+          tabIndex={0}
+          aria-label={`Lesson reader: ${lesson.title}`}
+          aria-describedby={`lesson-page-turn-help-${lessonId}`}
+          {...pageNavigation}
+          className="book-reader-surface"
+        >
           {assignmentNotice && (
             <Alert
               tone="ok"
@@ -939,6 +1052,7 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
                 ? <span className="flex items-center gap-1.5 text-[13px] text-faint"><Lock className="size-4" aria-hidden="true" />Complete this lesson to unlock the next one</span>
                 : <Button variant={lesson.completed || canManage ? 'primary' : 'secondary'} to={`${base}/modules/${mod.id}?lesson=${lesson.next.id}`} className="max-w-[45%]"><span className="truncate">{lesson.next.title}</span><ArrowRight className="size-4 shrink-0" aria-hidden="true" /></Button>
               : <Button variant="secondary" to={`${base}/modules`}>Back to all lessons</Button>}
+            <p id={`lesson-page-turn-help-${lessonId}`} className="order-last basis-full text-center text-xs text-faint">Swipe left or right, use a horizontal trackpad gesture, focus the reader and press ← / →, or use the lesson buttons.</p>
           </nav>
 
           {dialog === 'resource' && <ResourceDialog classId={cls.id} teacherId={cls.teacher?.id} placement={{ moduleId: mod.id, lessonId }} onClose={() => setDialog(null)} />}
