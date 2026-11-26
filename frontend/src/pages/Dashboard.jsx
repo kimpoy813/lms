@@ -5,7 +5,7 @@ import {
   AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Clock, FileQuestion, GraduationCap, HardDrive, History, Inbox,
   Mail, MapPin, Megaphone, PenLine, Radio, ScanLine, Server, Sparkles, TrendingDown, UserCheck, UserPlus, Users,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback } from 'react';
+import { lazy, Suspense, useCallback, useId, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/AuthContext.jsx';
 import PushNotificationsCard from '../components/PushNotificationsCard.jsx';
@@ -66,6 +66,28 @@ function ItemRow({ to, icon: Icon, title, meta, right, tone = 'brand' }) {
         <ArrowRight className="size-4 shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
       </Link>
     </li>
+  );
+}
+
+// Keep the most actionable rows visible; expose the rest of the dashboard's loaded rows on demand.
+function ProgressiveList({ items, initialCount = 4, moreLabel = 'item', className, children }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const remainingCount = items.length - initialCount;
+  const visibleItems = expanded ? items : items.slice(0, initialCount);
+  return (
+    <>
+      <ul id={listId} className={className}>
+        {visibleItems.map((item, index) => children(item, index))}
+      </ul>
+      {items.length > initialCount && (
+        <div className="mt-2 border-t border-line pt-2">
+          <Button variant="ghost" size="sm" className="w-full" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={listId}>
+            {expanded ? 'Show fewer' : `Show ${remainingCount} more ${remainingCount === 1 ? moreLabel : `${moreLabel}s`}`}
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -171,25 +193,23 @@ function StudentDashboard({ data }) {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div className="min-w-0 space-y-5 lg:col-span-2">
           <Card>
-            <CardHeader icon={ClipboardList} title="To do" description="Open work, soonest first" />
+            <CardHeader icon={ClipboardList} title="To do" description={data.todo.length < stats.dueThisWeek ? `Showing the next ${data.todo.length} of ${stats.dueThisWeek} open items, soonest first` : 'Open work, soonest first'} />
             {data.todo.length === 0 ? <EmptyState compact icon={CheckCircle2} title="Nothing due this week" description="New assignments and quizzes will show up here." /> : (
-              <ul className="-mx-2">
-                {data.todo.map((t) => {
+              <ProgressiveList items={data.todo} initialCount={4} moreLabel="task" className="-mx-2">
+                {(t) => {
                   const soon = new Date(t.dueAt).getTime() - Date.now() < 36 * 3_600_000;
                   return <ItemRow key={`${t.kind}-${t.id}`} to={t.link} icon={kindIcon(t.kind)} title={t.title} meta={`${t.classLabel} · ${dueLabel(t.dueAt)}`} tone={soon ? 'warn' : 'brand'} right={t.points != null ? <span className="hidden shrink-0 text-xs font-medium text-faint sm:block">{formatScore(t.points)} pts</span> : null} />;
-                })}
-              </ul>
+                }}
+              </ProgressiveList>
             )}
           </Card>
 
           {data.missing.length > 0 && (
             <Card className="border-bad/25">
-              <CardHeader icon={AlertTriangle} title="Missing work" description="Past the due date and not submitted" />
-              <ul className="-mx-2">
-                {data.missing.map((m) => (
-                  <ItemRow key={`${m.kind}-${m.id}`} to={m.link} icon={kindIcon(m.kind)} title={m.title} meta={`${m.classLabel} · ${dueLabel(m.dueAt)}`} tone="bad" right={m.canStillSubmit ? <Badge tone="warn">Late submission allowed</Badge> : <Badge>Closed</Badge>} />
-                ))}
-              </ul>
+              <CardHeader icon={AlertTriangle} title="Missing work" description={data.missing.length < stats.missing ? `Showing the ${data.missing.length} most recent of ${stats.missing} missing items` : 'Past the due date and not submitted'} />
+              <ProgressiveList items={data.missing} initialCount={3} moreLabel="missing item" className="-mx-2">
+                {(m) => <ItemRow key={`${m.kind}-${m.id}`} to={m.link} icon={kindIcon(m.kind)} title={m.title} meta={`${m.classLabel} · ${dueLabel(m.dueAt)}`} tone="bad" right={m.canStillSubmit ? <Badge tone="warn">Late submission allowed</Badge> : <Badge>Closed</Badge>} />}
+              </ProgressiveList>
             </Card>
           )}
 
@@ -290,10 +310,10 @@ function TeacherDashboard({ data }) {
           </Card>
 
           <Card>
-            <CardHeader icon={TrendingDown} title="Students who may need help" description={`Running grade below ${thresholds.gradeBelow}%, attendance below ${thresholds.attendanceBelow}%, or ${thresholds.missingAtLeast}+ missing submissions`} />
+            <CardHeader icon={TrendingDown} title="Students who may need help" description={`${data.atRisk.length < stats.atRisk ? `Showing the top ${data.atRisk.length} of ${stats.atRisk} flagged students · ` : ''}Running grade below ${thresholds.gradeBelow}%, attendance below ${thresholds.attendanceBelow}%, or ${thresholds.missingAtLeast}+ missing submissions`} />
             {data.atRisk.length === 0 ? <EmptyState compact icon={CheckCircle2} title="No one is flagged right now" /> : (
-              <ul className="divide-y divide-line">
-                {data.atRisk.map((s) => (
+              <ProgressiveList items={data.atRisk} initialCount={4} moreLabel="student" className="divide-y divide-line">
+                {(s) => (
                   <li key={`${s.classId}-${s.studentId}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3 first:pt-0 last:pb-0" title={s.reasons.join(' · ')}>
                     <Avatar name={s.name} size={36} />
                     <div className="min-w-0 flex-1 basis-44">
@@ -310,8 +330,8 @@ function TeacherDashboard({ data }) {
                       <Button to={`/classes/${s.classId}/analytics`} variant="ghost" size="sm" aria-label={`Open class analytics for ${s.name}`}>Details</Button>
                     </div>
                   </li>
-                ))}
-              </ul>
+                )}
+              </ProgressiveList>
             )}
           </Card>
 
