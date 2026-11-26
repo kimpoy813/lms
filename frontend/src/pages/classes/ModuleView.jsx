@@ -177,6 +177,57 @@ function useReaderPrefs() {
   return [prefs, update];
 }
 
+// CSS multi-column layout only draws the facing page of a spread when both columns fit inside the
+// content box. Browsers lay the flow out at a fractional width (a scaled Windows display or a page
+// zoom gives 837.89px, not 838px) while `clientWidth` reports a rounded number. Rounding the column
+// width with that rounded number makes `2 × column + gap` wider than the flow, so the browser fits
+// only one column and the right page of every spread stays empty. Measure the fractional width,
+// round the column down, and let the browser confirm that it really made two columns.
+function bookColumnMetrics(flow, layout, rootFontSize) {
+  const gap = layout === 'two' ? rootFontSize : rootFontSize * 1.5;
+  flow.style.columnGap = `${gap}px`;
+  flow.style.webkitColumnGap = `${gap}px`;
+  const bounds = flow.getBoundingClientRect?.();
+  const layoutWidth = bounds?.width > 0 ? bounds.width : flow.clientWidth;
+  if (layout !== 'two') {
+    const wholeWidth = Math.floor(layoutWidth);
+    return { gap, columnWidth: wholeWidth };
+  }
+
+  let columnWidth = Math.floor((layoutWidth - gap) / 2);
+  // A border or a scrollbar can still take the last fraction of a pixel. Shrink only until both
+  // columns fit: at most a pixel or two, and only when the browser reports real geometry.
+  for (let attempt = 0; attempt < 8 && columnWidth > 1; attempt += 1) {
+    applyBookColumnWidth(flow, columnWidth);
+    const columns = bookColumnCount(flow, columnWidth + gap);
+    if (columns === null || columns >= 2) break;
+    columnWidth -= Math.max(1, Math.ceil((columnWidth + gap) * 2 - layoutWidth));
+  }
+  return { gap, columnWidth };
+}
+
+function applyBookColumnWidth(flow, columnWidth) {
+  flow.style.columnWidth = `${columnWidth}px`;
+  flow.style.webkitColumnWidth = `${columnWidth}px`;
+}
+
+// How many page columns the flow currently draws, or null when the environment reports no
+// geometry (a test DOM, or a page that is not laid out yet).
+function bookColumnCount(flow, stride) {
+  if (!(stride > 0)) return null;
+  const bounds = flow.getBoundingClientRect?.();
+  if (!bounds || !(bounds.width > 0)) return null;
+  const offsets = new Set();
+  let measured = false;
+  for (const element of flow.querySelectorAll('[data-book-page]')) {
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || !(rect.width > 0)) continue;
+    measured = true;
+    offsets.add(Math.round((rect.left - bounds.left + (flow.scrollLeft || 0)) / stride));
+  }
+  return measured ? offsets.size : null;
+}
+
 function useBookSpreadViewport() {
   const [canShowSpread, setCanShowSpread] = useState(() => (
     typeof window !== 'undefined' && window.innerWidth >= BOOK_SPREAD_MIN_WIDTH
@@ -730,26 +781,21 @@ function BookReader({ modSummary, prefs, immersive = false }) {
     const cancelFrame = window.cancelAnimationFrame?.bind(window) ?? window.clearTimeout.bind(window);
     const measure = () => {
       if (disposed) return;
-      const width = flow.clientWidth;
       const height = flow.clientHeight;
-      if (width <= 0 || height <= 0) {
+      if (flow.clientWidth <= 0 || height <= 0) {
         setMeasuredPagination({ chapters, pageMap: fallbackPageMap, columnWidth: 0, gap: 0, stride: 0 });
         return;
       }
 
       const rootFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
-      const gap = layout === 'two' ? rootFontSize : rootFontSize * 1.5;
-      const columnWidth = layout === 'two' ? Math.max(1, (width - gap) / 2) : width;
       // The width and gap define the visible one- or two-page tracks. Keep the count automatic
       // so the continuous book stream can overflow into later page columns as content requires.
       flow.style.columnCount = 'auto';
       flow.style.webkitColumnCount = 'auto';
-      flow.style.columnWidth = `${columnWidth}px`;
-      flow.style.webkitColumnWidth = `${columnWidth}px`;
-      flow.style.columnGap = `${gap}px`;
-      flow.style.webkitColumnGap = `${gap}px`;
       flow.style.columnFill = 'auto';
       flow.style.webkitColumnFill = 'auto';
+      const { gap, columnWidth } = bookColumnMetrics(flow, layout, rootFontSize);
+      applyBookColumnWidth(flow, columnWidth);
       flow.style.setProperty('--book-page-width', `${columnWidth}px`);
       const flowRect = flow.getBoundingClientRect();
       const stride = columnWidth + gap;

@@ -288,6 +288,15 @@
     -webkit-column-break-inside: auto;
     break-inside: auto;
   }
+  /* The facing page of a spread is the second column of the same flow. Let the two tracks share the
+     width while the measured gap is still settling for one frame, so a spread never drops to a
+     single column and leaves the right page empty. */
+  .book-page-spread[data-layout="two"] .book-page-flow {
+    -webkit-column-width: auto;
+    column-width: auto;
+    -webkit-column-count: 2;
+    column-count: 2;
+  }
   .book-page-flow > .book-page > .book-page-card,
   .book-page-flow > .book-page > .book-page-card > .reader-scaled-content {
     -webkit-column-break-inside: auto;
