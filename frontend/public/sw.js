@@ -5,10 +5,10 @@
 // grades, attendance, and messages are private and must always come from the server.
 // What it never touches at all: /pyrunner/, the frame students' Python programs run in. That
 // page has to come from the server with its own security headers, and is not the app's page.
-const VERSION = 'discenda-v5';
-const SHELL = ['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png'];
+const VERSION = 'discenda-v7';
+const SHELL = ['/', '/offline.html', '/theme-init.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png', '/branding/discenda-logo-light.png', '/branding/discenda-logo-dark.png'];
 const SHELL_SET = new Set(SHELL);
-const GENERIC_PUSH_TITLES = new Set(['discenda', 'edusphere', 'notification', 'new notification', 'new message']);
+const GENERIC_PUSH_TITLES = new Set(['discenda', 'notification', 'new notification', 'new message']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -79,7 +79,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Shell files (manifest, favicon, theme-init, offline page): network first so updates
+  // Shell files (manifest, theme-init, offline page, and brand lockups): network first so updates
   // propagate immediately online while staying self-contained offline.
   if (SHELL_SET.has(url.pathname)) {
     event.respondWith(

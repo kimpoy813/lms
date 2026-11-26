@@ -239,7 +239,7 @@ describe('Academic workflows & Web Push API', () => {
       expect(fallbackParsed.body).toContain('posted grades');
       const bodyOnly = JSON.parse(buildPushPayload({ type: 'grades.published', body: 'Your Biology final grade is ready.' }));
       expect(bodyOnly).toMatchObject({ title: 'Your Biology final grade is ready.', body: 'Your Biology final grade is ready.' });
-      const brandedOnly = JSON.parse(buildPushPayload({ type: 'grades.published', title: 'EduSphere', body: 'Your Biology final grade is ready.' }));
+      const brandedOnly = JSON.parse(buildPushPayload({ type: 'grades.published', title: 'Discenda', body: 'Your Biology final grade is ready.' }));
       expect(brandedOnly).toMatchObject({ title: 'Your Biology final grade is ready.', body: 'Your Biology final grade is ready.' });
       const emptyNotice = JSON.parse(buildPushPayload({ type: 'grades.published' }));
       expect(emptyNotice.title).not.toBe('Discenda');

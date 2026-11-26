@@ -94,7 +94,7 @@ beforeEach(async () => {
 
 describe('the service worker', () => {
   it('keeps the app’s shell and offline fallback for when the network is away', async () => {
-    expect([...stored.keys()]).toEqual(['/', '/offline.html', '/theme-init.js', '/favicon.svg', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png']);
+    expect([...stored.keys()]).toEqual(['/', '/offline.html', '/theme-init.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/badge-96.png', '/branding/discenda-logo-light.png', '/branding/discenda-logo-dark.png']);
     const online = await request('/classes/abc/grades', { mode: 'navigate' });
     expect(online.response.body).toBe('the app');
     expect(stored.get('/')).toBe('the app');
@@ -196,7 +196,7 @@ describe('the service worker', () => {
       { json: () => ({ title: 'New module in CS 101' }) },
       { json: () => ({ data: { notification: { title: 'Nested grade', body: 'Biology final · 92%', tag: 'nested' }, link: '/grades' } }) },
       { json: () => ({ body: 'Attendance is open until 9:30 AM', link: '/attendance' }) },
-      { json: () => ({ title: 'EduSphere', body: 'Your Biology final grade is ready.' }) },
+      { json: () => ({ title: 'Discenda', body: 'Your Biology final grade is ready.' }) },
       { json: () => ({ title: 'Course update', body: longDetails, link: '/notifications' }) },
     ]) {
       let wait;
