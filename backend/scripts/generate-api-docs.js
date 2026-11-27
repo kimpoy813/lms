@@ -147,6 +147,7 @@ const lines = [
   '- **Authentication** — an HTTP-only session cookie set by `POST /api/auth/login`. There are no bearer tokens to store in the browser.',
   '- **CSRF** — every request other than `GET`/`HEAD` must send the header `X-CSRF-Token` with the token returned by `POST /api/auth/login` or `GET /api/auth/session`, and must come from a trusted origin.',
   '- **Validation** — `422 VALIDATION_ERROR` with `details.fields` (`{ field: message }`).',
+  '- **Personal marks** — a highlight and its note belong to the reader who made it. No endpoint returns them to anyone else, not even to the teacher of the class, and `PATCH` or `DELETE` on someone else’s highlight answers `404` rather than revealing that it exists.',
   '- **Access** — "signed in" endpoints still check membership: a class you do not belong to answers `404`, an action your role may not perform answers `403`. Role names in the tables are the roles allowed to call the endpoint at all.',
   '- **Pagination** — `?page=1&pageSize=20`; the response carries `meta: { page, pageSize, total, totalPages }`.',
   '- **Exports** — `?format=csv|xlsx|pdf` where an export endpoint exists.',

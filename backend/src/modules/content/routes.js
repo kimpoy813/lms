@@ -1185,6 +1185,12 @@ contentRouter.delete('/resources/:resourceId', validate({ params: idParams('reso
 // A reader marks words in a lesson. Only the quote and a little context are stored; the browser
 // finds the quote again in the lesson text, so a highlight follows small edits and simply
 // disappears when the words are gone.
+//
+// These are personal notes, not class annotations. Every route below is scoped to the signed-in
+// reader: the module book and the lesson carry only their own marks, `GET /highlights` lists only
+// theirs, and a mark that belongs to someone else is reported as missing (404) whether the caller is
+// another student or the teacher of the class. Changing this needs a deliberate new endpoint — do
+// not widen these queries.
 const HIGHLIGHT_COLOURS = ['yellow', 'green', 'blue', 'pink'];
 const highlightBody = z.object({
   lessonId: zId,

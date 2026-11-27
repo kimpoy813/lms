@@ -500,7 +500,7 @@ function LessonHighlights({ highlights, painted = [], onJump, onRemove }) {
           <Highlighter className="mr-1 inline size-3.5 text-brand" aria-hidden="true" />
           Your highlights <span className="font-normal text-faint">({highlights.length})</span>
         </p>
-        <span className="reading-setting-hint">Only you can see these</span>
+        <span className="reading-setting-hint">Private to you — your teacher cannot see them</span>
       </div>
       <ul>
         {highlights.map((highlight) => {
@@ -639,7 +639,7 @@ export function ReaderSettings({ prefs, onChange, isFullscreen, onToggleFullscre
         )}
 
         {canHighlight && (
-          <SettingGroup icon={Highlighter} title="Highlighter" hint="Used for new highlights">
+          <SettingGroup icon={Highlighter} title="Highlighter" hint="Marks you keep for yourself">
             <div className="reading-colour-picker" role="group" aria-label="Highlighter colour">
               {HIGHLIGHT_COLORS.map((option) => (
                 <button
@@ -656,6 +656,10 @@ export function ReaderSettings({ prefs, onChange, isFullscreen, onToggleFullscre
                 </button>
               ))}
             </div>
+            <p className="reading-setting-hint mt-1.5 flex items-start gap-1">
+              <Lock className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+              Private: only you see the words you highlight and your notes. Not your teacher, not other students.
+            </p>
           </SettingGroup>
         )}
       </div>
