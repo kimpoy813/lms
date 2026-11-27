@@ -1115,6 +1115,10 @@ describe('Module book-like reader & outline CTA', () => {
     expect(mark.getAttribute('data-highlight-colour')).toBe('green');
     // The rest of the lesson is untouched.
     expect(container.querySelector('.rich-book h3').textContent).toBe('1. Introduction');
+    // The list of marks says they are nobody else's business.
+    const list = container.querySelector('[aria-label="Your highlights"]');
+    expect(list).not.toBeNull();
+    expect(list.textContent).toContain('Private to you — your teacher cannot see them');
 
     act(() => mark.click());
     await flush();
@@ -1167,6 +1171,8 @@ describe('Module book-like reader & outline CTA', () => {
     expect(settings.querySelector('[role="group"][aria-label="Highlighter colour"]')).not.toBeNull();
     expect(settings.querySelector('[role="radiogroup"][aria-label="Book page layout"]')).not.toBeNull();
     expect([...settings.querySelectorAll('button[aria-pressed]')].some((button) => button.getAttribute('aria-label') === 'Yellow highlighter')).toBe(true);
+    // A student is told plainly that their highlights are their own business.
+    expect(settings.textContent).toContain('Private: only you see the words you highlight and your notes.');
     unmount();
   });
 });

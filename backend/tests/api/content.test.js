@@ -397,6 +397,45 @@ describe('resources', () => {
     expect(await prisma.readingHighlight.count({ where: { userId: students[0].user.id } })).toBe(0);
   });
 
+  it('never shows a reader\'s highlights to another student or to the teacher', async () => {
+    const { teacher, cls, students } = await classroom(3);
+    const mod = await mk(teacher, cls);
+    const lesson = await mkLesson(teacher, mod.id, { contentHtml: '<p>Cohesion keeps related logic together.</p>' });
+    const made = await students[0].post('/api/highlights', {
+      lessonId: lesson.id,
+      quote: 'related logic',
+      note: 'PRIVATE: what I did not understand',
+      colour: 'green',
+    });
+    expect(made.status).toBe(201);
+    const id = made.body.data.id;
+
+    // Two other readers of the same class, and the teacher who wrote the lesson, all see nothing —
+    // not in the book, not in the lesson, not in their own list of highlights.
+    for (const other of [students[1], students[2], teacher]) {
+      expect((await other.get(`/api/modules/${mod.id}/book`)).body.data.chapters[0].highlights).toEqual([]);
+      expect((await other.get(`/api/lessons/${lesson.id}`)).body.data.highlights).toEqual([]);
+      expect((await other.get(`/api/highlights?lessonId=${lesson.id}`)).body.data).toEqual([]);
+      expect((await other.get('/api/highlights')).body.data).toEqual([]);
+    }
+
+    // A guessed id gets the intruder nowhere: it is reported as missing, and cannot be changed or
+    // removed by anyone but its owner.
+    expect((await students[1].patch(`/api/highlights/${id}`, { note: 'someone else' })).status).toBe(404);
+    expect((await teacher.patch(`/api/highlights/${id}`, { colour: 'pink' })).status).toBe(404);
+    expect((await students[1].delete(`/api/highlights/${id}`)).status).toBe(204);
+    expect((await teacher.delete(`/api/highlights/${id}`)).status).toBe(204);
+    const stillThere = await prisma.readingHighlight.findUnique({ where: { id } });
+    expect(stillThere).toMatchObject({ note: 'PRIVATE: what I did not understand', colour: 'green' });
+
+    // The owner still sees exactly their own mark, with its note.
+    const mine = await students[0].get(`/api/highlights?lessonId=${lesson.id}`);
+    expect(mine.body.data).toHaveLength(1);
+    expect(mine.body.data[0]).toMatchObject({ id, quote: 'related logic', note: 'PRIVATE: what I did not understand' });
+    expect((await students[0].get(`/api/lessons/${lesson.id}`)).body.data.highlights.map((h) => h.id)).toEqual([id]);
+    expect((await students[0].get(`/api/modules/${mod.id}/book`)).body.data.chapters[0].highlights.map((h) => h.id)).toEqual([id]);
+  });
+
   it('refuses highlights that are empty or on a lesson the reader cannot open', async () => {
     const { teacher, cls, students } = await classroom(1);
     const mod = await mk(teacher, cls);

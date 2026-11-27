@@ -1122,6 +1122,8 @@ model ReadingHighlight {
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
   updatedAt  DateTime @updatedAt @db.Timestamptz(3)
 
+  // Personal by design: every query in the API is scoped to this reader, and nobody else — not
+  // another student, not the teacher of the class — is given these words or allowed to change them.
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 

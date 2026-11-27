@@ -103,6 +103,8 @@ test('the reading settings are a labelled panel that remembers the highlighter c
     for (const group of ['Typeface', 'Text size', 'Pages', 'Highlighter']) {
       await expect(settings.getByText(group, { exact: true })).toBeVisible();
     }
+    // The panel tells the reader their marks are private before they make one.
+    await expect(settings).toContainText('only you see the words you highlight and your notes');
     await settings.getByRole('button', { name: 'Green highlighter' }).click();
     await expect(settings.getByRole('button', { name: 'Green highlighter' })).toHaveAttribute('aria-pressed', 'true');
     expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem('discenda.readerPrefs')).highlightColour)).toBe('green');
