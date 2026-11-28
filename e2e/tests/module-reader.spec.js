@@ -585,6 +585,93 @@ test('keeps both pages of a spread filled at a fractional reader width', async (
 
 // Two thin columns are hard to read on a tablet held upright, so the spread is offered on landscape
 // screens only: a laptop, or a tablet turned sideways.
+// A laptop turns pages with the keyboard or a two-finger trackpad gesture, and both used to look
+// broken: the sheet was an opaque card hiding the text, and the gesture scrolled the page out from
+// under the flip because the wheel listener could not refuse it.
+test('turns the page with a sheet that never hides the words or scrolls the page', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signIn(page, 'student');
+
+  const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+  const api = await apiAs('student', baseURL);
+  try {
+    const cls = await demoClass(api);
+    const modules = await api.get(`/classes/${cls.id}/modules`);
+    const demoModule = modules.find((module) => module.title.includes('Introduction to Computers'));
+
+    await page.addInitScript(() => localStorage.setItem('discenda.readerPrefs', JSON.stringify({
+      font: 'serif', size: 'md', focus: true, layout: 'two',
+    })));
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto(`/classes/${cls.id}/modules/${demoModule.id}?view=book`);
+
+    const reader = page.locator('[data-book-reader]');
+    const spread = page.getByTestId('book-page-spread');
+    await expect(reader).toBeVisible();
+    await expect(spread).toHaveAttribute('data-page-count', '2');
+
+    // Keyboard turn: a sheet appears, is translucent, and is gone when the turn is over.
+    const scrollBefore = await page.evaluate(() => window.scrollY);
+    await reader.press('ArrowRight');
+    const sheet = page.getByTestId('book-turn-sheet');
+    const duringTurn = await sheet.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        animation: style.animationName,
+        blend: style.mixBlendMode,
+        // Layout size, not the projected rectangle: the sheet is already turning, so its on-screen
+        // box shrinks with the rotation and would make this assertion a race.
+        width: element.offsetWidth,
+        height: element.offsetHeight,
+      };
+    });
+    expect(duringTurn.animation).toContain('book-sheet-flip');
+    // The sheet must not be an opaque card over the text.
+    expect(duringTurn.blend).toBe('multiply');
+    // It is one page of the spread, not the whole spread, and it has real size.
+    const spreadBox = await spread.boundingBox();
+    expect(duringTurn.width).toBeGreaterThan(spreadBox.width * 0.4);
+    expect(duringTurn.width).toBeLessThan(spreadBox.width * 0.6);
+    expect(duringTurn.height).toBeGreaterThan(spreadBox.height * 0.5);
+
+    // The words the reader is on stay in the document, and visible, while the sheet passes over.
+    const textUnderSheet = await page.evaluate(() => {
+      const flow = document.querySelector('[data-testid="book-page-flow"]');
+      const visible = [...flow.querySelectorAll('.book-page[aria-hidden="false"]')];
+      return visible.map((element) => element.textContent.trim().length);
+    });
+    expect(textUnderSheet.every((length) => length > 40)).toBe(true);
+
+    // When the turn ends the sheet is gone, so no invisible layer sits over the pages.
+    await expect(sheet).toHaveCount(0, { timeout: 3000 });
+    // The page did not scroll under the turn.
+    expect(Math.abs((await page.evaluate(() => window.scrollY)) - scrollBefore)).toBeLessThan(4);
+
+    // Trackpad gesture: refused at the source, so the window cannot scroll while the page turns.
+    const before = await page.getByRole('navigation', { name: 'Book page navigation' }).first().textContent();
+    const refused = await reader.evaluate((element) => {
+      const event = new WheelEvent('wheel', { deltaX: 140, deltaY: 0, bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(refused).toBe(true);
+    await expect.poll(async () => page.getByRole('navigation', { name: 'Book page navigation' }).first().textContent()).not.toBe(before);
+
+    // A vertical gesture is still a scroll, not a page turn.
+    const afterTurns = await page.getByRole('navigation', { name: 'Book page navigation' }).first().textContent();
+    const verticalLeftAlone = await reader.evaluate((element) => {
+      const event = new WheelEvent('wheel', { deltaX: 0, deltaY: 180, bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(verticalLeftAlone).toBe(false);
+    await page.waitForTimeout(700);
+    expect(await page.getByRole('navigation', { name: 'Book page navigation' }).first().textContent()).toBe(afterTurns);
+  } finally {
+    await api.dispose();
+  }
+});
+
 test('offers a two-page spread on landscape screens only', async ({ page }) => {
   test.setTimeout(180_000);
   await signIn(page, 'teacher');

@@ -16,7 +16,7 @@ import { Alert, Badge, Button, Card, cn, ConfirmDialog, EmptyState, Field, IconB
 import { api } from '../../lib/api.js';
 import { plural, relativeTime } from '../../lib/format.js';
 import { DEFAULT_HIGHLIGHT_COLOR, HIGHLIGHT_COLORS, isHighlightColor } from '../../lib/highlights.js';
-import { useBookNavigation } from '../../lib/bookNavigation.js';
+import { navigationHandlers, useBookNavigation } from '../../lib/bookNavigation.js';
 import { getOfflineLesson, getOfflineModuleBook, isLessonSavedOffline, removeOfflineLesson, saveLessonOffline } from '../../lib/offlineLessons.js';
 import { useAction } from '../../lib/query.js';
 import AssignmentDialog from './AssignmentDialog.jsx';
@@ -1108,6 +1108,8 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
     onPrevious: () => goToPage(Math.max(0, navigationPageIndex - pageStep)),
     onNext: () => goToPage(Math.min(lastPage, navigationPageIndex + pageStep)),
   });
+  const bookSurfaceRef = pageNavigation.surfaceRef;
+  const pageNavigationHandlers = navigationHandlers(pageNavigation);
 
   useEffect(() => {
     const urlLocation = initialBookLocation(params, modSummary.lessons);
@@ -1262,11 +1264,6 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
   }, [layout, measuredPagination, navigationPageIndex, pageMapReady]);
 
   useEffect(() => {
-    if (!readerReady || immersive) return;
-    pageStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [immersive, pageIndex, readerReady]);
-
-  useEffect(() => {
     const flow = flowRef.current;
     if (!flow) return undefined;
     let restoreScrollLeft = 0;
@@ -1386,14 +1383,17 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
 
         return (
           <div
-            ref={pageStartRef}
+            ref={(node) => {
+              pageStartRef.current = node;
+              bookSurfaceRef(node);
+            }}
             data-book-reader
             data-reader-layout={layout}
             role="region"
             tabIndex={0}
             aria-label={`Book reader: ${book.title}`}
             aria-describedby={`book-page-turn-help-${modSummary.id}`}
-            {...pageNavigation}
+            {...pageNavigationHandlers}
             className={cn(
               'book-reader-surface grid min-w-0 grid-cols-1 gap-4 sm:gap-6',
               prefs.focus ? 'mx-auto max-w-4xl' : layout === 'two' ? 'lg:grid-cols-[16rem_minmax(0,1fr)]' : 'lg:grid-cols-[18rem_minmax(0,1fr)]',
@@ -1843,6 +1843,12 @@ function BookReader({ modSummary, prefs, immersive = false, canShowSpread: sprea
                   className={cn('book-turn-sheet', `book-turn-sheet-${turnDirection}`)}
                   aria-hidden="true"
                   data-testid="book-turn-sheet"
+                  onAnimationEnd={(event) => {
+                    // A finished sheet is invisible but still a full-size layer over the pages; drop it.
+                    if (event.target !== event.currentTarget) return;
+                    if (typeof event.animationName === 'string' && event.animationName && !event.animationName.startsWith('book-sheet-flip')) return;
+                    setTurnDirection(null);
+                  }}
                 />
               )}
               </div>
@@ -1895,6 +1901,8 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
     onPrevious: () => goToLesson(loadedLesson?.previous),
     onNext: () => goToLesson(loadedLesson?.next),
   });
+  const lessonSurfaceRef = pageNavigation.surfaceRef;
+  const pageNavigationHandlers = navigationHandlers(pageNavigation);
   const invalidate = [['class', cls.id], ['dashboard']];
   const complete = useAction((done) => (done ? api.post(`/lessons/${lessonId}/complete`) : api.delete(`/lessons/${lessonId}/complete`)), { invalidate });
   const bookmark = useAction((on) => (on ? api.post('/bookmarks', { lessonId }) : api.delete('/bookmarks', { lessonId })), { invalidate: [['class', cls.id, 'lesson', lessonId], ['bookmarks']] });
@@ -1950,13 +1958,16 @@ function Lesson({ mod, lessonId, prefs = DEFAULT_READER_PREFS }) {
     <QueryState query={effectiveQuery}>
       {(lesson) => editing ? <LessonEditor mod={mod} lesson={lesson} onDone={closeEditor} /> : (
         <article
-          ref={lessonReaderRef}
+          ref={(node) => {
+            lessonReaderRef.current = node;
+            lessonSurfaceRef(node);
+          }}
           data-lesson-reader
           role="region"
           tabIndex={0}
           aria-label={`Lesson reader: ${lesson.title}`}
           aria-describedby={`lesson-page-turn-help-${lessonId}`}
-          {...pageNavigation}
+          {...pageNavigationHandlers}
           className="book-reader-surface"
         >
           {assignmentNotice && (
