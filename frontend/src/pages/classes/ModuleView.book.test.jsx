@@ -959,6 +959,81 @@ describe('Module book-like reader & outline CTA', () => {
     unmount();
   });
 
+  it('sweeps a translucent sheet over the page it leaves, never blanking the text', async () => {
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const spread = container.querySelector('[data-testid="book-page-spread"]');
+    act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })));
+
+    const sheet = container.querySelector('[data-testid="book-turn-sheet"]');
+    expect(sheet).not.toBeNull();
+    expect(sheet.className).toContain('book-turn-sheet-next');
+    // The sheet is a sibling of the flowing pages, so the words stay in the DOM and in view: the
+    // animation is a shadow passing over them, not an opaque card hiding them.
+    expect(sheet.parentElement).toBe(spread);
+    expect(sheet.contains(container.querySelector('.book-page-flow'))).toBe(false);
+    expect(container.querySelector('#chapter-les-1')).not.toBeNull();
+    // It takes no pointer events, so a mark or a link underneath can still be clicked mid-turn.
+    expect(sheet.getAttribute('aria-hidden')).toBe('true');
+    unmount();
+  });
+
+  it('starts each page turn from the beginning instead of replaying a finished animation', async () => {
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const key = (name) => act(() => reader.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })));
+    key('ArrowRight');
+    const first = container.querySelector('[data-testid="book-turn-sheet"]');
+    key('ArrowRight');
+    const second = container.querySelector('[data-testid="book-turn-sheet"]');
+    // A fresh element per turn: reusing one would only restart the CSS animation on some browsers.
+    expect(second).not.toBe(first);
+    expect(container.querySelectorAll('[data-testid="book-turn-sheet"]')).toHaveLength(1);
+
+    // When the turn animation finishes the sheet is removed. Left mounted it would be an invisible
+    // full-size layer over the pages, composited on every frame for the rest of the session.
+    const sheetProps = second[Object.keys(second).find((key) => key.startsWith('__reactProps'))];
+    act(() => sheetProps.onAnimationEnd({ target: second, currentTarget: second, animationName: 'book-sheet-flip-next' }));
+    expect(container.querySelector('[data-testid="book-turn-sheet"]')).toBeNull();
+
+    // A different animation ending on the sheet (a pulse inside it, say) must not cut the turn short.
+    key('ArrowRight');
+    const third = container.querySelector('[data-testid="book-turn-sheet"]');
+    const thirdProps = third[Object.keys(third).find((key) => key.startsWith('__reactProps'))];
+    act(() => thirdProps.onAnimationEnd({ target: third, currentTarget: third, animationName: 'pulse' }));
+    expect(container.querySelector('[data-testid="book-turn-sheet"]')).toBe(third);
+
+    unmount();
+  });
+
+  it('turns a page once on a trackpad gesture without scrolling the page underneath', async () => {
+    const { container, unmount } = renderAt('/classes/cls-1/modules/mod-1?view=book');
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[data-book-reader]')).not.toBeNull());
+    });
+
+    const reader = container.querySelector('[data-book-reader]');
+    const pageNavigation = container.querySelector('nav[aria-label="Book page navigation"]');
+    expect(pageNavigation.textContent).toContain('Page 1 of 4');
+
+    // The listener is attached with the element itself, so no extra frame is needed.
+    await flush();
+    const gesture = new WheelEvent('wheel', { deltaX: 120, deltaY: 0, bubbles: true, cancelable: true });
+    act(() => { reader.dispatchEvent(gesture); });
+    expect(pageNavigation.textContent).toContain('Page 2 of 4');
+    // The gesture is refused at the source so the window cannot scroll during the turn.
+    expect(gesture.defaultPrevented).toBe(true);
+    unmount();
+  });
+
   it('lets a teacher turn between individual lessons in both directions with laptop arrow keys', async () => {
     mockClassContext.canManage = true;
     mockClassContext.user = { id: 'teacher-1', role: 'TEACHER' };
